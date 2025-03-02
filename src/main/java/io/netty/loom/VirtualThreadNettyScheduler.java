@@ -2,75 +2,72 @@ package io.netty.loom;
 
 import java.util.ArrayDeque;
 import java.util.concurrent.Executor;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import java.util.concurrent.locks.LockSupport;
 
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
+import io.netty.util.internal.ThreadExecutorMap;
 import io.netty.util.internal.shaded.org.jctools.queues.MessagePassingQueue;
 import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 
-public class VirtualThreadNettyScheduler implements Executor, Runnable, AutoCloseable {
+public class VirtualThreadNettyScheduler implements Executor {
 
    private static final long MAX_WAIT_TASKS_NS = TimeUnit.SECONDS.toNanos(1);
-   private static final int STATE_CREATED = 0;
-   private static final int STATE_RUNNING = 1;
-   private static final int STATE_CLOSING = 2;
-   private static final int STATE_CLOSED = 3;
 
-   private static final AtomicIntegerFieldUpdater<VirtualThreadNettyScheduler> STATE_UPDATER =
-         AtomicIntegerFieldUpdater.newUpdater(VirtualThreadNettyScheduler.class, "state");
    private final MpscUnboundedArrayQueue<Runnable> resumedContinuations;
    private final ArrayDeque<Runnable> readyToExecuteContinuations;
    private final ManualIoEventLoop ioEventLoop;
    private final MessagePassingQueue.Consumer<Runnable> drainReadyToExecuteContinuations;
-   private volatile int state;
+   private final Thread carrierThread;
+   private Runnable eventExecutorAwareRun;
+
 
    public VirtualThreadNettyScheduler(ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
       this.resumedContinuations = new MpscUnboundedArrayQueue<>(resumedContinuationsExpectedCount);
       this.readyToExecuteContinuations = new ArrayDeque<>();
-      this.ioEventLoop = new ManualIoEventLoop(threadFactory.newThread(this), ioHandlerFactory);
-      this.state = STATE_CREATED;
+      // TODO check on Netty what we can do to improve here :"(
+      var carrierThread = threadFactory.newThread(() -> {
+         eventExecutorAwareRun.run();
+      });
+      this.ioEventLoop = new ManualIoEventLoop(carrierThread, ioHandlerFactory);
+      // TODO This is to make sure that the event executor is aware of the current event executor,
+      //      necessary for utils method like ThreadExecutorMap.currentExecutor() used on allocators pooling
+      this.eventExecutorAwareRun = ThreadExecutorMap.apply(this::internalRun, ioEventLoop);
       drainReadyToExecuteContinuations = readyToExecuteContinuations::add;
+      this.carrierThread = carrierThread;
+      // we can start the carrier only after all the fields are initialized
+      carrierThread.start();
+   }
+
+   public Thread getCarrierThread() {
+      return carrierThread;
    }
 
    public ManualIoEventLoop ioEventLoop() {
       return ioEventLoop;
    }
 
-   @Override
-   public void run() {
-      if (!STATE_UPDATER.compareAndSet(this, STATE_CREATED, STATE_RUNNING)) {
-         throw new IllegalStateException("Scheduler requires to be in CREATED state in order to start, but was " + state);
-      }
+   private void internalRun() {
       var ioEventLoop = this.ioEventLoop;
       // TODO maybe it is worthy to make this scheduler's state dependent on the event loop state:
       //      if the event loop is shutting down, we should also shut down this scheduler
       //      but this will requires to keep on draining the continuations right after the event loop is terminated
-      while (state == STATE_RUNNING) {
+      while (!ioEventLoop.isShuttingDown()) {
          int workDone = ioEventLoop.runNow();
          workDone += runReadyContinuations();
          if (workDone == 0) {
             ioEventLoop.run(MAX_WAIT_TASKS_NS);
          }
       }
-      assert state == STATE_CLOSING;
-      try {
-         ioEventLoop.shutdown();
-         while (!ioEventLoop.isTerminated()) {
-            ioEventLoop.runNow();
-            runReadyContinuations();
+      while (!ioEventLoop.isTerminated()) {
+         ioEventLoop.runNow();
+         runReadyContinuations();
+      }
+      for (; ; ) {
+         if (runReadyContinuations() == 0) {
+            break;
          }
-         for (; ; ) {
-            if (runReadyContinuations() == 0) {
-               break;
-            }
-         }
-      } finally {
-         state = STATE_CLOSED;
       }
    }
 
@@ -103,40 +100,17 @@ public class VirtualThreadNettyScheduler implements Executor, Runnable, AutoClos
 
    @Override
    public void execute(Runnable command) {
-      if (state >= STATE_CLOSING) {
-         throw new RejectedExecutionException("Scheduler is closed");
-      }
+      // TODO it would be great if VirtualThreadTask has its attached scheduler here so we can reject
+      //      the command if it is not belonging to this VT scheduler
+      assert command instanceof Thread.VirtualThreadTask;
       if (ioEventLoop.inEventLoop(Thread.currentThread())) {
          // just add it to the array deque without any need to wake up the event loop
          readyToExecuteContinuations.add(command);
       } else {
          // this can be both happening from a virtual thread or just a regular thread (not this event loop)
          resumedContinuations.offer(command);
+         // wakeup won't happen if we're shutting down!
          ioEventLoop.wakeup();
-      }
-   }
-
-   @Override
-   public void close() {
-      for (; ; ) {
-         int currentState = state;
-         switch (currentState) {
-            case STATE_CREATED:
-               if (STATE_UPDATER.compareAndSet(this, STATE_CREATED, STATE_CLOSED)) {
-                  return;
-               }
-               break;
-            case STATE_RUNNING:
-               STATE_UPDATER.compareAndSet(this, STATE_RUNNING, STATE_CLOSING);
-               break;
-            case STATE_CLOSING:
-               LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(100));
-               break;
-            case STATE_CLOSED:
-               return;
-            default:
-               throw new IllegalStateException("Unexpected state: " + currentState);
-         }
       }
    }
 
