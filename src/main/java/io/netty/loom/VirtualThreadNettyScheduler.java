@@ -104,8 +104,13 @@ public class VirtualThreadNettyScheduler implements Executor {
       //      the command if it is not belonging to this VT scheduler
       assert command instanceof Thread.VirtualThreadTask;
       if (ioEventLoop.inEventLoop(Thread.currentThread())) {
-         // just add it to the array deque without any need to wake up the event loop
-         readyToExecuteContinuations.add(command);
+         if (readyToExecuteContinuations.isEmpty()) {
+            // mo need to check for reentrancy here since vt are not inEventLoop!
+            command.run();
+         } else {
+            // just add it to the array deque without any need to wake up the event loop
+            readyToExecuteContinuations.add(command);
+         }
       } else {
          // this can be both happening from a virtual thread or just a regular thread (not this event loop)
          resumedContinuations.offer(command);
