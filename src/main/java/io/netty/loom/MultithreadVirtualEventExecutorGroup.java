@@ -47,7 +47,7 @@ public class MultithreadVirtualEventExecutorGroup extends MultiThreadIoEventLoop
       if (threadFactory == null) {
          threadFactory = newDefaultThreadFactory();
       }
-      var scheduler = new VirtualThreadNettyScheduler(threadFactory, ioHandlerFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT);
+      var scheduler = new VirtualThreadNettyScheduler(this, threadFactory, ioHandlerFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT);
       if (schedulers == null) {
          schedulers = new IdentityHashMap<>();
       }
