@@ -18,7 +18,7 @@ public class VirtualThreadNettyScheduler implements Executor {
    private final MpscUnboundedArrayQueue<Runnable> externalContinuations;
    private final ManualIoEventLoop ioEventLoop;
    private final Thread carrierThread;
-
+   private boolean running;
 
    public VirtualThreadNettyScheduler(IoEventLoopGroup parent, ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
       this.externalContinuations = new MpscUnboundedArrayQueue<>(resumedContinuationsExpectedCount);
@@ -65,11 +65,7 @@ public class VirtualThreadNettyScheduler implements Executor {
          if (continuation == null) {
             break;
          }
-         try {
-            continuation.run();
-         } catch (Throwable t) {
-            // TODO let's decide what do here
-         }
+         safeRunning(continuation);
          executed++;
          // TODO optimize it - Do it less frequently e.g. if (executed++ % 8 == 0) { .. increase elapsed time ..}
          long elapsedNs = System.nanoTime() - startDrainingNs;
@@ -90,11 +86,26 @@ public class VirtualThreadNettyScheduler implements Executor {
       //      the command if it is not belonging to this VT scheduler
       assert command instanceof Thread.VirtualThreadTask;
       if (ioEventLoop.inEventLoop(Thread.currentThread())) {
-         command.run();
+         if (running) {
+            externalContinuations.offer(command);
+         } else {
+            safeRunning(command);
+         }
       } else {
          externalContinuations.offer(command);
          // wakeup won't happen if we're shutting down!
          ioEventLoop.wakeup();
+      }
+   }
+
+   private void safeRunning(Runnable runnable) {
+      assert ioEventLoop.inEventLoop(Thread.currentThread());
+      assert !running;
+      running = true;
+      try {
+         runnable.run();
+      } finally {
+         running = false;
       }
    }
 
