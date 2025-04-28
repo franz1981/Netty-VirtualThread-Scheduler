@@ -56,7 +56,6 @@ public class VirtualThreadNettyScheduler implements Executor {
    }
 
    private int runExternalContinuations(long deadlineNs) {
-      // TODO: optimize it - we don't need to capture this regardless!
       final long startDrainingNs = System.nanoTime();
       var ready = this.externalContinuations;
       int executed = 0;
@@ -67,7 +66,6 @@ public class VirtualThreadNettyScheduler implements Executor {
          }
          safeRunning(continuation);
          executed++;
-         // TODO optimize it - Do it less frequently e.g. if (executed++ % 8 == 0) { .. increase elapsed time ..}
          long elapsedNs = System.nanoTime() - startDrainingNs;
          if (elapsedNs >= deadlineNs) {
             return executed;
@@ -78,13 +76,9 @@ public class VirtualThreadNettyScheduler implements Executor {
 
    @Override
    public void execute(Runnable command) {
-      // TODO improve it using a reject handler? It's not too strict!?
       if (ioEventLoop.isShuttingDown()) {
          throw new RejectedExecutionException("event loop is shutting down");
       }
-      // TODO it would be great if VirtualThreadTask has its attached scheduler here so we can reject
-      //      the command if it is not belonging to this VT scheduler
-      assert command instanceof Thread.VirtualThreadTask;
       if (ioEventLoop.inEventLoop(Thread.currentThread())) {
          if (running) {
             externalContinuations.offer(command);

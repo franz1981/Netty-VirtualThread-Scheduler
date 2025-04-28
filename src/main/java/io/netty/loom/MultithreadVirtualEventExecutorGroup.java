@@ -22,7 +22,7 @@ public class MultithreadVirtualEventExecutorGroup extends MultiThreadIoEventLoop
          if (scheduler == null) {
             return null;
          }
-         return Thread.ofVirtual().scheduler(scheduler).factory();
+         return LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), scheduler).factory();
       }
    };
 
