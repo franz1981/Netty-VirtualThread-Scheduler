@@ -1,4 +1,4 @@
-package io.netty.benchmark;
+package io.netty.loom.benchmark;
 
 import java.util.concurrent.TimeUnit;
 
