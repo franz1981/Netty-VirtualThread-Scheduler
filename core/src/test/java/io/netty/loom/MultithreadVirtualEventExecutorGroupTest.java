@@ -1,5 +1,10 @@
 package io.netty.loom;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -32,10 +37,6 @@ import io.netty.util.CharsetUtil;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.internal.ThreadExecutorMap;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class MultithreadVirtualEventExecutorGroupTest {
 
@@ -54,7 +55,7 @@ public class MultithreadVirtualEventExecutorGroupTest {
                protected void initChannel(SocketChannel ch) {
                   ch.pipeline().addLast(new HttpServerCodec());
                   // Netty is going to create a new one for each connection
-                  ch.pipeline().addLast(new ChannelInboundHandlerAdapter(){
+                  ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
 
                      @Override
                      public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
@@ -126,7 +127,7 @@ public class MultithreadVirtualEventExecutorGroupTest {
                protected void initChannel(SocketChannel ch) {
                   ch.pipeline().addLast(new HttpServerCodec());
                   // Netty is going to create a new one for each connection
-                  ch.pipeline().addLast(new ChannelInboundHandlerAdapter(){
+                  ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
 
                      @Override
                      public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {

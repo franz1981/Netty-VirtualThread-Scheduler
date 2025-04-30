@@ -7,9 +7,8 @@ import java.util.concurrent.Executor;
 
 public final class LoomSupport {
    private static final boolean SUPPORTED;
-   private static Throwable FAILURE;
-
    private static final MethodHandle SCHEDULER;
+   private static Throwable FAILURE;
 
    static {
       boolean sup;
