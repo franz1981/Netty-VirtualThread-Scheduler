@@ -235,6 +235,9 @@ public class SchedulerBenchmark {
    }
 
    private static long performCpuWork(long durationNs) {
+      if (durationNs <= 0) {
+         return 0;
+      }
       long startCpuWork = System.nanoTime();
       long elapsedNs = 0;
       while ((elapsedNs = (System.nanoTime() - startCpuWork)) < durationNs) {
