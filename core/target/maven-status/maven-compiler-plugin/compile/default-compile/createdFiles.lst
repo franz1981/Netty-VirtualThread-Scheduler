@@ -1,0 +1,5 @@
+io/netty/loom/VirtualThreadNettyScheduler.class
+io/netty/loom/LoomSupport$1.class
+io/netty/loom/LoomSupport.class
+io/netty/loom/MultithreadVirtualEventExecutorGroup$1.class
+io/netty/loom/MultithreadVirtualEventExecutorGroup.class
