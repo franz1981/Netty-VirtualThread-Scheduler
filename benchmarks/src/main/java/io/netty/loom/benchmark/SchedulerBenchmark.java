@@ -72,7 +72,6 @@ public class SchedulerBenchmark {
    @Setup
    public void setup() throws ExecutionException, InterruptedException {
       executorGroup = new MultithreadVirtualEventExecutorGroup(1, NioIoHandler.newFactory());
-      tasks = 100;
       counter = new AtomicInteger();
       durationNs = TimeUnit.MICROSECONDS.toNanos(durationUs);
       switch (scheduler) {
