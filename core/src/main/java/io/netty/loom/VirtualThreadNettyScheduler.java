@@ -13,7 +13,7 @@ import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 public class VirtualThreadNettyScheduler implements Executor {
 
    private static final long MAX_WAIT_TASKS_NS = TimeUnit.SECONDS.toNanos(1);
-   private static final long MAX_RUN_CONTINUATIONS_NS = TimeUnit.SECONDS.toNanos(1);
+   private static final long MAX_RUN_CONTINUATIONS_NS = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.run.us", 1));
 
    private final MpscUnboundedArrayQueue<Runnable> externalContinuations;
    private final ManualIoEventLoop ioEventLoop;
@@ -79,15 +79,8 @@ public class VirtualThreadNettyScheduler implements Executor {
       if (ioEventLoop.isShuttingDown()) {
          throw new RejectedExecutionException("event loop is shutting down");
       }
-      if (ioEventLoop.inEventLoop(Thread.currentThread())) {
-         if (running) {
-            externalContinuations.offer(command);
-         } else {
-            safeRunning(command);
-         }
-      } else {
-         externalContinuations.offer(command);
-         // wakeup won't happen if we're shutting down!
+      externalContinuations.offer(command);
+      if (!ioEventLoop.inEventLoop(Thread.currentThread())) {
          ioEventLoop.wakeup();
       }
    }

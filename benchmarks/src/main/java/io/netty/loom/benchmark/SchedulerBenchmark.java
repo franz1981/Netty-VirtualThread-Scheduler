@@ -26,7 +26,7 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 
-import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.local.LocalIoHandler;
 import io.netty.loom.LoomSupport;
 import io.netty.loom.MultithreadVirtualEventExecutorGroup;
 
@@ -34,7 +34,8 @@ import io.netty.loom.MultithreadVirtualEventExecutorGroup;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
-@Fork(value = 2, jvmArgs = { "--add-opens=java.base/java.lang=ALL-UNNAMED" })
+@Fork(value = 2, jvmArgs = { "--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+                             "-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false" })
 @State(Scope.Thread)
 public class SchedulerBenchmark {
 
@@ -52,12 +53,12 @@ public class SchedulerBenchmark {
 
    private MultithreadVirtualEventExecutorGroup executorGroup;
    private AtomicInteger counter;
-   @Param({ "10" })
-   private int tasks;
    @Param({ "100" })
+   private int tasks;
+   @Param({ "1000" })
    private long durationUs;
    private long durationNs;
-   @Param({ "Netty", "Default" })
+   @Param({ "Netty", "NettySimple", "Default" })
    public LoomScheduler scheduler;
    private ThreadFactory vtFactory;
    @Param({ "false", "true" })
@@ -66,12 +67,13 @@ public class SchedulerBenchmark {
 
    public enum LoomScheduler {
       Netty,
+      NettySimple,
       Default
    }
 
    @Setup
    public void setup() throws ExecutionException, InterruptedException {
-      executorGroup = new MultithreadVirtualEventExecutorGroup(1, NioIoHandler.newFactory());
+      executorGroup = new MultithreadVirtualEventExecutorGroup(1, LocalIoHandler.newFactory());
       counter = new AtomicInteger();
       durationNs = TimeUnit.MICROSECONDS.toNanos(durationUs);
       switch (scheduler) {
@@ -82,6 +84,11 @@ public class SchedulerBenchmark {
          case Default:
             vtFactory = Thread.ofVirtual().factory();
             validateDefaultSchedulerParallelism();
+            break;
+         case NettySimple:
+            System.setProperty("io.netty.loom.simple.scheduler", "true");
+            LoomSupport.checkSupported();
+            vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
             break;
          default:
             throw new IllegalArgumentException("Unknown threading mode: " + scheduler);
