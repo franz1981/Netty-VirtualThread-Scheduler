@@ -10,7 +10,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.concurrent.*;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -22,6 +26,7 @@ import io.netty.channel.IoHandler;
 import io.netty.channel.IoHandlerContext;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.IoRegistration;
+import io.netty.channel.local.LocalIoHandler;
 import org.junit.jupiter.api.Test;
 
 import io.netty.bootstrap.ServerBootstrap;
@@ -306,6 +311,38 @@ public class MultithreadVirtualEventExecutorGroupTest {
       assertEquals(0, innerVThreadCreationFromVThread.get().intValue());
       assertEquals(0, innerWriteFromVThread.get().intValue());
       channel.close().await();
+      group.shutdownGracefully();
+   }
+
+   @Test
+   void schedulerIsInherited() throws InterruptedException, ExecutionException {
+      var group = new MultithreadVirtualEventExecutorGroup(1, LocalIoHandler.newFactory());
+      final Thread expectedCarrier = group.submit(Thread::currentThread).get();
+      final CompletableFuture<Thread> vfactoryCarrier = new CompletableFuture<>();
+      group.execute(() -> {
+         group.vThreadFactory().newThread(() -> {
+            vfactoryCarrier.complete(LoomSupport.getCarrierThread(Thread.currentThread()));
+         }).start();
+      });
+      final CompletableFuture<Thread> inheritedCarrier = new CompletableFuture<>();
+      group.execute(() -> {
+         group.vThreadFactory().newThread(() -> {
+            Thread.ofVirtual().start(() -> {
+               inheritedCarrier.complete(LoomSupport.getCarrierThread(Thread.currentThread()));
+            });
+         }).start();
+      });
+      final CompletableFuture<Thread> inheritedVFactoryCarrier = new CompletableFuture<>();
+      group.execute(() -> {
+         group.vThreadFactory().newThread(() -> {
+            Thread.ofVirtual().factory().newThread(() -> {
+               inheritedVFactoryCarrier.complete(LoomSupport.getCarrierThread(Thread.currentThread()));
+            }).start();
+         }).start();
+      });
+      assertEquals(expectedCarrier, vfactoryCarrier.get());
+      assertEquals(expectedCarrier, inheritedCarrier.get());
+      assertEquals(expectedCarrier, inheritedVFactoryCarrier.get());
       group.shutdownGracefully();
    }
 }
