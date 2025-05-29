@@ -15,8 +15,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -317,7 +319,7 @@ public class MultithreadVirtualEventExecutorGroupTest {
    @Test
    void schedulerIsInherited() throws InterruptedException, ExecutionException {
       var group = new MultithreadVirtualEventExecutorGroup(1, LocalIoHandler.newFactory());
-      final Thread expectedCarrier = group.submit(Thread::currentThread).get();
+      final Thread expectedCarrier = group.submit(() -> LoomSupport.getCarrierThread(Thread.currentThread())).get();
       final CompletableFuture<Thread> vfactoryCarrier = new CompletableFuture<>();
       group.execute(() -> {
          group.vThreadFactory().newThread(() -> {
@@ -344,5 +346,36 @@ public class MultithreadVirtualEventExecutorGroupTest {
       assertEquals(expectedCarrier, inheritedCarrier.get());
       assertEquals(expectedCarrier, inheritedVFactoryCarrier.get());
       group.shutdownGracefully();
+   }
+
+   @Test
+   void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked() throws BrokenBarrierException, InterruptedException, TimeoutException {
+      var group = new MultithreadVirtualEventExecutorGroup(1, NioIoHandler.newFactory());
+      var allBlocked = new CyclicBarrier(3);
+      group.execute(() -> {
+         group.vThreadFactory().newThread(() -> {
+            try {
+               allBlocked.await();
+            } catch (Throwable t) {
+            }
+         }).start();
+         try {
+            allBlocked.await();
+         } catch (Throwable e) {
+         }
+      });
+      try {
+         allBlocked.await(5, java.util.concurrent.TimeUnit.SECONDS);
+      } finally {
+         group.shutdownGracefully();
+      }
+   }
+
+   private static void doWithLock(CompletableFuture<Void> lockAcquired, ReentrantLock lock) {
+      lockAcquired.join();
+      System.out.println("Try to acquire lock from " + Thread.currentThread());
+      lock.lock();
+
+      System.exit(-1);
    }
 }

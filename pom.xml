@@ -16,7 +16,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <netty.version>4.2.0.Final</netty.version>
+        <netty.version>4.2.2.Final-SNAPSHOT</netty.version>
         <junit.version>5.11.4</junit.version>
         <jmh.version>1.37</jmh.version>
     </properties>
@@ -63,7 +63,7 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.1.2</version>
                     <configuration>
-                        <argLine>-Djdk.traceVirtualThreadLocals=true --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
+                        <argLine>-Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
                     </configuration>
                 </plugin>
             </plugins>

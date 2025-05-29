@@ -26,7 +26,12 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.IoHandlerFactory;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.local.LocalIoHandler;
+import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.loom.LoomSupport;
 import io.netty.loom.MultithreadVirtualEventExecutorGroup;
 
@@ -51,15 +56,17 @@ public class SchedulerBenchmark {
       setupDefaultScheduler(1);
    }
 
-   private MultithreadVirtualEventExecutorGroup executorGroup;
+   private EventLoopGroup executorGroup;
    private AtomicInteger counter;
    @Param({ "100" })
    private int tasks;
-   @Param({ "1000" })
+   @Param({ "10" })
    private long durationUs;
    private long durationNs;
-   @Param({ "Netty", "NettySimple", "Default" })
+   @Param({ "Netty", "Default" })
    public LoomScheduler scheduler;
+   @Param({ "NIO"})
+   public HandlerType handlerType;
    private ThreadFactory vtFactory;
    @Param({ "false", "true" })
    private boolean spinWaitResponse;
@@ -67,28 +74,33 @@ public class SchedulerBenchmark {
 
    public enum LoomScheduler {
       Netty,
-      NettySimple,
       Default
+   }
+
+   public enum HandlerType {
+      LOCAL,
+      NIO
    }
 
    @Setup
    public void setup() throws ExecutionException, InterruptedException {
-      executorGroup = new MultithreadVirtualEventExecutorGroup(1, LocalIoHandler.newFactory());
+      IoHandlerFactory factory = switch (handlerType) {
+         case LOCAL -> LocalIoHandler.newFactory();
+         case NIO -> NioIoHandler.newFactory();
+      };
       counter = new AtomicInteger();
       durationNs = TimeUnit.MICROSECONDS.toNanos(durationUs);
       switch (scheduler) {
          case Netty:
+            var virtualGroup = new MultithreadVirtualEventExecutorGroup(1, factory);
+            executorGroup = virtualGroup;
             LoomSupport.checkSupported();
-            vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
+            vtFactory = executorGroup.submit(virtualGroup::vThreadFactory).get();
             break;
          case Default:
+            executorGroup = new MultiThreadIoEventLoopGroup(1, factory);
             vtFactory = Thread.ofVirtual().factory();
             validateDefaultSchedulerParallelism();
-            break;
-         case NettySimple:
-            System.setProperty("io.netty.loom.simple.scheduler", "true");
-            LoomSupport.checkSupported();
-            vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
             break;
          default:
             throw new IllegalArgumentException("Unknown threading mode: " + scheduler);
@@ -140,12 +152,10 @@ public class SchedulerBenchmark {
    @State(Scope.Thread)
    public static class TaskDuration {
 
-      private final Histogram busyTime = new Histogram(3);
       private final Histogram taskDuration = new Histogram(3);
 
       @Setup(Level.Iteration)
       public void reset() {
-         busyTime.reset();
          taskDuration.reset();
       }
 
@@ -173,35 +183,7 @@ public class SchedulerBenchmark {
          return taskDuration.getMaxValue();
       }
 
-      // do the same for busy time
-      public double busyTimeAvg() {
-         return busyTime.getMean();
-      }
-
-      public long busyTimeP50() {
-         return busyTime.getValueAtPercentile(50);
-      }
-
-      public long busyTimeP90() {
-         return busyTime.getValueAtPercentile(90);
-      }
-
-      public long busyTimeP99() {
-         return busyTime.getValueAtPercentile(99);
-      }
-
-      public long busyTimeMin() {
-         return busyTime.getMinValue();
-      }
-
-      public long busyTimeMax() {
-         return busyTime.getMaxValue();
-      }
-
       public long totalSamples() {
-         if (taskDuration.getTotalCount() != busyTime.getTotalCount()) {
-            throw new IllegalStateException("taskDuration and busyTime have different sample counts");
-         }
          return taskDuration.getTotalCount();
       }
 
@@ -216,7 +198,7 @@ public class SchedulerBenchmark {
          executorGroup.execute(() -> {
             vtFactory.newThread(() -> {
                // busy time is always accessed within a virtual thread
-               duration.busyTime.recordValue(performCpuWork(durationNs));
+               performCpuWork(durationNs);
                executorGroup.execute(() -> {
                   long elapsedTimeNs = System.nanoTime() - start;
                   // response time is recorded from the event loop
