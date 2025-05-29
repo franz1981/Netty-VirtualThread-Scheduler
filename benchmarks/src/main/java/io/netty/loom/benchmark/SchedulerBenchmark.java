@@ -31,7 +31,6 @@ import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.local.LocalIoHandler;
 import io.netty.channel.nio.NioIoHandler;
-import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.loom.LoomSupport;
 import io.netty.loom.MultithreadVirtualEventExecutorGroup;
 

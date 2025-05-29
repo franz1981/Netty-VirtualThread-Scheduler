@@ -25,6 +25,7 @@ public class VirtualThreadNettyScheduler implements Executor {
    private final Thread carrierThread;
    private volatile Thread parkedCarrierThread;
    private volatile Runnable eventLoopContinuation;
+   private volatile boolean submittedEventLoopContinuation;
    private final CountDownLatch eventLoopContinuationAvailable;
    private final ThreadFactory vThreadFactory;
    private final AtomicBoolean running;
@@ -109,8 +110,8 @@ public class VirtualThreadNettyScheduler implements Executor {
       // we keep on running until the event loop is shutting-down
       while (!eventLoop.isTerminated()) {
          int count = runExternalContinuations(MAX_RUN_NS);
-         if (count < 0) {
-            // run the event loop asap
+         if (submittedEventLoopContinuation) {
+            submittedEventLoopContinuation = false;
             eventLoopContinuation.run();
          } else if (count == 0) {
             // nothing to run, including the event loop: we can park
@@ -121,36 +122,29 @@ public class VirtualThreadNettyScheduler implements Executor {
             parkedCarrierThread = null;
          }
       }
-      while (!externalContinuations.isEmpty()) {
+      while (!canBlock()) {
          // we still have continuations to run, let's run them
-         int count = runExternalContinuations(MAX_RUN_NS);
-         if (count < 0) {
-            // this shouldn't happen really, but better to be safe
+         runExternalContinuations(MAX_RUN_NS);
+         if (submittedEventLoopContinuation) {
+            submittedEventLoopContinuation = false;
             eventLoopContinuation.run();
          }
       }
    }
 
    private boolean canBlock() {
-      return externalContinuations.isEmpty();
+      return externalContinuations.isEmpty() && !submittedEventLoopContinuation;
    }
 
-   /**
-    * Return the number of continuations run or < 0 if the event loop need to take precedence and run.
-    */
    private int runExternalContinuations(long deadlineNs) {
       assert eventLoopContinuation != null;
       final long startDrainingNs = System.nanoTime();
       var ready = this.externalContinuations;
-      final var eventLoopContinuation = this.eventLoopContinuation;
       int runContinuations = 0;
       for (; ; ) {
          var continuation = ready.poll();
          if (continuation == null) {
             break;
-         }
-         if (continuation == eventLoopContinuation) {
-            return -1;
          }
          continuation.run();
          runContinuations++;
@@ -170,9 +164,13 @@ public class VirtualThreadNettyScheduler implements Executor {
       // The default scheduler won't shut down, but Netty's event loop can!
       Runnable eventLoopContinuation = this.eventLoopContinuation;
       if (eventLoopContinuation == null) {
-         setEventLoopContinuation(command);
+         eventLoopContinuation = setEventLoopContinuation(command);
       }
-      externalContinuations.offer(command);
+      if (eventLoopContinuation == command) {
+         submittedEventLoopContinuation = true;
+      } else {
+         externalContinuations.offer(command);
+      }
       if (!ioEventLoop.inEventLoop(Thread.currentThread())) {
          // TODO: if we have access to the scheduler brought by the continuation,
          //       we could skip the wakeup if matches with this.
@@ -181,11 +179,12 @@ public class VirtualThreadNettyScheduler implements Executor {
       }
    }
 
-   private void setEventLoopContinuation(Runnable command) {
+   private Runnable setEventLoopContinuation(Runnable command) {
       // this is the first command, we need to set the continuation
       this.eventLoopContinuation = command;
       // we need to notify the event loop that we have a continuation
       eventLoopContinuationAvailable.countDown();
+      return command;
    }
 
 }

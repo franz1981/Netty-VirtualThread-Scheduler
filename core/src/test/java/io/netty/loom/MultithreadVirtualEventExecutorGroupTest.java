@@ -1,10 +1,12 @@
 package io.netty.loom;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -15,10 +17,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -371,11 +373,38 @@ public class MultithreadVirtualEventExecutorGroupTest {
       }
    }
 
-   private static void doWithLock(CompletableFuture<Void> lockAcquired, ReentrantLock lock) {
-      lockAcquired.join();
-      System.out.println("Try to acquire lock from " + Thread.currentThread());
-      lock.lock();
+   @Test
+   void testFairness() throws ExecutionException, InterruptedException {
+      final long V_TASK_DURATION_NS = TimeUnit.MILLISECONDS.toNanos(100);
+      int tasks = 4;
+      var group = new MultithreadVirtualEventExecutorGroup(1, NioIoHandler.newFactory());
+      var interleavingVirtualThreads = new AtomicBoolean(false);
 
-      System.exit(-1);
+      var nonBlockingTasksCompleted = new CountDownLatch(tasks);
+      group.submit(() -> {
+         var counter = new AtomicInteger();
+         for (int i = 0; i < tasks; i++) {
+            group.vThreadFactory().newThread(() -> {
+               spinWait(V_TASK_DURATION_NS);
+               int count = counter.incrementAndGet();
+               group.execute(() -> {
+                  if (counter.get() != count) {
+                     interleavingVirtualThreads.set(true);
+                  }
+                  nonBlockingTasksCompleted.countDown();
+               });
+            }).start();
+         }
+      }).get();
+      nonBlockingTasksCompleted.await();
+      group.shutdownGracefully();
+      assertFalse(interleavingVirtualThreads.get());
+   }
+
+   private static void spinWait(long nanos) {
+      final long start = System.nanoTime();
+      while ((System.nanoTime() - start) < nanos) {
+         Thread.onSpinWait();
+      }
    }
 }
