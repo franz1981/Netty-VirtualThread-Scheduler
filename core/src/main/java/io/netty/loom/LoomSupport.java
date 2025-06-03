@@ -34,7 +34,15 @@ public final class LoomSupport {
             }
          });
 
-         carrierThread = findVarHandle(Class.forName("java.lang.VirtualThread"), "carrierThread", Thread.class);
+         carrierThread = findVarHandle(Class.forName("java.lang.VirtualThread"),
+               "carrierThread", Thread.class);
+         // try this once to ensure that we can access the carrier thread
+         carrierThread.getVolatile(Thread.ofVirtual().start(new Runnable() {
+            @Override
+            public void run() {
+
+            }
+         }));
       } catch (Throwable e) {
          scheduler = null;
          carrierThread = null;
@@ -93,6 +101,7 @@ public final class LoomSupport {
    }
 
    public static Thread getCarrierThread(Thread t) {
+      checkSupported();
       if (!t.isVirtual()) {
          return t;
       }
