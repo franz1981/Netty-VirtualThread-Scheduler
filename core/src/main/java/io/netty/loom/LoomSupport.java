@@ -4,18 +4,20 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.lang.reflect.Field;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 public final class LoomSupport {
-   private static final boolean SUPPORTED;
    private static final MethodHandle SCHEDULER;
    private static final VarHandle CARRIER_THREAD;
-   private static Throwable FAILURE;
+   private static final Throwable CUSTOM_SCHEDULER_FAILURE;
+   private static final CompletableFuture<Throwable> FJ_SUBPOLLER_FAILURE;
 
    static {
-      boolean sup;
+      Throwable error = null;
       MethodHandle scheduler;
       VarHandle carrierThread;
+      FJ_SUBPOLLER_FAILURE = new CompletableFuture<>();
       try {
          // this is required to override the default scheduler
          MethodHandles.Lookup lookup = MethodHandles.lookup();
@@ -24,7 +26,6 @@ public final class LoomSupport {
          schedulerField.setAccessible(true);
          scheduler = lookup.unreflectSetter(schedulerField);
 
-         // this is to make sure we fail earlier!
          var builder = Thread.ofVirtual();
          scheduler.invoke(builder, new Executor() {
             @Override
@@ -34,20 +35,30 @@ public final class LoomSupport {
          });
 
          carrierThread = findVarHandle(Class.forName("java.lang.VirtualThread"), "carrierThread", Thread.class);
-
-         FAILURE = null;
-
-         sup = true;
       } catch (Throwable e) {
          scheduler = null;
          carrierThread = null;
-         sup = false;
-         FAILURE = e;
+         error = e;
       }
 
+      CUSTOM_SCHEDULER_FAILURE = error;
       SCHEDULER = scheduler;
-      SUPPORTED = sup;
       CARRIER_THREAD = carrierThread;
+
+      // this is to ensure that we are inheriting the correct scheduler
+      if (CUSTOM_SCHEDULER_FAILURE != null) {
+         // if we failed to set the custom scheduler, we cannot use Loom at all
+         FJ_SUBPOLLER_FAILURE.complete(null);
+      } else {
+         Thread.ofVirtual().start(() -> {
+            try {
+               Class.forName("sun.nio.ch.Poller");
+               FJ_SUBPOLLER_FAILURE.complete(null);
+            } catch (Throwable e) {
+               FJ_SUBPOLLER_FAILURE.complete(e);
+            }
+         });
+      }
    }
 
    private static VarHandle findVarHandle(Class<?> declaringClass, String fieldName, Class<?> fieldType) {
@@ -64,12 +75,20 @@ public final class LoomSupport {
    }
 
    public static boolean isSupported() {
-      return SUPPORTED;
+      var fjSubpoller = FJ_SUBPOLLER_FAILURE.join();
+      return fjSubpoller != null && CUSTOM_SCHEDULER_FAILURE == null;
    }
 
    public static void checkSupported() {
       if (!isSupported()) {
-         throw new UnsupportedOperationException(FAILURE);
+         // print whatever error we have
+         if (CUSTOM_SCHEDULER_FAILURE != null) {
+            throw new UnsupportedOperationException("Custom scheduler is not supported", CUSTOM_SCHEDULER_FAILURE);
+         }
+         var fjSubpoller = FJ_SUBPOLLER_FAILURE.join();
+         if (fjSubpoller != null) {
+            throw new UnsupportedOperationException("ForkJoin subpoller is not supported", fjSubpoller);
+         }
       }
    }
 
