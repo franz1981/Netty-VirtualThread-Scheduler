@@ -13,7 +13,6 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
 import org.openjdk.jmh.annotations.AuxCounters;
@@ -34,19 +33,28 @@ import io.netty.loom.LoomSupport;
 import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 
 @State(Scope.Thread)
-@BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@BenchmarkMode(Mode.Throughput)
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
 @Fork(value = 2, jvmArgs = { "--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
                              "-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false" })
 public class PollerBenchmark {
 
-   @Param({ "128000" })
+   /**
+    * Beware tuning these values to force the sub-pollers to be used.<br>
+    * Uses the scheduler stats related read/write tasks executed to determine how many times the sub-pollers were used.
+    */
+   @Param({ "131072" })
    public int bytes;
+   @Param({ "131072" })
+   public int receiveBufferSize;
+   @Param({ "131072" })
+   public int sendBufferSize;
    @Param({ "0" })
    public int port;
-   private Queue<Runnable> blockingTasks;
+   private Queue<Runnable> blockingReadTasks;
+   private Queue<Runnable> blockingWriteTasks;
    private ServerSocket serverAcceptor;
    private Socket serverSocket;
    private Socket clientSocket;
@@ -56,15 +64,18 @@ public class PollerBenchmark {
    private long writtenBytes;
    private byte[] inData;
    private byte[] outData;
-   private ThreadFactory vThreadFactory;
+   private ThreadFactory readThreadFactory;
+   private ThreadFactory writeThreadFactory;
    private Runnable serverWrite;
    private Runnable clientRead;
    private volatile Thread carrierParked;
 
-   @AuxCounters(AuxCounters.Type.EVENTS)
+   @AuxCounters
    @State(Scope.Thread)
-   @BenchmarkMode(Mode.Throughput)   public static class SchedulerStats {
+   public static class SchedulerStats {
       public long tasksExecuted;
+      public long readTasks;
+      public long writeTasks;
    }
 
    static {
@@ -98,16 +109,26 @@ public class PollerBenchmark {
       inData = new byte[bytes];
       outData = new byte[bytes];
       Arrays.fill(inData, (byte) 42);
-      blockingTasks = new MpscUnboundedArrayQueue<>(1024);
-      vThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), task -> {
-         blockingTasks.add(task);
+      // TODO we could size it to always save any GC to happen!
+      blockingReadTasks = new MpscUnboundedArrayQueue<>(1024);
+      blockingWriteTasks = new MpscUnboundedArrayQueue<>(1024);
+      readThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), task -> {
+         blockingReadTasks.add(task);
+         LockSupport.unpark(carrierParked);
+      }).factory();
+      writeThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), task -> {
+         blockingWriteTasks.add(task);
          LockSupport.unpark(carrierParked);
       }).factory();
       clientIn = clientSocket.getInputStream();
       serverOut = serverSocket.getOutputStream();
+      clientSocket.setTcpNoDelay(true);
+      clientSocket.setReceiveBufferSize(receiveBufferSize);
+      serverSocket.setTcpNoDelay(true);
+      serverSocket.setSendBufferSize(sendBufferSize);
       serverWrite = () -> {
          try {
-            serverOut.write(outData);
+             serverOut.write(outData);
             writtenBytes += bytes;
          } catch (Throwable e) {
             throw new RuntimeException(e);
@@ -129,18 +150,28 @@ public class PollerBenchmark {
       readBytes = 0;
       writtenBytes = 0;
       // since we use a FIFO task q, the read should happen first, blocking
-      vThreadFactory.newThread(clientRead).start();
-      vThreadFactory.newThread(serverWrite).start();
+      readThreadFactory.newThread(clientRead).start();
+      writeThreadFactory.newThread(serverWrite).start();
       for (; ; ) {
-         var task = blockingTasks.poll();
-         if (task != null) {
+         // always read from both queues, as the read and write tasks can be interleaved
+         Runnable readTask = blockingReadTasks.poll();
+         Runnable writeTask = blockingWriteTasks.poll();
+         if (readTask != null) {
             stats.tasksExecuted++;
-            task.run();
-         } else {
-            if (readBytes == writtenBytes && readBytes == bytes) {
-               // if the Poller is running within this executor, we still expect that its job is done here!
-               break;
-            }
+            stats.readTasks++;
+            readTask.run();
+         }
+         if (writeTask != null) {
+            stats.tasksExecuted++;
+            stats.writeTasks++;
+            writeTask.run();
+         }
+         // if we have read all the bytes, we can stop
+         if (readBytes == bytes && writtenBytes == bytes) {
+            break;
+         }
+         if (canBlock()) {
+            // if we can block, let's try to sleep
             trySleep();
          }
       }
@@ -150,12 +181,16 @@ public class PollerBenchmark {
    private void trySleep() {
       carrierParked = Thread.currentThread();
       try {
-         if (blockingTasks.isEmpty()) {
+         if (canBlock()) {
             LockSupport.park();
          }
       } finally {
          carrierParked = null;
       }
+   }
+
+   private boolean canBlock() {
+      return blockingReadTasks.isEmpty() && blockingWriteTasks.isEmpty();
    }
 
 
