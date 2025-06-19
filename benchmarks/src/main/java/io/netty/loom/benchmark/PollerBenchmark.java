@@ -108,7 +108,7 @@ public class PollerBenchmark {
       connectionsEstablished.await();
       inData = new byte[bytes];
       outData = new byte[bytes];
-      Arrays.fill(inData, (byte) 42);
+      Arrays.fill(outData, (byte) 42);
       // TODO we could size it to always save any GC to happen!
       blockingReadTasks = new MpscUnboundedArrayQueue<>(1024);
       blockingWriteTasks = new MpscUnboundedArrayQueue<>(1024);
@@ -166,11 +166,11 @@ public class PollerBenchmark {
             stats.writeTasks++;
             writeTask.run();
          }
-         // if we have read all the bytes, we can stop
-         if (readBytes == bytes && writtenBytes == bytes) {
-            break;
-         }
          if (canBlock()) {
+            // if we have read all the bytes, we can stop
+            if (readBytes == bytes && writtenBytes == bytes) {
+               break;
+            }
             // if we can block, let's try to sleep
             trySleep();
          }
