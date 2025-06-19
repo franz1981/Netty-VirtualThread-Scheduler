@@ -2,6 +2,7 @@ package io.netty.loom.benchmark;
 
 import static io.netty.loom.benchmark.DefaultSchedulerUtils.setupDefaultScheduler;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -66,7 +67,10 @@ public class PollerBenchmark {
    @Param({ "0" })
    public int port;
    @Param({ "false", "true" })
-   public boolean spinWait;
+   public boolean customPoller;
+   @Param({ "false", "true" })
+   public boolean customPollerSpinWait;
+
    private Queue<Runnable> blockingReadTasks;
    private Queue<Runnable> blockingWriteTasks;
    private ServerSocket serverAcceptor;
@@ -96,6 +100,8 @@ public class PollerBenchmark {
       // this is necessary to make sure the Pooler used sits on a single threaded FJ pool
       setupDefaultScheduler(1);
    }
+
+   private Closeable poller;
 
 
    @Setup
@@ -130,6 +136,11 @@ public class PollerBenchmark {
          blockingReadTasks.add(task);
          LockSupport.unpark(carrierParked);
       };
+      // this is making the read poller to start on a virtual thread so, run it!
+      if (customPoller) {
+         poller = Thread.Builder.OfVirtual.startReadPoller(readScheduler);
+         runReadVirtualThreads();
+      }
       readThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), readScheduler).factory();
       writeThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), task -> {
          blockingWriteTasks.add(task);
@@ -156,6 +167,13 @@ public class PollerBenchmark {
             throw new RuntimeException(e);
          }
       };
+   }
+
+   private void runReadVirtualThreads() {
+      Runnable readPoller;
+      while ((readPoller = blockingReadTasks.poll()) != null) {
+         readPoller.run();
+      }
    }
 
    @Benchmark
@@ -194,7 +212,7 @@ public class PollerBenchmark {
    }
 
    private void trySleep() {
-      if (spinWait) {
+      if (customPollerSpinWait) {
          return;
       }
       carrierParked = Thread.currentThread();
@@ -214,8 +232,14 @@ public class PollerBenchmark {
 
    @TearDown
    public void cleanup() throws Exception {
+      if (poller != null) {
+         poller.close();
+      }
+      runReadVirtualThreads();
       clientSocket.close();
       serverSocket.close();
+
       serverAcceptor.close();
    }
 }
+

@@ -31,6 +31,8 @@ import io.netty.channel.IoHandlerContext;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.IoRegistration;
 import io.netty.channel.local.LocalIoHandler;
+
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import io.netty.bootstrap.ServerBootstrap;
@@ -277,9 +279,10 @@ public class MultithreadVirtualEventExecutorGroupTest {
                        @Override
                        public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
                           if (msg instanceof DefaultHttpRequest) {
-                             group.vThreadFactory().newThread(() -> {
+                             var factory = group.vThreadFactory();
+                             factory.newThread(() -> {
                                 final int beforeInner = wakeupCounter.get();
-                                Thread.ofVirtual().start(() -> {
+                                factory.newThread(() -> {
                                     var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
                                     contentBytes.writeCharSequence("HELLO!", CharsetUtil.US_ASCII);
                                     var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, contentBytes);
@@ -291,7 +294,7 @@ public class MultithreadVirtualEventExecutorGroupTest {
                                     ctx.writeAndFlush(response, ctx.voidPromise());
                                     final int afterWrite = wakeupCounter.get();
                                     innerWriteFromVThread.complete(afterWrite - beforeWrite);
-                                });
+                                }).start();
                                 final int afterInner = wakeupCounter.get();
                                 innerVThreadCreationFromVThread.complete(afterInner - beforeInner);
                              }).start();
@@ -318,6 +321,7 @@ public class MultithreadVirtualEventExecutorGroupTest {
       group.shutdownGracefully();
    }
 
+   @Disabled("Disabled due to https://github.com/openjdk/loom/commit/053e9be14cc567501ab27a2392bd14d51433791f")
    @Test
    void schedulerIsInherited() throws InterruptedException, ExecutionException {
       var group = new MultithreadVirtualEventExecutorGroup(1, LocalIoHandler.newFactory());
