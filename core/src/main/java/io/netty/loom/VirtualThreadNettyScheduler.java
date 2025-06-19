@@ -17,7 +17,11 @@ import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 public class VirtualThreadNettyScheduler implements Executor {
 
    private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
-   private static final long MAX_RUN_NS = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.run.us", 1));
+   // These are the soft-guaranteed yield times for the event loop whilst Thread.yield() is called.
+   // Based on the status of the event loop (resuming from blocking or non-blocking, controlled by the running flag)
+   // a different limit is applied.
+   private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 1));
+   private static final long IDLE_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
 
    private final MpscUnboundedArrayQueue<Runnable> externalContinuations;
    private final ManualIoEventLoop ioEventLoop;
@@ -73,11 +77,11 @@ public class VirtualThreadNettyScheduler implements Executor {
          if (canBlock) {
             canBlock = blockingRunIO();
          } else {
-            canBlock = ioEventLoop.runNow(MAX_RUN_NS) == 0;
+            canBlock = ioEventLoop.runNow(RUNNING_YIELD_US) == 0;
          }
          Thread.yield();
          // try running leftover write tasks before checking for I/O tasks
-         canBlock &= ioEventLoop.runNonBlockingTasks(MAX_RUN_NS) == 0;
+         canBlock &= ioEventLoop.runNonBlockingTasks(RUNNING_YIELD_US) == 0;
          Thread.yield();
       }
       // we are shutting down, it shouldn't take long so let's spin a bit :P
@@ -94,7 +98,7 @@ public class VirtualThreadNettyScheduler implements Executor {
          if (!canBlock()) {
             return false;
          }
-         return ioEventLoop.run(MAX_WAIT_TASKS_NS, MAX_RUN_NS) == 0;
+         return ioEventLoop.run(MAX_WAIT_TASKS_NS, RUNNING_YIELD_US) == 0;
       } finally{
          running.set(true);
       }
@@ -109,7 +113,10 @@ public class VirtualThreadNettyScheduler implements Executor {
       assert eventLoopContinuation != null && eventLoopContinuationAvailable.getCount() == 0;
       // we keep on running until the event loop is shutting-down
       while (!eventLoop.isTerminated()) {
-         int count = runExternalContinuations(MAX_RUN_NS);
+         // if the event loop was idle, we apply a different limit to the yield time
+         final boolean eventLoopRunning = running.get();
+         final long yieldDurationNs = eventLoopRunning ? RUNNING_YIELD_US : IDLE_YIELD_US;
+         int count = runExternalContinuations(yieldDurationNs);
          if (submittedEventLoopContinuation) {
             submittedEventLoopContinuation = false;
             eventLoopContinuation.run();
@@ -124,7 +131,7 @@ public class VirtualThreadNettyScheduler implements Executor {
       }
       while (!canBlock()) {
          // we still have continuations to run, let's run them
-         runExternalContinuations(MAX_RUN_NS);
+         runExternalContinuations(RUNNING_YIELD_US);
          if (submittedEventLoopContinuation) {
             submittedEventLoopContinuation = false;
             eventLoopContinuation.run();
@@ -176,6 +183,9 @@ public class VirtualThreadNettyScheduler implements Executor {
          //       we could skip the wakeup if matches with this.
          ioEventLoop.wakeup();
          LockSupport.unpark(parkedCarrierThread);
+      } else if (eventLoopContinuation != command && !running.get()) {
+         // since the event loop was blocked, it's fine if we try to consume some continuations, if any
+         Thread.yield();
       }
    }
 
