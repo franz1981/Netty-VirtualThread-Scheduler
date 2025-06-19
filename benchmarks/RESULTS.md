@@ -24,7 +24,7 @@ PollerBenchmark.readWrite                 128000            true                
 which shows that for small write/read sizes the custom poller is faster than the existing one, because it saves the hand-off from the master poller InnocuousThread to the sub-poller running in the default scheduler thread.
 This is happening because with small read/write the additional signaling overhead is visible enough compared to the read/write costs.
 
-For bigger I/O (e.g. 128000), the way the custom scheduler wait its tasks (including unparking the blocked reader) e.g. parking or spin waiting determines how impactful is the signaling is.
+For bigger I/O (e.g. 128000), the way the custom scheduler wait its tasks (including unparking the blocked reader) e.g. parking or spin waiting determines how impactful the signaling is.
 
 In term of dynamic:
 1. `customPoller = false`: master poller unpark the sub-poller virtual thread in the default scheduler thread, which unpark the reader in the custom scheduler thread
