@@ -9,10 +9,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Arrays;
 import java.util.Queue;
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.LockSupport;
 
 import org.openjdk.jmh.annotations.AuxCounters;
@@ -32,6 +29,21 @@ import org.openjdk.jmh.annotations.Warmup;
 import io.netty.loom.LoomSupport;
 import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 
+/**
+ * Benchmark Overview:
+ * <p>
+ * The `PollerBenchmark` measures the performance impact of blocking virtual thread operations.
+ * It simulates read and write I/O by ensuring the initial read blocks (yields, in Loom terms) until a corresponding write completes.
+ * <br>
+ * Since <a href="https://bugs.openjdk.org/browse/JDK-8318422">JDK-8318422</a>, sub-pollers run on the default scheduler as virtual threads.
+ * This means a blocked read requires the master poller (on an Innocuous platform thread) to unpark the sub-poller virtual thread,
+ * and the default scheduler’s sub-poller loop to unpark the custom scheduler’s blocked read virtual thread.
+ * <br>
+ * During this process, the JMH benchmark thread (acting as the custom scheduler carrier) waits.
+ * If the write operation is short, the signaling overhead becomes significant.
+ * <br>
+ * Using a custom poller reduces this signaling cost, so smaller I/O operations benefit more.
+ */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -53,6 +65,8 @@ public class PollerBenchmark {
    public int sendBufferSize;
    @Param({ "0" })
    public int port;
+   @Param({ "false", "true" })
+   public boolean spinWait;
    private Queue<Runnable> blockingReadTasks;
    private Queue<Runnable> blockingWriteTasks;
    private ServerSocket serverAcceptor;
@@ -112,10 +126,11 @@ public class PollerBenchmark {
       // TODO we could size it to always save any GC to happen!
       blockingReadTasks = new MpscUnboundedArrayQueue<>(1024);
       blockingWriteTasks = new MpscUnboundedArrayQueue<>(1024);
-      readThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), task -> {
+      Executor readScheduler = task -> {
          blockingReadTasks.add(task);
          LockSupport.unpark(carrierParked);
-      }).factory();
+      };
+      readThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), readScheduler).factory();
       writeThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), task -> {
          blockingWriteTasks.add(task);
          LockSupport.unpark(carrierParked);
@@ -128,7 +143,7 @@ public class PollerBenchmark {
       serverSocket.setSendBufferSize(sendBufferSize);
       serverWrite = () -> {
          try {
-             serverOut.write(outData);
+            serverOut.write(outData);
             writtenBytes += bytes;
          } catch (Throwable e) {
             throw new RuntimeException(e);
@@ -179,6 +194,9 @@ public class PollerBenchmark {
    }
 
    private void trySleep() {
+      if (spinWait) {
+         return;
+      }
       carrierParked = Thread.currentThread();
       try {
          if (canBlock()) {
