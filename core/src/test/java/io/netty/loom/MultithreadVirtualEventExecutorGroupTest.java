@@ -277,9 +277,10 @@ public class MultithreadVirtualEventExecutorGroupTest {
                        @Override
                        public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
                           if (msg instanceof DefaultHttpRequest) {
-                             group.vThreadFactory().newThread(() -> {
+                             var factory = group.vThreadFactory();
+                             factory.newThread(() -> {
                                 final int beforeInner = wakeupCounter.get();
-                                Thread.ofVirtual().start(() -> {
+                                factory.newThread(() -> {
                                     var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
                                     contentBytes.writeCharSequence("HELLO!", CharsetUtil.US_ASCII);
                                     var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, contentBytes);
@@ -291,7 +292,7 @@ public class MultithreadVirtualEventExecutorGroupTest {
                                     ctx.writeAndFlush(response, ctx.voidPromise());
                                     final int afterWrite = wakeupCounter.get();
                                     innerWriteFromVThread.complete(afterWrite - beforeWrite);
-                                });
+                                }).start();
                                 final int afterInner = wakeupCounter.get();
                                 innerVThreadCreationFromVThread.complete(afterInner - beforeInner);
                              }).start();
