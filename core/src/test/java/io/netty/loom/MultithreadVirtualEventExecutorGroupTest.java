@@ -321,6 +321,7 @@ public class MultithreadVirtualEventExecutorGroupTest {
       group.shutdownGracefully();
    }
 
+   /** Need to fix the getCarrier one
    @Disabled("Disabled due to https://github.com/openjdk/loom/commit/053e9be14cc567501ab27a2392bd14d51433791f")
    @Test
    void schedulerIsInherited() throws InterruptedException, ExecutionException {
@@ -352,7 +353,7 @@ public class MultithreadVirtualEventExecutorGroupTest {
       assertEquals(expectedCarrier, inheritedCarrier.get());
       assertEquals(expectedCarrier, inheritedVFactoryCarrier.get());
       group.shutdownGracefully();
-   }
+   }**/
 
    @Test
    void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked() throws BrokenBarrierException, InterruptedException, TimeoutException {
