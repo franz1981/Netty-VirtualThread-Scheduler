@@ -83,6 +83,7 @@ public class VirtualThreadNettyScheduler implements Executor {
       // we are shutting down, it shouldn't take long so let's spin a bit :P
       while (!ioEventLoop.isTerminated()) {
          ioEventLoop.runNow();
+         Thread.yield();
       }
    }
 
