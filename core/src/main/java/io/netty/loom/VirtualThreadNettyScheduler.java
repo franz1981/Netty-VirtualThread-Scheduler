@@ -74,11 +74,7 @@ public class VirtualThreadNettyScheduler implements Executor {
       assert ioEventLoop.inEventLoop(Thread.currentThread()) && Thread.currentThread().isVirtual();
       boolean canBlock = false;
       while (!ioEventLoop.isShuttingDown()) {
-         if (canBlock) {
-            canBlock = blockingRunIO();
-         } else {
-            canBlock = ioEventLoop.runNow(RUNNING_YIELD_US) == 0;
-         }
+         canBlock = runIO(canBlock);
          Thread.yield();
          // try running leftover write tasks before checking for I/O tasks
          canBlock &= ioEventLoop.runNonBlockingTasks(RUNNING_YIELD_US) == 0;
@@ -90,18 +86,22 @@ public class VirtualThreadNettyScheduler implements Executor {
       }
    }
 
-   private boolean blockingRunIO() {
-      // try to go to sleep waiting for I/O tasks
-      running.set(false);
-      // StoreLoad barrier: see https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/
-      try {
-         if (!canBlock()) {
-            return false;
+   private boolean runIO(boolean canBlock) {
+      if (canBlock) {
+         // try to go to sleep waiting for I/O tasks
+         running.set(false);
+         // StoreLoad barrier: see https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/
+         if (canBlock()) {
+            try {
+               return ioEventLoop.run(MAX_WAIT_TASKS_NS, RUNNING_YIELD_US) == 0;
+            } finally {
+               running.set(true);
+            }
+         } else {
+            running.set(false);
          }
-         return ioEventLoop.run(MAX_WAIT_TASKS_NS, RUNNING_YIELD_US) == 0;
-      } finally{
-         running.set(true);
       }
+      return ioEventLoop.runNow(RUNNING_YIELD_US) == 0;
    }
 
    private void virtualThreadSchedulerLoop() {
