@@ -30,7 +30,6 @@ import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.local.LocalIoHandler;
 import io.netty.channel.nio.NioIoHandler;
-import io.netty.loom.LoomSupport;
 import io.netty.loom.MultithreadVirtualEventExecutorGroup;
 
 @BenchmarkMode(Mode.Throughput)
@@ -84,7 +83,6 @@ public class SchedulerBenchmark {
          case Netty:
             var virtualGroup = new MultithreadVirtualEventExecutorGroup(1, factory);
             executorGroup = virtualGroup;
-            LoomSupport.checkSupported();
             vtFactory = executorGroup.submit(virtualGroup::vThreadFactory).get();
             break;
          case Default:

@@ -27,7 +27,6 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 
-import io.netty.loom.LoomSupport;
 import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 
 /**
@@ -50,7 +49,7 @@ import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
-@Fork(value = 2, jvmArgs = { "--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+@Fork(value = 2, jvmArgs = { "--enable-native-access=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
                              "-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false" })
 public class PollerBenchmark {
 
@@ -67,9 +66,7 @@ public class PollerBenchmark {
    @Param({ "0" })
    public int port;
    @Param({ "false", "true" })
-   public boolean customPoller;
-   @Param({ "false", "true" })
-   public boolean customPollerSpinWait;
+   public boolean spinWait;
 
    private Queue<Runnable> blockingReadTasks;
    private Queue<Runnable> blockingWriteTasks;
@@ -132,17 +129,12 @@ public class PollerBenchmark {
       // TODO we could size it to always save any GC to happen!
       blockingReadTasks = new MpscUnboundedArrayQueue<>(1024);
       blockingWriteTasks = new MpscUnboundedArrayQueue<>(1024);
-      Executor readScheduler = task -> {
+      // this is making the read poller to start on a virtual thread so, run it!
+      readThreadFactory = Thread.ofVirtual().scheduler(task -> {
          blockingReadTasks.add(task);
          LockSupport.unpark(carrierParked);
-      };
-      // this is making the read poller to start on a virtual thread so, run it!
-      if (customPoller) {
-         poller = Thread.Builder.OfVirtual.startReadPoller(readScheduler);
-         runReadVirtualThreads();
-      }
-      readThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), readScheduler).factory();
-      writeThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), task -> {
+      }).factory();
+      writeThreadFactory = Thread.ofVirtual().scheduler(task -> {
          blockingWriteTasks.add(task);
          LockSupport.unpark(carrierParked);
       }).factory();
@@ -212,7 +204,7 @@ public class PollerBenchmark {
    }
 
    private void trySleep() {
-      if (customPollerSpinWait) {
+      if (spinWait) {
          return;
       }
       carrierParked = Thread.currentThread();

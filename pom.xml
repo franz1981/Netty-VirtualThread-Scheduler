@@ -55,7 +55,7 @@
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>3.11.0</version>
                     <configuration>
-                        <release>25</release>
+                        <release>26</release>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -63,7 +63,7 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.1.2</version>
                     <configuration>
-                        <argLine>-Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
+                        <argLine>-Djdk.traceVirtualThreadLocals=false --enable-native-access=ALL-UNNAMED</argLine>
                     </configuration>
                 </plugin>
             </plugins>
