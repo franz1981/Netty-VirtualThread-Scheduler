@@ -19,6 +19,7 @@
         <netty.version>4.2.2.Final</netty.version>
         <junit.version>5.11.4</junit.version>
         <jmh.version>1.37</jmh.version>
+        <java.version>26</java.version>
     </properties>
 
     <dependencyManagement>
@@ -55,7 +56,8 @@
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>3.11.0</version>
                     <configuration>
-                        <release>21</release>
+                        <source>${java.version}</source>
+                        <target>${java.version}</target>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -63,7 +65,7 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.1.2</version>
                     <configuration>
-                        <argLine>-Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
+                        <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.GlobalDelegateThreadNettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
                     </configuration>
                 </plugin>
             </plugins>

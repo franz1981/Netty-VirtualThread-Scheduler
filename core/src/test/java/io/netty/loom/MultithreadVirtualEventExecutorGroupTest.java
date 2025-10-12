@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -17,12 +19,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.IoHandle;
@@ -400,6 +405,124 @@ public class MultithreadVirtualEventExecutorGroupTest {
       nonBlockingTasksCompleted.await();
       group.shutdownGracefully();
       assertFalse(interleavingVirtualThreads.get());
+   }
+
+   @Test
+   public void testGlobalScheduler() throws Exception {
+       GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler = testReplaceJdkBuildinScheduler();
+       testPlatformThreadSpawnsVirtualThreads(globalDelegateThreadNettyScheduler);
+       testNettyThreadSpawnsVirtualThreads(globalDelegateThreadNettyScheduler);
+       testVirtualThreadSpawnsVirtualThreads(globalDelegateThreadNettyScheduler);
+       testNettyThreadSpawnsSubVirtualThreads(globalDelegateThreadNettyScheduler);
+   }
+
+   private GlobalDelegateThreadNettyScheduler testReplaceJdkBuildinScheduler() throws InterruptedException {
+       CompletableFuture<Thread.VirtualThreadScheduler> schedulerCompletableFuture = new CompletableFuture<>();
+       Thread.ofVirtual()
+               .start(() -> schedulerCompletableFuture.complete(Thread.VirtualThreadScheduler.current()))
+               .join();
+       assertInstanceOf(GlobalDelegateThreadNettyScheduler.class, schedulerCompletableFuture.join());
+       GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler = (GlobalDelegateThreadNettyScheduler) schedulerCompletableFuture.join();
+       long vtCount = globalDelegateThreadNettyScheduler.internalSchedulerMappings
+               .keySet().stream().map(Thread::getName)
+               .filter(s -> !s.contains("Poller"))
+               .count();
+       assertEquals(0, vtCount);
+       return globalDelegateThreadNettyScheduler;
+   }
+
+   private void testPlatformThreadSpawnsVirtualThreads(GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler) throws InterruptedException {
+       CompletableFuture<Thread.VirtualThreadScheduler> schedulerCompletableFuture = new CompletableFuture<>();
+       Thread.ofPlatform()
+               .start(() -> {
+                   Thread.ofVirtual()
+                           .start(() -> {
+                               Thread.VirtualThreadScheduler virtualThreadScheduler = globalDelegateThreadNettyScheduler.internalSchedulerMappings.get(Thread.currentThread());
+                               schedulerCompletableFuture.complete(virtualThreadScheduler);
+                           });
+               });
+       Thread.VirtualThreadScheduler virtualThreadScheduler = schedulerCompletableFuture.join();
+       assertEquals(globalDelegateThreadNettyScheduler.jdkBuildinScheduler, virtualThreadScheduler);
+   }
+
+   private void testNettyThreadSpawnsVirtualThreads(GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler) throws InterruptedException {
+       record NettyVirtualThreadContext(Thread ioEventLoopThread,
+                                        Thread.VirtualThreadScheduler vtScheduler,Thread.VirtualThreadScheduler vtSchedulerFromScopeValue,
+                                        Thread.VirtualThreadScheduler subVtScheduler, VirtualThreadNettyScheduler subVtSchedulerFromScopeValue){};
+       var group = new MultithreadVirtualEventExecutorGroup(1, NioIoHandler.newFactory());
+       CompletableFuture<NettyVirtualThreadContext> schedulerCompletableFuture = new CompletableFuture<>();
+       group.execute(() -> {
+           Thread ioEventLoopThread = Thread.currentThread();
+           Thread.VirtualThreadScheduler vtScheduler = Thread.VirtualThreadScheduler.current();
+           VirtualThreadNettyScheduler vtSchedulerFromScopeValue = VirtualThreadNettyScheduler.current();
+
+           Thread.startVirtualThread(() -> {
+               Thread.VirtualThreadScheduler subVTScheduler = globalDelegateThreadNettyScheduler.internalSchedulerMappings.get(Thread.currentThread());
+               VirtualThreadNettyScheduler subVTSchedulerFromScopeValue = VirtualThreadNettyScheduler.current();
+               schedulerCompletableFuture.complete(new NettyVirtualThreadContext(ioEventLoopThread,
+                       vtScheduler, vtSchedulerFromScopeValue,
+                       subVTScheduler, subVTSchedulerFromScopeValue
+               ));
+           });
+       });
+       NettyVirtualThreadContext nettyVirtualThreadContext = schedulerCompletableFuture.join();
+       assertTrue(nettyVirtualThreadContext.ioEventLoopThread.isVirtual());
+       assertSame(nettyVirtualThreadContext.vtScheduler, nettyVirtualThreadContext.vtSchedulerFromScopeValue);
+       assertSame(nettyVirtualThreadContext.vtScheduler, nettyVirtualThreadContext.subVtScheduler);
+       assertNull(nettyVirtualThreadContext.subVtSchedulerFromScopeValue);
+
+       CompletableFuture<NettyVirtualThreadContext> newSchedulerCompletableFuture = new CompletableFuture<>();
+       group.execute(() -> {
+           Thread ioEventLoopThread = Thread.currentThread();
+           group.vThreadFactory()
+                   .newThread(() -> {
+                       Thread.VirtualThreadScheduler vtScheduler = Thread.VirtualThreadScheduler.current();
+                       VirtualThreadNettyScheduler vtSchedulerFromScopeValue = VirtualThreadNettyScheduler.current();
+
+                       Thread.startVirtualThread(() -> {
+                           Thread.VirtualThreadScheduler subVTScheduler = globalDelegateThreadNettyScheduler.internalSchedulerMappings.get(Thread.currentThread());
+                           VirtualThreadNettyScheduler subVTSchedulerFromScopeValue = VirtualThreadNettyScheduler.current();
+                           newSchedulerCompletableFuture.complete(new NettyVirtualThreadContext(ioEventLoopThread,
+                                   vtScheduler, vtSchedulerFromScopeValue,
+                                   subVTScheduler, subVTSchedulerFromScopeValue
+                           ));
+                       });
+                   }).start();
+       });
+       nettyVirtualThreadContext = schedulerCompletableFuture.join();
+       assertTrue(nettyVirtualThreadContext.ioEventLoopThread.isVirtual());
+       assertSame(nettyVirtualThreadContext.vtScheduler, nettyVirtualThreadContext.vtSchedulerFromScopeValue);
+       assertSame(nettyVirtualThreadContext.vtScheduler, nettyVirtualThreadContext.subVtScheduler);
+       assertNull(nettyVirtualThreadContext.subVtSchedulerFromScopeValue);
+
+       group.shutdownGracefully();
+   }
+
+   private void testNettyThreadSpawnsSubVirtualThreads(GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler) throws InterruptedException {
+       record NettyVirtualThreadContext(Thread.VirtualThreadScheduler eventLoopScheduler, Thread.VirtualThreadScheduler vtScheduler){};
+       var group = new MultithreadVirtualEventExecutorGroup(1, NioIoHandler.newFactory());
+       CompletableFuture<NettyVirtualThreadContext> schedulerCompletableFuture = new CompletableFuture<>();
+       group.execute(() -> {
+           group.vThreadFactory()
+                   .newThread(() -> {
+                       Thread.VirtualThreadScheduler eventLoopScheduler = Thread.VirtualThreadScheduler.current();
+                       Thread.startVirtualThread(() -> {
+                           Thread.VirtualThreadScheduler vtScheduler = globalDelegateThreadNettyScheduler.internalSchedulerMappings.get(Thread.currentThread());
+                           schedulerCompletableFuture.complete(new NettyVirtualThreadContext(eventLoopScheduler, vtScheduler));
+                       });
+                   }).start();
+       });
+
+       NettyVirtualThreadContext nettyVirtualThreadContext = schedulerCompletableFuture.join();
+       assertSame(nettyVirtualThreadContext.eventLoopScheduler, nettyVirtualThreadContext.vtScheduler);
+   }
+
+   private void testVirtualThreadSpawnsVirtualThreads(GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler) throws InterruptedException {
+       CompletableFuture<Thread.VirtualThreadScheduler> completableFuture = new CompletableFuture<>();
+       Thread.startVirtualThread(() -> Thread.startVirtualThread(() -> completableFuture.complete(globalDelegateThreadNettyScheduler.internalSchedulerMappings.get(Thread.currentThread()))));
+
+       Thread.VirtualThreadScheduler subVTScheduler = completableFuture.join();
+       assertSame(globalDelegateThreadNettyScheduler.jdkBuildinScheduler, subVTScheduler);
    }
 
    private static void spinWait(long nanos) {

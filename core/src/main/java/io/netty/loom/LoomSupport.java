@@ -8,31 +8,17 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 public final class LoomSupport {
-   private static final MethodHandle SCHEDULER;
    private static final VarHandle CARRIER_THREAD;
    private static final Throwable CUSTOM_SCHEDULER_FAILURE;
    private static final CompletableFuture<Throwable> FJ_SUBPOLLER_FAILURE;
 
    static {
       Throwable error = null;
-      MethodHandle scheduler;
       VarHandle carrierThread;
       FJ_SUBPOLLER_FAILURE = new CompletableFuture<>();
       try {
          // this is required to override the default scheduler
          MethodHandles.Lookup lookup = MethodHandles.lookup();
-         Field schedulerField = Class.forName("java.lang.ThreadBuilders$VirtualThreadBuilder")
-               .getDeclaredField("scheduler");
-         schedulerField.setAccessible(true);
-         scheduler = lookup.unreflectSetter(schedulerField);
-
-         var builder = Thread.ofVirtual();
-         scheduler.invoke(builder, new Executor() {
-            @Override
-            public void execute(Runnable command) {
-
-            }
-         });
 
          carrierThread = findVarHandle(Class.forName("java.lang.VirtualThread"),
                "carrierThread", Thread.class);
@@ -44,13 +30,11 @@ public final class LoomSupport {
             }
          }));
       } catch (Throwable e) {
-         scheduler = null;
          carrierThread = null;
          error = e;
       }
 
       CUSTOM_SCHEDULER_FAILURE = error;
-      SCHEDULER = scheduler;
       CARRIER_THREAD = carrierThread;
 
       // this is to ensure that we are inheriting the correct scheduler
@@ -115,11 +99,7 @@ public final class LoomSupport {
    public static Thread.Builder.OfVirtual setVirtualThreadFactoryScheduler(Thread.Builder.OfVirtual builder,
                                                                            Executor vthreadScheduler) {
       checkSupported();
-      try {
-         SCHEDULER.invoke(builder, vthreadScheduler);
-         return builder;
-      } catch (Throwable e) {
-         throw new RuntimeException(e);
-      }
+      builder.scheduler(Thread.VirtualThreadScheduler.adapt(vthreadScheduler));
+      return builder;
    }
 }
