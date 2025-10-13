@@ -29,27 +29,13 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
     @Override
     public void execute(Thread vthread, Runnable task) {
 
-        Thread.VirtualThreadScheduler internalScheduler = internalSchedulerMappings.computeIfAbsent(vthread, _ -> {
-            // platform thread
-            if (!Thread.currentThread().isVirtual()) {
-                return jdkBuildinScheduler;
-            }
-            VirtualThreadNettyScheduler current = VirtualThreadNettyScheduler.current();
-            // The current thread was spawned from a specific VirtualThreadNettyScheduler,
-            // so we continue using that scheduler.
-            if (current != null) {
-                return current;
-            }
-            Thread callerThread = Thread.currentThread();
-            Thread.VirtualThreadScheduler parentScheduler = internalSchedulerMappings.get(callerThread);
-            if (parentScheduler != null) {
-                return parentScheduler;
-            }
-
-            // The current thread was spawned from an unknown scheduler that is not managed by GlobalDelegateThreadNettyScheduler,
-            // so we directly use the parent’s scheduler instead to avoid potential stack overflow.
-            return VirtualThreadNettyScheduler.current();
-        });
+        // When scheduling virtual threads, `GlobalDelegateThreadNettyScheduler::execute` will not be invoked concurrently for the same virtual thread,
+        // so it’s safe to replace `computeIfAbsent` with a `get + put` approach to reduce overhead.
+        Thread.VirtualThreadScheduler internalScheduler = internalSchedulerMappings.get(vthread);
+        if (internalScheduler == null) {
+            internalScheduler = determineScheduler(vthread);
+            internalSchedulerMappings.put(vthread, internalScheduler);
+        }
 
         internalScheduler.execute(vthread, () -> {
             try {
@@ -60,6 +46,28 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
                 }
             }
         });
+    }
+
+    private Thread.VirtualThreadScheduler determineScheduler(Thread thread) {
+        // platform thread
+        if (!Thread.currentThread().isVirtual()) {
+            return jdkBuildinScheduler;
+        }
+        VirtualThreadNettyScheduler current = VirtualThreadNettyScheduler.current();
+        // The current thread was spawned from a specific VirtualThreadNettyScheduler,
+        // so we continue using that scheduler.
+        if (current != null) {
+            return current;
+        }
+        Thread callerThread = Thread.currentThread();
+        Thread.VirtualThreadScheduler parentScheduler = internalSchedulerMappings.get(callerThread);
+        if (parentScheduler != null) {
+            return parentScheduler;
+        }
+
+        // The current thread was spawned from an unknown scheduler that is not managed by GlobalDelegateThreadNettyScheduler,
+        // so we directly use the parent’s scheduler instead to avoid potential stack overflow.
+        return VirtualThreadNettyScheduler.current();
     }
 }
 
