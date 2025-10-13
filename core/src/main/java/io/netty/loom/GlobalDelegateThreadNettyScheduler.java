@@ -69,5 +69,10 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
         // so we directly use the parent’s scheduler instead to avoid potential stack overflow.
         return Thread.VirtualThreadScheduler.current();
     }
+
+    // just for benchmark
+    public Thread.VirtualThreadScheduler getJdkBuildinScheduler() {
+        return jdkBuildinScheduler;
+    }
 }
 

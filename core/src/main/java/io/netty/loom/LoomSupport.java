@@ -9,12 +9,14 @@ import java.util.concurrent.Executor;
 
 public final class LoomSupport {
    private static final VarHandle CARRIER_THREAD;
+   private static final VarHandle SCHEDULER;
    private static final Throwable CUSTOM_SCHEDULER_FAILURE;
    private static final CompletableFuture<Throwable> FJ_SUBPOLLER_FAILURE;
 
    static {
       Throwable error = null;
       VarHandle carrierThread;
+      VarHandle scheduler;
       FJ_SUBPOLLER_FAILURE = new CompletableFuture<>();
       try {
          // this is required to override the default scheduler
@@ -29,13 +31,16 @@ public final class LoomSupport {
 
             }
          }));
+         scheduler = findVarHandle(Class.forName("java.lang.VirtualThread"),"scheduler", Thread.VirtualThreadScheduler.class);
       } catch (Throwable e) {
          carrierThread = null;
+         scheduler = null;
          error = e;
       }
 
       CUSTOM_SCHEDULER_FAILURE = error;
       CARRIER_THREAD = carrierThread;
+      SCHEDULER = scheduler;
 
       // this is to ensure that we are inheriting the correct scheduler
       if (CUSTOM_SCHEDULER_FAILURE != null) {
@@ -91,6 +96,18 @@ public final class LoomSupport {
       }
       try {
          return (Thread) CARRIER_THREAD.getVolatile(t);
+      } catch (Throwable e) {
+         throw new RuntimeException(e);
+      }
+   }
+
+   public static Thread.VirtualThreadScheduler getScheduler(Thread t) {
+      checkSupported();
+      if (!t.isVirtual()) {
+         return null;
+      }
+      try {
+         return (Thread.VirtualThreadScheduler) SCHEDULER.get(t);
       } catch (Throwable e) {
          throw new RuntimeException(e);
       }
