@@ -49,8 +49,9 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
     }
 
     private Thread.VirtualThreadScheduler determineScheduler(Thread thread) {
+        Thread callerThread = Thread.currentThread();
         // platform thread
-        if (!Thread.currentThread().isVirtual()) {
+        if (!callerThread.isVirtual()) {
             return jdkBuildinScheduler;
         }
         VirtualThreadNettyScheduler current = VirtualThreadNettyScheduler.current();
@@ -59,7 +60,6 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
         if (current != null) {
             return current;
         }
-        Thread callerThread = Thread.currentThread();
         Thread.VirtualThreadScheduler parentScheduler = internalSchedulerMappings.get(callerThread);
         if (parentScheduler != null) {
             return parentScheduler;
