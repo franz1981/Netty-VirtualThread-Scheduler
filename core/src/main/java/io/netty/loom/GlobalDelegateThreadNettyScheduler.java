@@ -67,7 +67,7 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
 
         // The current thread was spawned from an unknown scheduler that is not managed by GlobalDelegateThreadNettyScheduler,
         // so we directly use the parent’s scheduler instead to avoid potential stack overflow.
-        return VirtualThreadNettyScheduler.current();
+        return Thread.VirtualThreadScheduler.current();
     }
 }
 

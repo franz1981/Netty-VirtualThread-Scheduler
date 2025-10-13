@@ -20,6 +20,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -523,6 +524,20 @@ public class MultithreadVirtualEventExecutorGroupTest {
 
        Thread.VirtualThreadScheduler subVTScheduler = completableFuture.join();
        assertSame(globalDelegateThreadNettyScheduler.jdkBuildinScheduler, subVTScheduler);
+
+       ExecutorService executor = Executors.newSingleThreadExecutor();
+       Thread.VirtualThreadScheduler virtualThreadScheduler = Thread.VirtualThreadScheduler.adapt(executor);
+
+       CompletableFuture<Thread.VirtualThreadScheduler> newCompletableFuture = new CompletableFuture<>();
+       Thread.ofVirtual()
+               .scheduler(virtualThreadScheduler)
+               .start(() -> {
+                   Thread.startVirtualThread(() -> {
+                       newCompletableFuture.complete(globalDelegateThreadNettyScheduler.internalSchedulerMappings.get(Thread.currentThread()));
+                   });
+               });
+       assertSame(virtualThreadScheduler, newCompletableFuture.join());
+       executor.shutdownNow();
    }
 
    private static void spinWait(long nanos) {
