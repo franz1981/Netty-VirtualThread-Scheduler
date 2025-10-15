@@ -174,9 +174,6 @@ public class VirtualThreadNettyScheduler implements Thread.VirtualThreadSchedule
 
    @Override
    public void execute(Thread vthread, Runnable command) {
-      if (ioEventLoop.isTerminated()) {
-         throw new RejectedExecutionException("event loop is shutting down");
-      }
       // The default scheduler won't shut down, but Netty's event loop can!
       Runnable eventLoopContinuation = this.eventLoopContinuation;
       if (eventLoopContinuation == null) {
@@ -185,6 +182,9 @@ public class VirtualThreadNettyScheduler implements Thread.VirtualThreadSchedule
       if (eventLoopContinuation == command) {
          submittedEventLoopContinuation = true;
       } else {
+         if (ioEventLoop.isTerminated()) {
+            throw new RejectedExecutionException("event loop is shutting down");
+         }
          externalContinuations.offer(command);
       }
       if (!inEventLoop(Thread.currentThread())) {
