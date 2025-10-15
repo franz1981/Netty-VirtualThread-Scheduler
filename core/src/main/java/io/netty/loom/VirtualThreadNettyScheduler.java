@@ -65,6 +65,10 @@ public class VirtualThreadNettyScheduler implements Thread.VirtualThreadSchedule
       }
    }
 
+   int externalContinuationsCount() {
+      return externalContinuations.size();
+   }
+
    public ThreadFactory virtualThreadFactory() {
       return vThreadFactory;
    }
