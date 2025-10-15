@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -19,7 +18,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -28,7 +26,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.IoHandle;
@@ -409,27 +406,49 @@ public class MultithreadVirtualEventExecutorGroupTest {
    }
 
    @Test
-   public void testGlobalScheduler() throws Exception {
-       GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler = testReplaceJdkBuildinScheduler();
-       testPlatformThreadSpawnsVirtualThreads(globalDelegateThreadNettyScheduler);
-       testNettyThreadSpawnsVirtualThreads(globalDelegateThreadNettyScheduler);
-       testVirtualThreadSpawnsVirtualThreads(globalDelegateThreadNettyScheduler);
-       testNettyThreadSpawnsSubVirtualThreads(globalDelegateThreadNettyScheduler);
+   public void testReplaceJdkBuildinScheduler() throws InterruptedException {
+      assertInstanceOf(GlobalDelegateThreadNettyScheduler.class, builtinGlobalScheduler());
    }
 
-   private GlobalDelegateThreadNettyScheduler testReplaceJdkBuildinScheduler() throws InterruptedException {
+   @Test
+   public void testContainsJustBuiltinPollers() throws InterruptedException {
+      assertContainsJustBuiltinPollers(builtinGlobalScheduler());
+   }
+
+   @Test
+   public void testPlatformThreadSpawnsVirtualThreads() throws InterruptedException {
+       testPlatformThreadSpawnsVirtualThreads(builtinGlobalScheduler());
+   }
+
+   @Test
+   public void testNettyThreadSpawnsVirtualThreads() throws InterruptedException {
+       testNettyThreadSpawnsVirtualThreads(builtinGlobalScheduler());
+   }
+
+   @Test
+   public void testVirtualThreadSpawnsVirtualThreads() throws InterruptedException {
+       testVirtualThreadSpawnsVirtualThreads(builtinGlobalScheduler());
+   }
+
+   @Test
+   public void testNettyThreadSpawnsSubVirtualThreads() throws InterruptedException {
+       testNettyThreadSpawnsSubVirtualThreads(builtinGlobalScheduler());
+   }
+
+   private GlobalDelegateThreadNettyScheduler builtinGlobalScheduler() throws InterruptedException {
        CompletableFuture<Thread.VirtualThreadScheduler> schedulerCompletableFuture = new CompletableFuture<>();
        Thread.ofVirtual()
                .start(() -> schedulerCompletableFuture.complete(Thread.VirtualThreadScheduler.current()))
                .join();
-       assertInstanceOf(GlobalDelegateThreadNettyScheduler.class, schedulerCompletableFuture.join());
-       GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler = (GlobalDelegateThreadNettyScheduler) schedulerCompletableFuture.join();
-       long vtCount = globalDelegateThreadNettyScheduler.internalSchedulerMappings
-               .keySet().stream().map(Thread::getName)
-               .filter(s -> !s.contains("Poller"))
-               .count();
-       assertEquals(0, vtCount);
-       return globalDelegateThreadNettyScheduler;
+       return (GlobalDelegateThreadNettyScheduler) schedulerCompletableFuture.join();
+   }
+
+   private static void assertContainsJustBuiltinPollers(GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler) {
+      assertTrue(globalDelegateThreadNettyScheduler.internalSchedulerMappings
+            .entrySet().stream()
+            .allMatch(entry ->
+                        entry.getKey().getName().contains("Poller") &&
+                        entry.getValue() == globalDelegateThreadNettyScheduler.getJdkBuildinScheduler()));
    }
 
    private void testPlatformThreadSpawnsVirtualThreads(GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler) throws InterruptedException {
@@ -496,7 +515,8 @@ public class MultithreadVirtualEventExecutorGroupTest {
        assertSame(nettyVirtualThreadContext.vtScheduler, nettyVirtualThreadContext.subVtScheduler);
        assertNull(nettyVirtualThreadContext.subVtSchedulerFromScopeValue);
 
-       group.shutdownGracefully();
+       group.shutdownGracefully().await();
+       assertContainsJustBuiltinPollers(globalDelegateThreadNettyScheduler);
    }
 
    private void testNettyThreadSpawnsSubVirtualThreads(GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler) throws InterruptedException {
@@ -516,6 +536,8 @@ public class MultithreadVirtualEventExecutorGroupTest {
 
        NettyVirtualThreadContext nettyVirtualThreadContext = schedulerCompletableFuture.join();
        assertSame(nettyVirtualThreadContext.eventLoopScheduler, nettyVirtualThreadContext.vtScheduler);
+       group.shutdownGracefully().await();
+       assertContainsJustBuiltinPollers(globalDelegateThreadNettyScheduler);
    }
 
    private void testVirtualThreadSpawnsVirtualThreads(GlobalDelegateThreadNettyScheduler globalDelegateThreadNettyScheduler) throws InterruptedException {

@@ -28,15 +28,15 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
 
     @Override
     public void execute(Thread vthread, Runnable task) {
-
         // When scheduling virtual threads, `GlobalDelegateThreadNettyScheduler::execute` will not be invoked concurrently for the same virtual thread,
         // so it’s safe to replace `computeIfAbsent` with a `get + put` approach to reduce overhead.
         Thread.VirtualThreadScheduler internalScheduler = internalSchedulerMappings.get(vthread);
         if (internalScheduler == null) {
-            internalScheduler = determineScheduler(vthread);
+            internalScheduler = determineScheduler();
+            // we remember ANY mapping, including the JDK built-in scheduler ones
             internalSchedulerMappings.put(vthread, internalScheduler);
         }
-
+        // regardless which scheduler is used, we need to remove the mapping once the vthread is terminated
         internalScheduler.execute(vthread, () -> {
             try {
                 task.run();
@@ -48,7 +48,7 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
         });
     }
 
-    private Thread.VirtualThreadScheduler determineScheduler(Thread thread) {
+    private Thread.VirtualThreadScheduler determineScheduler() {
         Thread callerThread = Thread.currentThread();
         // platform thread
         if (!callerThread.isVirtual()) {
