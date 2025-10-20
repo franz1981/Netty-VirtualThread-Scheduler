@@ -24,17 +24,18 @@ jobs:
         # Extract the archive
         tar -xf openjdk-jdk-loom-linux-x86_64-server.tar.xz
         
-        # Find the extracted directory (it may have a version-specific name)
-        LOOM_DIR=$(find . -maxdepth 1 -type d -name "jdk-*" | head -1)
-        
         # Set JAVA_HOME for subsequent steps
-        echo "JAVA_HOME=$PWD/$LOOM_DIR" >> $GITHUB_ENV
-        echo "$PWD/$LOOM_DIR/bin" >> $GITHUB_PATH
+        echo "JAVA_HOME=$PWD/jdk" >> $GITHUB_ENV
+        echo "$PWD/jdk/bin" >> $GITHUB_PATH
     
     - name: Verify Java version
       run: |
         java -version
         echo "JAVA_HOME=$JAVA_HOME"
+    
+    - name: Verify Java version in Maven
+      run: |
+        mvn --version
     
     - name: Cache Maven packages
       uses: actions/cache@v4
