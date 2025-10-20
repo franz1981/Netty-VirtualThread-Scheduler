@@ -1,0 +1,47 @@
+# This workflow runs tests with a fresh Loom build from shipilev.net
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-java-with-maven
+
+name: Loom Build Tests
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  test-with-loom:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download and setup Loom JDK
+      run: |
+        # Download the latest Loom build
+        wget -q https://builds.shipilev.net/openjdk-jdk-loom/openjdk-jdk-loom-linux-x86_64-server.tar.xz
+        
+        # Extract the archive
+        tar -xf openjdk-jdk-loom-linux-x86_64-server.tar.xz
+        
+        # Find the extracted directory (it may have a version-specific name)
+        LOOM_DIR=$(find . -maxdepth 1 -type d -name "jdk-*" | head -1)
+        
+        # Set JAVA_HOME for subsequent steps
+        echo "JAVA_HOME=$PWD/$LOOM_DIR" >> $GITHUB_ENV
+        echo "$PWD/$LOOM_DIR/bin" >> $GITHUB_PATH
+    
+    - name: Verify Java version
+      run: |
+        java -version
+        echo "JAVA_HOME=$JAVA_HOME"
+    
+    - name: Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+    
+    - name: Build with Maven
+      run: mvn -B package --file pom.xml
