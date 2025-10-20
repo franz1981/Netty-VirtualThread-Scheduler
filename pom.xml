@@ -64,6 +64,14 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.1.2</version>
+                    <configuration>
+                        <properties>
+                            <configurationParameters>
+                                junit.jupiter.execution.timeout.default = 60 s
+                                junit.jupiter.execution.timeout.mode = enabled
+                            </configurationParameters>
+                        </properties>
+                    </configuration>
                     <executions>
                         <execution>
                             <id>default-test</id>
