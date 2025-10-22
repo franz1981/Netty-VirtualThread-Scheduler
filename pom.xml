@@ -73,6 +73,7 @@
                             </goals>
                             <configuration>
                                 <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.GlobalDelegateThreadNettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
+                                <forkedProcessTimeoutInSeconds>300</forkedProcessTimeoutInSeconds>
                             </configuration>
                         </execution>
                         <execution>
@@ -83,6 +84,7 @@
                             </goals>
                             <configuration>
                                 <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.GlobalDelegateThreadNettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
+                                <forkedProcessTimeoutInSeconds>300</forkedProcessTimeoutInSeconds>
                             </configuration>
                         </execution>
                     </executions>
