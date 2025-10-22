@@ -497,6 +497,13 @@ public class MultithreadVirtualEventExecutorGroupTest {
                   int beforeContinuations = beforeNettyScheduler.externalContinuationsCount();
                   int beforeInheritedSubPollers = (int) countNettyInheritedReadPollerThreads(globalScheduler, beforeNettyScheduler);
                   try {
+                     // For -Djdk.pollerMode=3:
+                     // When a carrier blocks a per-carrier read sub-poller is started and submitted to Netty's scheduler.
+                     // If the carrier's Thread::currentThread was inherited the sub-poller goes via the global scheduler;
+                     // if the carrier is pinned to the Netty scheduler it is submitted directly.
+                     // Pinned sub-pollers do not have the scoped VirtualThreadNettyScheduler value, but that is safe:
+                     // any VT unparked by the poller is already registered with either the Netty or global scheduler
+                     // and will find the correct scheduler without calling VirtualThreadNettyScheduler.current().
                      serverIn.read();
                      var afterNettyScheduler = currentNettyScheduler(globalScheduler);
                      int afterContinuations = afterNettyScheduler.externalContinuationsCount();
