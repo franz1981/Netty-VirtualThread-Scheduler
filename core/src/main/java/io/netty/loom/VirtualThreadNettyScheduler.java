@@ -1,6 +1,5 @@
 package io.netty.loom;
 
-import java.util.Queue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -11,7 +10,6 @@ import io.netty.channel.IoEventLoopGroup;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
 import io.netty.util.concurrent.FastThreadLocalThread;
-import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 
 public class VirtualThreadNettyScheduler {
 
@@ -23,8 +21,7 @@ public class VirtualThreadNettyScheduler {
    private static final long IDLE_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
    // This is required to allow sub-pollers to run on the correct scheduler
    private static final ScopedValue<AtomicReference<VirtualThreadNettyScheduler>> CURRENT_SCHEDULER = ScopedValue.newInstance();
-   private volatile MpscUnboundedArrayQueue<Runnable> submissionQueue;
-   private final MpscUnboundedArrayQueue<Runnable> runQueue;
+   private final MpscUnboundedStream<Runnable> runQueue;
    private final ManualIoEventLoop ioEventLoop;
    private final Thread eventLoopThread;
    private final Thread carrierThread;
@@ -37,8 +34,7 @@ public class VirtualThreadNettyScheduler {
    public VirtualThreadNettyScheduler(IoEventLoopGroup parent, ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
       schedulerReference = new AtomicReference<>(this);
       running = new AtomicBoolean(false);
-      runQueue = new MpscUnboundedArrayQueue<>(resumedContinuationsExpectedCount);
-      submissionQueue = runQueue;
+      runQueue = new MpscUnboundedStream<>(resumedContinuationsExpectedCount);
       carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
       var rawVTFactory = Thread.ofVirtual().factory();
       vThreadFactory = runnable ->
@@ -140,7 +136,7 @@ public class VirtualThreadNettyScheduler {
          runEventLoopContinuation();
       }
       schedulerReference.set(null);
-      submissionQueue = null;
+      runQueue.close();
       // StoreLoad barrier
       while (!runQueue.isEmpty()) {
          runExternalContinuations(IDLE_YIELD_US);
@@ -185,20 +181,7 @@ public class VirtualThreadNettyScheduler {
    public boolean execute(Thread.VirtualThreadTask task) {
       boolean isEventLoopContinuation = eventLoopContinuation(task);
       if (!isEventLoopContinuation) {
-        var q = submissionQueue;
-        if (q == null) {
-            return false;
-        }
-        q.offer(task);
-        // double-check in case we are shutting down
-        if (submissionQueue == null) {
-            // TODO
-            // What if:
-            // 1) we added to the queue
-            // 2) we got paused for long time
-            // 3) the scheduler found the task and run it
-            // 4) we are resuming here and return false
-            // This is not ok, need to be fixed!
+        if (!runQueue.offer(task)) {
             return false;
         }
       }
