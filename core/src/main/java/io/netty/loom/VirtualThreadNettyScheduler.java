@@ -1,11 +1,10 @@
 package io.netty.loom;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executor;
-import java.util.concurrent.RejectedExecutionException;
+import java.util.Queue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import io.netty.channel.IoEventLoopGroup;
@@ -14,7 +13,7 @@ import io.netty.channel.ManualIoEventLoop;
 import io.netty.util.concurrent.FastThreadLocalThread;
 import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 
-public class VirtualThreadNettyScheduler implements Thread.VirtualThreadScheduler {
+public class VirtualThreadNettyScheduler {
 
    private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
    // These are the soft-guaranteed yield times for the event loop whilst Thread.yield() is called.
@@ -22,51 +21,37 @@ public class VirtualThreadNettyScheduler implements Thread.VirtualThreadSchedule
    // a different limit is applied.
    private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 1));
    private static final long IDLE_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
-   private static final ScopedValue<Thread.VirtualThreadScheduler> CURRENT_SCHEDULER = ScopedValue.newInstance();
-   private static final Thread.VirtualThreadScheduler EMPTY = new Thread.VirtualThreadScheduler() {
-      @Override
-      public void execute(Thread vthread, Runnable command) {
-         throw new RejectedExecutionException("VirtualThreadScheduler is empty");
-      }
-   };
-
-   private final MpscUnboundedArrayQueue<Runnable> externalContinuations;
+   // This is required to allow sub-pollers to run on the correct scheduler
+   private static final ScopedValue<AtomicReference<VirtualThreadNettyScheduler>> CURRENT_SCHEDULER = ScopedValue.newInstance();
+   private volatile MpscUnboundedArrayQueue<Runnable> submissionQueue;
+   private final MpscUnboundedArrayQueue<Runnable> runQueue;
    private final ManualIoEventLoop ioEventLoop;
    private final Thread eventLoopThread;
    private final Thread carrierThread;
    private volatile Thread parkedCarrierThread;
-   private volatile Runnable eventLoopContinuation;
-   private volatile boolean submittedEventLoopContinuation;
-   private final CountDownLatch eventLoopContinuationAvailable;
+   private volatile Runnable eventLoopContinuatioToRun;
    private final ThreadFactory vThreadFactory;
    private final AtomicBoolean running;
+   private final AtomicReference<VirtualThreadNettyScheduler> schedulerReference;
 
    public VirtualThreadNettyScheduler(IoEventLoopGroup parent, ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
-      this.running = new AtomicBoolean(false);
-      this.externalContinuations = new MpscUnboundedArrayQueue<>(resumedContinuationsExpectedCount);
-      this.carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
-      var builder = Thread.ofVirtual().scheduler(this);
-      ThreadFactory rawVTFactory = builder.factory();
-      this.vThreadFactory = (r) -> rawVTFactory.newThread(() -> ScopedValue.where(CURRENT_SCHEDULER, this).run(r));
-      this.eventLoopThread = vThreadFactory.newThread(
-            // this is enabling the adaptive allocator to use unshared magazines
-            () -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
-      this.ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
+      schedulerReference = new AtomicReference<>(this);
+      running = new AtomicBoolean(false);
+      runQueue = new MpscUnboundedArrayQueue<>(resumedContinuationsExpectedCount);
+      submissionQueue = runQueue;
+      carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
+      var rawVTFactory = Thread.ofVirtual().factory();
+      vThreadFactory = runnable ->
+              GlobalDelegateThreadNettyScheduler.assignUnstarted(rawVTFactory.newThread(
+                      () -> ScopedValue.where(CURRENT_SCHEDULER, schedulerReference).run(runnable)), schedulerReference);
+      eventLoopThread = vThreadFactory.newThread(() -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
+      ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
             ioExecutor -> new AwakeAwareIoHandler(running, ioHandlerFactory.newHandler(ioExecutor)));
-      // we can start the carrier only after all the fields are initialized
-      eventLoopContinuationAvailable = new CountDownLatch(1);
       carrierThread.start();
-      // TODO we cannot make the virtual thread factory available until the event loop v thread is started:
-      //      we can save this if we can query the virtual thread associated with a continuation
-      try {
-         eventLoopContinuationAvailable.await();
-      } catch (InterruptedException e) {
-         throw new RuntimeException(e);
-      }
    }
 
    int externalContinuationsCount() {
-      return externalContinuations.size();
+      return runQueue.size();
    }
 
    public ThreadFactory virtualThreadFactory() {
@@ -111,29 +96,35 @@ public class VirtualThreadNettyScheduler implements Thread.VirtualThreadSchedule
                running.set(true);
             }
          } else {
-            running.set(false);
+            running.set(true);
          }
       }
       return ioEventLoop.runNow(RUNNING_YIELD_US) == 0;
+   }
+
+   private boolean runEventLoopContinuation() {
+      assert Thread.currentThread() == carrierThread;
+      var eventLoopContinuation = this.eventLoopContinuatioToRun;
+      if (eventLoopContinuation != null) {
+         this.eventLoopContinuatioToRun = null;
+         eventLoopContinuation.run();
+         return true;
+      }
+      return false;
    }
 
    private void virtualThreadSchedulerLoop() {
       // start the event loop thread
       var eventLoop = this.ioEventLoop;
       eventLoopThread.start();
-      // we expect here the continuation to be set up already
-      var eventLoopContinuation = this.eventLoopContinuation;
-      assert eventLoopContinuation != null && eventLoopContinuationAvailable.getCount() == 0;
+      assert eventLoopContinuatioToRun != null;
       // we keep on running until the event loop is shutting-down
       while (!eventLoop.isTerminated()) {
          // if the event loop was idle, we apply a different limit to the yield time
          final boolean eventLoopRunning = running.get();
          final long yieldDurationNs = eventLoopRunning ? RUNNING_YIELD_US : IDLE_YIELD_US;
          int count = runExternalContinuations(yieldDurationNs);
-         if (submittedEventLoopContinuation) {
-            submittedEventLoopContinuation = false;
-            eventLoopContinuation.run();
-         } else if (count == 0) {
+         if (!runEventLoopContinuation() && count == 0) {
             // nothing to run, including the event loop: we can park
             parkedCarrierThread = carrierThread;
             if (canBlock()) {
@@ -142,24 +133,27 @@ public class VirtualThreadNettyScheduler implements Thread.VirtualThreadSchedule
             parkedCarrierThread = null;
          }
       }
-      while (!canBlock()) {
-         // we still have continuations to run, let's run them
+      // make sure the event loop thread is fully terminated
+      // TODO verify that isAlive works!
+      while (eventLoopThread.isAlive()) {
          runExternalContinuations(RUNNING_YIELD_US);
-         if (submittedEventLoopContinuation) {
-            submittedEventLoopContinuation = false;
-            eventLoopContinuation.run();
-         }
+         runEventLoopContinuation();
+      }
+      schedulerReference.set(null);
+      submissionQueue = null;
+      // StoreLoad barrier
+      while (!runQueue.isEmpty()) {
+         runExternalContinuations(IDLE_YIELD_US);
       }
    }
 
    private boolean canBlock() {
-      return externalContinuations.isEmpty() && !submittedEventLoopContinuation;
+      return runQueue.isEmpty() && eventLoopContinuatioToRun == null;
    }
 
    private int runExternalContinuations(long deadlineNs) {
-      assert eventLoopContinuation != null;
       final long startDrainingNs = System.nanoTime();
-      var ready = this.externalContinuations;
+      var ready = this.runQueue;
       int runContinuations = 0;
       for (; ; ) {
          var continuation = ready.poll();
@@ -176,51 +170,48 @@ public class VirtualThreadNettyScheduler implements Thread.VirtualThreadSchedule
       return runContinuations;
    }
 
-   @Override
-   public void execute(Thread vthread, Runnable command) {
-      // The default scheduler won't shut down, but Netty's event loop can!
-      Runnable eventLoopContinuation = this.eventLoopContinuation;
-      if (eventLoopContinuation == null) {
-         eventLoopContinuation = setEventLoopContinuation(command);
+   private boolean eventLoopContinuation(Thread.VirtualThreadTask task) {
+      if (eventLoopContinuatioToRun != null) {
+         assert task.thread() != eventLoopThread;
+         return false;
       }
-      if (eventLoopContinuation == command) {
-         submittedEventLoopContinuation = true;
-      } else {
-         if (ioEventLoop.isTerminated()) {
-            throw new RejectedExecutionException("event loop is shutting down");
-         }
-         externalContinuations.offer(command);
+      if (task.thread() == eventLoopThread) {
+         eventLoopContinuatioToRun = task;
+         return true;
       }
-      if (!inEventLoop(Thread.currentThread())) {
-         // TODO: if we have access to the scheduler brought by the continuation,
-         //       we could skip the wakeup if matches with this.
-         ioEventLoop.wakeup();
-         LockSupport.unpark(parkedCarrierThread);
-      } else if (eventLoopContinuation != command && !running.get()) {
-         // since the event loop was blocked, it's fine if we try to consume some continuations, if any
-         Thread.yield();
+      return false;
+   }
+
+   public boolean execute(Thread.VirtualThreadTask task) {
+      boolean isEventLoopContinuation = eventLoopContinuation(task);
+      if (!isEventLoopContinuation) {
+        var q = submissionQueue;
+        if (q == null) {
+            return false;
+        }
+        q.offer(task);
+        // double-check in case we are shutting down
+        if (submissionQueue == null) {
+            // TODO
+            // What if:
+            // 1) we added to the queue
+            // 2) we got paused for long time
+            // 3) the scheduler found the task and run it
+            // 4) we are resuming here and return false
+            // This is not ok, need to be fixed!
+            return false;
+        }
       }
+      if (!ioEventLoop.inEventLoop(Thread.currentThread())) {
+          // TODO: if we have access to the scheduler brought by the continuation,
+          //       we could skip the wakeup if matches with this.
+          ioEventLoop.wakeup();
+          LockSupport.unpark(parkedCarrierThread);
+      } else if (!isEventLoopContinuation && !running.get()) {
+          assert eventLoopContinuatioToRun == null;
+          // since the event loop was blocked, it's fine if we try to consume some continuations, if any
+          Thread.yield();
+      }
+      return true;
    }
-
-   private boolean inEventLoop(Thread thread) {
-       if (!thread.isVirtual()) {
-           return ioEventLoop.inEventLoop(thread);
-       }
-
-       return CURRENT_SCHEDULER.orElse(EMPTY) == this;
-   }
-
-   private Runnable setEventLoopContinuation(Runnable command) {
-      // this is the first command, we need to set the continuation
-      this.eventLoopContinuation = command;
-      // we need to notify the event loop that we have a continuation
-      eventLoopContinuationAvailable.countDown();
-      return command;
-   }
-
-   public static VirtualThreadNettyScheduler current() {
-       Thread.VirtualThreadScheduler virtualThreadScheduler = CURRENT_SCHEDULER.orElse(EMPTY);
-       return virtualThreadScheduler == EMPTY ? null : (VirtualThreadNettyScheduler) virtualThreadScheduler;
-   }
-
 }
