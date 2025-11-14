@@ -3,7 +3,6 @@ package io.netty.loom;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import io.netty.channel.IoEventLoopGroup;
@@ -13,6 +12,19 @@ import io.netty.util.concurrent.FastThreadLocalThread;
 
 public class EventLoopScheduler {
 
+    public static final class SchedulerRef {
+
+        private volatile EventLoopScheduler ref;
+
+        private SchedulerRef(EventLoopScheduler ref) {
+            this.ref = ref;
+        }
+
+        public EventLoopScheduler get() {
+            return ref;
+        }
+    }
+
    private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
    // These are the soft-guaranteed yield times for the event loop whilst Thread.yield() is called.
    // Based on the status of the event loop (resuming from blocking or non-blocking, controlled by the running flag)
@@ -20,8 +32,8 @@ public class EventLoopScheduler {
    private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 1));
    private static final long IDLE_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
    // This is required to allow sub-pollers to run on the correct scheduler
-   private static final ScopedValue<AtomicReference<EventLoopScheduler>> CURRENT_SCHEDULER = ScopedValue.newInstance();
-   private static final AtomicReference<EventLoopScheduler> EMPTY_REFERENCE = new AtomicReference<>();
+   private static final ScopedValue<SchedulerRef> CURRENT_SCHEDULER = ScopedValue.newInstance();
+   private static final SchedulerRef EMPTY_REF = new SchedulerRef(null);
    private final MpscUnboundedStream<Runnable> runQueue;
    private final ManualIoEventLoop ioEventLoop;
    private final Thread eventLoopThread;
@@ -29,21 +41,21 @@ public class EventLoopScheduler {
    private volatile Thread parkedCarrierThread;
    private volatile Runnable eventLoopContinuatioToRun;
    private final ThreadFactory vThreadFactory;
-   private final AtomicBoolean running;
-   private final AtomicReference<EventLoopScheduler> schedulerReference;
+   private final AtomicBoolean eventLoopIsRunning;
+   private final SchedulerRef publishedReference;
 
    public EventLoopScheduler(IoEventLoopGroup parent, ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
-      schedulerReference = new AtomicReference<>(this);
-      running = new AtomicBoolean(false);
+      publishedReference = new SchedulerRef(this);
+      eventLoopIsRunning = new AtomicBoolean(false);
       runQueue = new MpscUnboundedStream<>(resumedContinuationsExpectedCount);
       carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
       var rawVTFactory = Thread.ofVirtual().factory();
       vThreadFactory = runnable ->
               NettyScheduler.assignUnstarted(rawVTFactory.newThread(
-                      () -> ScopedValue.where(CURRENT_SCHEDULER, schedulerReference).run(runnable)), schedulerReference);
+                      () -> ScopedValue.where(CURRENT_SCHEDULER, publishedReference).run(runnable)), publishedReference);
       eventLoopThread = vThreadFactory.newThread(() -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
       ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
-            ioExecutor -> new AwakeAwareIoHandler(running, ioHandlerFactory.newHandler(ioExecutor)));
+            ioExecutor -> new AwakeAwareIoHandler(eventLoopIsRunning, ioHandlerFactory.newHandler(ioExecutor)));
       carrierThread.start();
    }
 
@@ -64,7 +76,7 @@ public class EventLoopScheduler {
    }
 
    private void nettyEventLoop() {
-      running.set(true);
+      eventLoopIsRunning.set(true);
       assert ioEventLoop.inEventLoop(Thread.currentThread()) && Thread.currentThread().isVirtual();
       boolean canBlock = false;
       while (!ioEventLoop.isShuttingDown()) {
@@ -84,16 +96,16 @@ public class EventLoopScheduler {
    private boolean runIO(boolean canBlock) {
       if (canBlock) {
          // try to go to sleep waiting for I/O tasks
-         running.set(false);
+         eventLoopIsRunning.set(false);
          // StoreLoad barrier: see https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/
          if (canBlock()) {
             try {
                return ioEventLoop.run(MAX_WAIT_TASKS_NS, RUNNING_YIELD_US) == 0;
             } finally {
-               running.set(true);
+               eventLoopIsRunning.set(true);
             }
          } else {
-            running.set(true);
+            eventLoopIsRunning.set(true);
          }
       }
       return ioEventLoop.runNow(RUNNING_YIELD_US) == 0;
@@ -118,7 +130,7 @@ public class EventLoopScheduler {
       // we keep on running until the event loop is shutting-down
       while (!eventLoop.isTerminated()) {
          // if the event loop was idle, we apply a different limit to the yield time
-         final boolean eventLoopRunning = running.get();
+         final boolean eventLoopRunning = eventLoopIsRunning.get();
          final long yieldDurationNs = eventLoopRunning ? RUNNING_YIELD_US : IDLE_YIELD_US;
          int count = runExternalContinuations(yieldDurationNs);
          if (!runEventLoopContinuation() && count == 0) {
@@ -136,7 +148,8 @@ public class EventLoopScheduler {
          runExternalContinuations(RUNNING_YIELD_US);
          runEventLoopContinuation();
       }
-      schedulerReference.set(null);
+      // the event loop should be fully terminated
+      publishedReference.ref = null;
       runQueue.close();
       // StoreLoad barrier
       while (!runQueue.isEmpty()) {
@@ -187,20 +200,25 @@ public class EventLoopScheduler {
         }
       }
       if (!ioEventLoop.inEventLoop(Thread.currentThread())) {
-          // TODO: if we have access to the scheduler brought by the continuation,
-          //       we could skip the wakeup if matches with this.
-          ioEventLoop.wakeup();
-          LockSupport.unpark(parkedCarrierThread);
-      } else if (!isEventLoopContinuation && !running.get()) {
+          // this is checking for "local" submissions: it assumes that
+          // currentThreadEventLoopScheduler() is the currently assigned one, and up to date
+          // WARNING!!!!!
+          // work-stealing could break this assumption if we don't update the CURRENT_SCHEDULER scoped value accordingly
+          if (currentThreadEventLoopScheduler() != publishedReference) {
+              ioEventLoop.wakeup();
+              LockSupport.unpark(parkedCarrierThread);
+          }
+      } else if (!isEventLoopContinuation && !eventLoopIsRunning.get()) {
+          // the event loop thread is allowed to give up cycles to consume external continuations
+          // whilst is just woken up for I/O
           assert eventLoopContinuatioToRun == null;
-          // since the event loop was blocked, it's fine if we try to consume some continuations, if any
           Thread.yield();
       }
       return true;
    }
 
-   public static AtomicReference<EventLoopScheduler> currentRef() {
-      var ref = CURRENT_SCHEDULER.orElse(EMPTY_REFERENCE);
-      return ref == EMPTY_REFERENCE? null : ref;
+   public static SchedulerRef currentThreadEventLoopScheduler() {
+      var ref = CURRENT_SCHEDULER.orElse(EMPTY_REF);
+      return ref == EMPTY_REF ? null : ref;
    }
 }

@@ -1,5 +1,7 @@
 package io.netty.loom;
 
+import io.netty.loom.EventLoopScheduler.SchedulerRef;
+
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,9 +24,9 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
     private static NettyScheduler INSTANCE;
 
-    final Thread.VirtualThreadScheduler jdkBuildinScheduler;
+    private final Thread.VirtualThreadScheduler jdkBuildinScheduler;
 
-    final ConcurrentHashMap<Thread, AtomicReference<EventLoopScheduler>> unstartedThreads = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Thread, SchedulerRef> unstartedThreads = new ConcurrentHashMap<>();
 
     public NettyScheduler(Thread.VirtualThreadScheduler jdkBuildinScheduler) {
         this.jdkBuildinScheduler = jdkBuildinScheduler;
@@ -48,7 +50,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
             if (currentThread.isVirtual()) {
                 // TODO https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/java/lang/VirtualThread.java#L270C18-L270C33
                 //      in theory should be easy to provide a VirtualThreadTask::current method to avoid the ScopedValue lookup
-                var schedulerRef = EventLoopScheduler.currentRef();
+                var schedulerRef = EventLoopScheduler.currentThreadEventLoopScheduler();
                 // TODO per carrier sub-pollers goes here, but we want them to inherit the scheduler from the caller context
                 if (schedulerRef != null) {
                     var scheduler = schedulerRef.get();
@@ -104,8 +106,8 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
         return jdkBuildinScheduler;
     }
 
-    static Thread assignUnstarted(Thread unstarted, AtomicReference<EventLoopScheduler> schedulerRef) {
-        INSTANCE.unstartedThreads.put(unstarted, schedulerRef);
+    static Thread assignUnstarted(Thread unstarted, SchedulerRef ref) {
+        INSTANCE.unstartedThreads.put(unstarted, ref);
         return unstarted;
     }
 }
