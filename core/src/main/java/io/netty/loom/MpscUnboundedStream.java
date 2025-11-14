@@ -1,5 +1,7 @@
 package io.netty.loom;
 
+import io.netty.util.internal.shaded.org.jctools.util.Pow2;
+
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
@@ -41,8 +43,6 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 
     // Sentinel object used to mark a jump to the next buffer
     private static final Object JUMP = new Object();
-    // Marker to indicate buffer has been consumed and can be GC'd
-    private static final Object BUFFER_CONSUMED = new Object();
 
     // MSB is used to store the CLOSED flag
     private static final long CLOSED_BIT = 1L << 63;
@@ -50,31 +50,32 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
     private static final long RESIZE_BIT = 1L;
 
     @SuppressWarnings("FieldMayBeFinal") // Modified via VarHandle
-    private volatile long producerIndex;
+    private long producerIndex;
     @SuppressWarnings("FieldMayBeFinal") // Modified via VarHandle
-    private volatile long consumerIndex;
+    private long consumerIndex;
     @SuppressWarnings("FieldMayBeFinal") // Modified via VarHandle
-    private volatile long producerLimit;
+    private long producerLimit;
 
     private long producerMask;
-    private volatile Object[] producerBuffer;
-    private Object[] consumerBuffer;
+    private E[] producerBuffer;
+    private long consumerMask;
+    private E[] consumerBuffer;
 
     public MpscUnboundedStream(int initialCapacity) {
-        // Round up to next power of 2
-        int capacity = roundToPowerOfTwo(initialCapacity);
-        this.producerMask = capacity - 1;
-        this.producerBuffer = new Object[capacity];
-        this.consumerBuffer = this.producerBuffer;
-        this.producerIndex = 0;
-        this.consumerIndex = 0;
-        // Initialize producer limit to capacity * 2 (since we increment by 2)
-        this.producerLimit = capacity * 2L;
-    }
-
-    private static int roundToPowerOfTwo(int value) {
-        if (value <= 1) return 2;
-        return 1 << (32 - Integer.numberOfLeadingZeros(value - 1));
+        if (initialCapacity < 2) {
+            throw new IllegalArgumentException("Initial capacity must be 2 or more");
+        }
+        int p2capacity = Pow2.roundToPowerOfTwo(initialCapacity);
+        // leave lower bit of mask clear
+        long mask = (p2capacity - 1) << 1;
+        // need extra element to point at next array
+        @SuppressWarnings("unchecked")
+        E[] buffer = (E[]) new Object[p2capacity + 1];
+        producerBuffer = buffer;
+        consumerBuffer = buffer;
+        producerMask = mask;
+        consumerMask = mask;
+        soProducerLimit(mask); // we know it's all empty to start with
     }
 
     /**
@@ -83,243 +84,197 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
      * @param element the element to add
      * @return true if the element was added, false if the queue is closed
      */
-    public boolean offer(E element) {
-        if (element == null) {
-            throw new NullPointerException("Null elements are not allowed");
+    public boolean offer(E e) {
+        if (null == e) {
+            throw new NullPointerException();
         }
 
         long mask;
-        Object[] buffer;
+        E[] buffer;
         long pIndex;
 
         while (true) {
-            long producerLimit = (long) PRODUCER_LIMIT.getVolatile(this);
-            pIndex = (long) PRODUCER_INDEX.getVolatile(this);
-
-            // Check if queue is closed (MSB set)
-            if ((pIndex & CLOSED_BIT) != 0) {
-                return false;
-            }
-
-            // Lower bit is indicative of resize, if we see it we spin until it's cleared
+            long producerLimit = lvProducerLimit();
+            pIndex = lvProducerIndex();
+            // lower bit is indicative of resize, if we see it we spin until it's cleared
             if ((pIndex & RESIZE_BIT) == 1) {
                 continue;
             }
-
+            // higher bit is indicative of closed
+            if ((pIndex & CLOSED_BIT) == 1) {
+                return false;
+            }
             // pIndex is even (lower bit is 0) -> actual index is (pIndex >> 1)
-            // mask/buffer may get changed by resizing -> capture before CAS
-            // A successful CAS ties the ordering: lv(pIndex) - [mask/buffer] -> cas(pIndex)
+
+            // mask/buffer may get changed by resizing -> only use for array access after successful CAS.
             mask = this.producerMask;
             buffer = this.producerBuffer;
+            // a successful CAS ties the ordering, lv(pIndex)-[mask/buffer]->cas(pIndex)
 
-            // Assumption: queue is almost always empty or near empty
-            // Check producer limit before expensive operations
+            // assumption behind this optimization is that queue is almost always empty or near empty
             if (producerLimit <= pIndex) {
-                int result = offerSlowPath(buffer, pIndex, producerLimit, element);
-                if (result != 0) { // 0 = CONTINUE_TO_P_INDEX_CAS
-                    return result > 0; // QUEUE_RESIZE returns true
+                int result = offerSlowPath(mask, pIndex, producerLimit);
+                switch (result) {
+                    case 0:
+                        break;
+                    case 1:
+                        continue;
+                    case 2:
+                        return false;
+                    case 3:
+                        resize(mask, buffer, pIndex, e);
+                        return true;
                 }
             }
 
-            // Try to claim this index by incrementing producer index by 2
-            // (we use increments of 2 to have space for the resize bit)
-            long nextPIndex = pIndex + 2;
-            if (PRODUCER_INDEX.compareAndSet(this, pIndex, nextPIndex)) {
+            if (casProducerIndex(pIndex, pIndex + 2)) {
                 break;
             }
         }
-
-        // INDEX visible before ELEMENT
-        // Calculate offset: (pIndex >> 1) & mask, but need to account for CLOSED_BIT
-        final long offset = ((pIndex & ~CLOSED_BIT) >> 1) & mask;
-        ARRAY.setRelease(buffer, (int) offset, element); // release element
+        // INDEX visible before ELEMENT, consistent with consumer expectation
+        final int offset = modifiedCalcElementOffset(pIndex, mask);
+        soElement(buffer, offset, e);
         return true;
     }
 
-    // Return values
-    private static final int CONTINUE_TO_P_INDEX_CAS = 0;
-    private static final int RETRY = -1;
-    private static final int QUEUE_RESIZE = 1;
-
     /**
-     * We do not inline resize into offer because we do not resize on fill.
+     * We do not inline resize into this method because we do not resize on fill.
      */
-    private int offerSlowPath(Object[] buffer, long pIndex, long producerLimit, E element) {
-        long cIndex = (long) CONSUMER_INDEX.getVolatile(this);
-        long bufferCapacity = buffer.length;
-
-        // Calculate actual producer and consumer indices
-        long actualPIndex = (pIndex & ~CLOSED_BIT) >> 1;
-
-        // Check if we have capacity with current consumer position
-        if (cIndex + bufferCapacity > actualPIndex) {
-            // We have capacity, update producer limit
-            long newLimit = (cIndex + bufferCapacity) * 2; // multiply by 2 since we use pIndex * 2
-            if (!PRODUCER_LIMIT.compareAndSet(this, producerLimit, newLimit)) {
-                // CAS failed, retry from top
-                return RETRY;
-            } else {
-                // Continue to pIndex CAS
-                return CONTINUE_TO_P_INDEX_CAS;
+    private int offerSlowPath(long mask, long pIndex, long producerLimit) {
+        int result;
+        final long cIndex = lvConsumerIndex();
+        long bufferCapacity = getCurrentBufferCapacity(mask);
+        result = 0;// 0 - goto pIndex CAS
+        if (cIndex + bufferCapacity > pIndex) {
+            if (!casProducerLimit(producerLimit, cIndex + bufferCapacity)) {
+                result = 1;// retry from top
             }
         }
-        // Need to resize (unbounded queue, so we always resize when full)
-        else if (PRODUCER_INDEX.compareAndSet(this, pIndex, pIndex + 1)) {
-            // Successfully set resize bit, trigger resize
-            resize(buffer, pIndex, element);
-            return QUEUE_RESIZE;
-        } else {
-            // Failed to set resize bit, retry from top
-            return RETRY;
+        // full and cannot grow
+        else if (availableInQueue(pIndex, cIndex) <= 0) {
+            result = 2;// -> return false;
         }
+        // grab index for resize -> set lower bit
+        else if (casProducerIndex(pIndex, pIndex + 1)) {
+            result = 3;// -> resize
+        }
+        else {
+            result = 1;// failed resize attempt, retry from top
+        }
+        return result;
     }
 
-    private void resize(Object[] oldBuffer, long pIndex, E element) {
-        // At this point, pIndex has resize bit set (LSB = 1)
-        int oldCapacity = oldBuffer.length;
-        int newCapacity = oldCapacity * 2;
-        Object[] newBuffer = new Object[newCapacity];
+    private void resize(long oldMask, E[] oldBuffer, long pIndex, final E e) {
+        int newBufferLength = getNextBufferSize(oldBuffer);
+        final E[] newBuffer = (E[]) new Object[newBufferLength];
 
-        // Update producer mask and buffer
-        this.producerMask = newCapacity - 1;
-        this.producerBuffer = newBuffer;
+        producerBuffer = newBuffer;
+        final int newMask = (newBufferLength - 2) << 1;
+        producerMask = newMask;
 
-        // Calculate where to put the element in the new buffer
-        // Only strip CLOSED_BIT, the shift handles RESIZE_BIT
-        long actualIndex = (pIndex & ~CLOSED_BIT) >> 1;
-        long newOffset = actualIndex & (newCapacity - 1);
-        ARRAY.setRelease(newBuffer, (int) newOffset, element);
+        final long offsetInOld = modifiedCalcElementOffset(pIndex, oldMask);
+        final long offsetInNew = modifiedCalcElementOffset(pIndex, newMask);
 
-        // Link old buffer to new buffer using JUMP
-        long linkOffset = oldCapacity - 1; // Last slot in old buffer
-        ARRAY.setRelease(oldBuffer, (int) linkOffset, newBuffer);
-        ARRAY.setRelease(oldBuffer, (int) linkOffset, JUMP);
 
-        // Update producer limit to new capacity
-        long cIndex = (long) CONSUMER_INDEX.getVolatile(this);
-        long newLimit = (cIndex + newCapacity) * 2; // multiply by 2 since we use pIndex * 2
-        PRODUCER_LIMIT.setVolatile(this, newLimit);
+        soElement(newBuffer, offsetInNew, e);// element in new array
+        soElement(oldBuffer, nextArrayOffset(oldMask), newBuffer);// buffer linked
 
-        // Clear resize bit and advance index by 2
-        long newPIndex = (pIndex & ~RESIZE_BIT) + 2;
-        PRODUCER_INDEX.setVolatile(this, newPIndex);
+        // ASSERT code
+        final long cIndex = lvConsumerIndex();
+        final long availableInQueue = availableInQueue(pIndex, cIndex);
+        if (availableInQueue <= 0) {
+            throw new IllegalStateException();
+        }
+
+        // Invalidate racing CASs
+        // We never set the limit beyond the bounds of a buffer
+        soProducerLimit(pIndex + Math.min(newMask, availableInQueue));
+
+        // make resize visible to the other producers
+        soProducerIndex(pIndex + 2);
+
+        // INDEX visible before ELEMENT, consistent with consumer expectation
+
+        // make resize visible to consumer
+        soElement(oldBuffer, offsetInOld, JUMP);
+    }
+
+    private int nextArrayOffset(final long mask) {
+        return modifiedCalcElementOffset(mask + 2, Long.MAX_VALUE);
+    }
+
+    protected int getNextBufferSize(E[] buffer) {
+        return buffer.length;
+    }
+
+    protected long getCurrentBufferCapacity(long mask) {
+        return mask;
+    }
+
+    protected long availableInQueue(long pIndex, long cIndex) {
+        return Integer.MAX_VALUE;
     }
 
     /**
-     * Polls an element from the queue. This method should only be called by a single consumer.
-     *
-     * @return the element at the head of the queue, or null if empty
+     * This method assumes index is actually (index << 1) because lower bit is used for resize. This is
+     * compensated for by reducing the element shift. The computation is constant folded, so there's no cost.
      */
-    @SuppressWarnings("unchecked")
+    private static int modifiedCalcElementOffset(long index, long mask) {
+        return (int) ((index & mask) << 1);
+    }
+
     public E poll() {
-        long cIndex = this.consumerIndex;
-        Object[] buffer = this.consumerBuffer;
-        long mask = buffer.length - 1;
-        long offset = cIndex & mask;
+        final E[] buffer = consumerBuffer;
+        final long index = consumerIndex;
+        final long mask = consumerMask;
 
-        Object element = ARRAY.getAcquire(buffer, (int) offset);
-
-        if (element == null) {
-            // Queue is empty
-            return null;
+        final long offset = modifiedCalcElementOffset(index, mask);
+        Object e = lvElement(buffer, offset);// LoadLoad
+        if (e == null) {
+            if (index != lvProducerIndex()) {
+                // poll() == null iff queue is empty, null element is not strong enough indicator, so we must
+                // check the producer index. If the queue is indeed not empty we spin until element is
+                // visible.
+                do {
+                    e = lvElement(buffer, offset);
+                } while (e == null);
+            }
+            else {
+                return null;
+            }
         }
-
-        if (element == JUMP) {
-            // Need to jump to the next buffer
-            return pollNextBuffer(buffer, cIndex, mask);
+        if (e == JUMP) {
+            final E[] nextBuffer = getNextBuffer(buffer, mask);
+            return newBufferPoll(nextBuffer, index);
         }
-
-        // Clear the slot
-        ARRAY.setRelease(buffer, (int) offset, null);
-
-        // Update consumer index
-        CONSUMER_INDEX.setRelease(this, cIndex + 1);
-
-        return (E) element;
+        soElement(buffer, offset, null);
+        soConsumerIndex(index + 2);
+        return (E) e;
     }
 
-    @SuppressWarnings("unchecked")
-    private E pollNextBuffer(Object[] buffer, long cIndex, long mask) {
-        // Read the next buffer reference from the last slot
-        long linkOffset = mask; // Last slot (mask is length - 1)
-        Object[] nextBuffer = (Object[]) ARRAY.getAcquire(buffer, (int) linkOffset);
-
-        if (nextBuffer == null) {
-            // Next buffer not ready yet (should not happen with proper JUMP logic)
-            return null;
-        }
-
-        // Update consumer buffer and mask
-        this.consumerBuffer = nextBuffer;
-        long newMask = nextBuffer.length - 1;
-
-        // Mark the link slot as consumed to allow GC of old buffer
-        ARRAY.setRelease(buffer, (int) linkOffset, BUFFER_CONSUMED);
-
-        // Read element from new buffer at same consumer index
-        long offset = cIndex & newMask;
-        Object element = ARRAY.getAcquire(nextBuffer, (int) offset);
-
-        if (element == null) {
-            return null;
-        }
-
-        // Clear the slot
-        ARRAY.setRelease(nextBuffer, (int) offset, null);
-
-        // Update consumer index
-        CONSUMER_INDEX.setRelease(this, cIndex + 1);
-
-        return (E) element;
+    private E[] getNextBuffer(final E[] buffer, final long mask) {
+        final long nextArrayOffset = nextArrayOffset(mask);
+        final E[] nextBuffer = (E[]) lvElement(buffer, nextArrayOffset);
+        soElement(buffer, nextArrayOffset, null);
+        return nextBuffer;
     }
 
-    /**
-     * Returns the current size of the queue.
-     * Uses a stability loop similar to JCTools to ensure consistent reads
-     * of producer and consumer indices in the face of concurrent modifications.
-     *
-     * @return the approximate number of elements in the queue
-     */
-    public int size() {
-        long cIndexBefore, cIndexAfter;
-        long pIndex;
-
-        // Loop until we get a stable read of consumer index
-        // (i.e., consumer index doesn't change while we read producer index)
-        do {
-            cIndexBefore = (long) CONSUMER_INDEX.getVolatile(this);
-            pIndex = (long) PRODUCER_INDEX.getVolatile(this);
-            cIndexAfter = (long) CONSUMER_INDEX.getVolatile(this);
-        } while (cIndexBefore != cIndexAfter);
-
-        // Only strip MSB (CLOSED_BIT), LSB is handled by the shift
-        long realProducerIndex = (pIndex & ~CLOSED_BIT) >> 1;
-
-        long size = realProducerIndex - cIndexAfter;
-
-        // Protect against overflow
-        if (size > Integer.MAX_VALUE) {
-            return Integer.MAX_VALUE;
+    private E newBufferPoll(E[] nextBuffer, final long index) {
+        final long offsetInNew = newBufferAndOffset(nextBuffer, index);
+        final E n = lvElement(nextBuffer, offsetInNew);// LoadLoad
+        if (n == null) {
+            throw new IllegalStateException("new buffer must have at least one element");
         }
-
-        return (int) size;
+        soElement(nextBuffer, offsetInNew, null);// StoreStore
+        soConsumerIndex(index + 2);
+        return n;
     }
 
-    /**
-     * Checks if the queue is empty.
-     * Order matters! Loading consumer before producer allows for producer increments after consumer index is read.
-     * This ensures this method is conservative in its estimate.
-     *
-     * @return true if the queue appears to be empty
-     */
-    public boolean isEmpty() {
-        // Order matters: consumer before producer
-        long cIndex = (long) CONSUMER_INDEX.getVolatile(this);
-        long pIndex = (long) PRODUCER_INDEX.getVolatile(this);
-
-        // Only strip MSB (CLOSED_BIT), LSB is handled by the shift
-        // (cIndex - pIndex) / 2 == 0
-        return ((cIndex - ((pIndex & ~CLOSED_BIT) >> 1)) == 0);
+    private int newBufferAndOffset(E[] nextBuffer, final long index) {
+        consumerBuffer = nextBuffer;
+        consumerMask = (nextBuffer.length - 2) << 1;
+        final int offsetInNew = modifiedCalcElementOffset(index, consumerMask);
+        return offsetInNew;
     }
 
     /**
@@ -355,4 +310,3 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         return (pIndex & CLOSED_BIT) != 0;
     }
 }
-
