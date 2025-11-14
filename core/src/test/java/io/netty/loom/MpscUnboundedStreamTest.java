@@ -3,6 +3,14 @@ package io.netty.loom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -175,6 +183,126 @@ class MpscUnboundedStreamTest {
     }
 
     @Test
+    void testDrainAfterClose() {
+        // Offer several elements, close, then drain while checking size and isEmpty
+        for (int i = 0; i < 5; i++) {
+            assertTrue(queue.offer("item" + i));
+        }
+
+        // Close the queue; offers should be rejected but existing elements remain
+        queue.close();
+        assertTrue(queue.isClosed());
+        assertEquals(5, queue.size());
+        assertFalse(queue.isEmpty());
+        assertFalse(queue.offer("shouldFail"));
+
+        // Drain and verify size decrements and isEmpty becomes true at the end
+        for (int i = 0; i < 5; i++) {
+            assertEquals("item" + i, queue.poll());
+            assertEquals(4 - i, queue.size());
+            if (i < 4) {
+                assertFalse(queue.isEmpty());
+            }
+        }
+
+        // Now the queue should be empty and further polls return null
+        assertNull(queue.poll());
+        assertTrue(queue.isEmpty());
+        assertEquals(0, queue.size());
+
+        // Offers remain rejected after close
+        assertFalse(queue.offer("afterClose"));
+    }
+
+    @Test
+    void testConcurrentCloseAndOffers() throws Exception {
+        // Deterministic concurrent scenario:
+        // - Preload two elements
+        // - Start a "winning" producer that offers immediately
+        // - Start a "losing" producer that only offers after we closed the queue
+        // - Consumer waits for the winning producer to complete, then closes and drains
+        final MpscUnboundedStream<String> q = new MpscUnboundedStream<>(4);
+        q.offer("init0");
+        q.offer("init1");
+
+        final CountDownLatch start = new CountDownLatch(1);
+        final CountDownLatch winnerDone = new CountDownLatch(1);
+        final CountDownLatch closed = new CountDownLatch(1);
+
+        final AtomicBoolean winnerSucceeded = new AtomicBoolean(false);
+        final AtomicBoolean loserSucceeded = new AtomicBoolean(false);
+        final AtomicReference<List<String>> drainedRef = new AtomicReference<>();
+
+        Thread producerWinner = new Thread(() -> {
+            try {
+                start.await();
+                boolean r = q.offer("win");
+                winnerSucceeded.set(r);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            } finally {
+                winnerDone.countDown();
+            }
+        }, "producer-winner");
+
+        Thread producerLoser = new Thread(() -> {
+            try {
+                start.await();
+                // wait until the consumer signals it has closed the queue
+                closed.await();
+                boolean r = q.offer("lose");
+                loserSucceeded.set(r);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        }, "producer-loser");
+
+        Thread consumer = new Thread(() -> {
+            try {
+                start.await();
+                // Wait for the winner to attempt an offer so we deterministically close after it.
+                winnerDone.await(1, TimeUnit.SECONDS);
+                q.close();
+                closed.countDown();
+
+                List<String> drained = new ArrayList<>();
+                String s;
+                while ((s = q.poll()) != null) {
+                    drained.add(s);
+                }
+                drainedRef.set(drained);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        }, "consumer");
+
+        producerWinner.start();
+        producerLoser.start();
+        consumer.start();
+
+        // start the race
+        start.countDown();
+
+        // Join threads with timeout to avoid deadlocks flaking the test
+        producerWinner.join(2000);
+        producerLoser.join(2000);
+        consumer.join(2000);
+
+        assertTrue(winnerSucceeded.get(), "expected the winning producer to succeed before close");
+        assertFalse(loserSucceeded.get(), "expected the losing producer to fail after close");
+
+        List<String> drained = drainedRef.get();
+        assertNotNull(drained, "consumer must have drained the queue");
+
+        // Preloaded elements should be drained first, then the winning offer
+        assertEquals(Arrays.asList("init0", "init1", "win"), drained);
+
+        assertTrue(q.isClosed());
+        assertTrue(q.isEmpty());
+        assertEquals(0, q.size());
+    }
+
+    @Test
     void testAlternatingOfferAndPoll() {
         for (int i = 0; i < 20; i++) {
             queue.offer("item" + i);
@@ -298,5 +426,65 @@ class MpscUnboundedStreamTest {
             assertTrue(queue.isEmpty());
         }
     }
-}
 
+    @Test
+    void testStressConcurrentProducersCloseAndDrain() throws Exception {
+        final int producers = 64;
+        final MpscUnboundedStream<String> q = new MpscUnboundedStream<>(8);
+
+        // Each producer will try to add one element labeled by its id
+        final CountDownLatch start = new CountDownLatch(1);
+        final CountDownLatch done = new CountDownLatch(producers);
+        final AtomicBoolean[] succeeded = new AtomicBoolean[producers];
+        for (int i = 0; i < producers; i++) succeeded[i] = new AtomicBoolean(false);
+
+        for (int i = 0; i < producers; i++) {
+            final int id = i;
+            Thread t = new Thread(() -> {
+                try {
+                    start.await();
+                    // small randomized busy spin to increase contention
+                    if ((id & 7) == 0) Thread.yield();
+                    boolean r = q.offer("p" + id);
+                    succeeded[id].set(r);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    done.countDown();
+                }
+            }, "stress-producer-" + i);
+            t.start();
+        }
+
+        // start producers
+        start.countDown();
+
+        // Wait a tiny bit to let many offers happen concurrently, then close and drain
+        Thread.sleep(30);
+        q.close();
+
+        // Wait for producers to finish (with timeout)
+        done.await(5, TimeUnit.SECONDS);
+
+        List<String> drained = new ArrayList<>();
+        String s;
+        while ((s = q.poll()) != null) {
+            drained.add(s);
+        }
+
+        // Count successes
+        for (AtomicBoolean b : succeeded) if (b.get()) ;
+
+        // All successful offers must appear in the drained list
+        for (int i = 0; i < producers; i++) {
+            if (succeeded[i].get()) {
+                assertTrue(drained.remove("p" + i), "drained must contain successful producer element p" + i);
+            }
+        }
+
+        // The queue should be closed and empty after drain
+        assertTrue(q.isClosed());
+        assertTrue(q.isEmpty());
+        assertEquals(0, q.size());
+    }
+}
