@@ -26,9 +26,9 @@ import java.util.concurrent.TimeUnit;
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
 @Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
-        "-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.GlobalDelegateThreadNettyScheduler"})
+        "-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"})
 @State(Scope.Thread)
-public class GlobalDelegateThreadNettySchedulerBenchmark {
+public class NettySchedulerBenchmark {
 
     @Param({"1000", "100000"})
     private int tasks;
