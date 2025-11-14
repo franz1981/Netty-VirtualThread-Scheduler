@@ -9,7 +9,7 @@ import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.util.concurrent.FastThreadLocal;
 
-public class MultithreadVirtualEventExecutorGroup extends MultiThreadIoEventLoopGroup {
+public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGroup {
 
    private static final int RESUMED_CONTINUATIONS_EXPECTED_COUNT = Integer.getInteger("io.netty.loom.resumed.continuations", 1024);
    private ThreadFactory threadFactory;
@@ -21,10 +21,13 @@ public class MultithreadVirtualEventExecutorGroup extends MultiThreadIoEventLoop
       }
    };
 
-   public MultithreadVirtualEventExecutorGroup(int nThreads, IoHandlerFactory ioHandlerFactory) {
+   public VirtualMultithreadIoEventLoopGroup(int nThreads, IoHandlerFactory ioHandlerFactory) {
       super(nThreads, (Executor) command -> {
          throw new UnsupportedOperationException("this executor is not supposed to be used");
       }, ioHandlerFactory);
+      if (!NettyScheduler.isAvailable()) {
+         throw new IllegalStateException("-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler is required to use VirtualMultithreadIoEventLoopGroup");
+      }
    }
 
    public ThreadFactory vThreadFactory() {

@@ -180,7 +180,7 @@ public class EventLoopScheduler {
       return runContinuations;
    }
 
-   private boolean eventLoopContinuation(Thread.VirtualThreadTask task) {
+   private boolean rescheduleEventLoop(Thread.VirtualThreadTask task) {
       if (eventLoopContinuatioToRun != null) {
          assert task.thread() != eventLoopThread;
          return false;
@@ -193,22 +193,25 @@ public class EventLoopScheduler {
    }
 
    public boolean execute(Thread.VirtualThreadTask task) {
-      boolean isEventLoopContinuation = eventLoopContinuation(task);
-      if (!isEventLoopContinuation) {
+      boolean eventLoopTask = rescheduleEventLoop(task);
+      if (!eventLoopTask) {
         if (!runQueue.offer(task)) {
             return false;
         }
       }
-      if (!ioEventLoop.inEventLoop(Thread.currentThread())) {
-          // this is checking for "local" submissions: it assumes that
-          // currentThreadEventLoopScheduler() is the currently assigned one, and up to date
-          // WARNING!!!!!
-          // work-stealing could break this assumption if we don't update the CURRENT_SCHEDULER scoped value accordingly
-          if (currentThreadEventLoopScheduler() != publishedReference) {
-              ioEventLoop.wakeup();
-              LockSupport.unpark(parkedCarrierThread);
+      var currentThread = Thread.currentThread();
+      if (currentThread != eventLoopThread) {
+          if (currentThread != carrierThread) {
+              // this is checking for "local" submissions: it assumes that
+              // currentThreadEventLoopScheduler() is the currently assigned one, and up to date
+              // WARNING!!!!!
+              // work-stealing could break this assumption if we don't update the CURRENT_SCHEDULER scoped value accordingly
+              if (currentThreadEventLoopScheduler() != publishedReference) {
+                  ioEventLoop.wakeup();
+                  LockSupport.unpark(parkedCarrierThread);
+              }
           }
-      } else if (!isEventLoopContinuation && !eventLoopIsRunning.get()) {
+      } else if (!eventLoopTask && !eventLoopIsRunning.get()) {
           // the event loop thread is allowed to give up cycles to consume external continuations
           // whilst is just woken up for I/O
           assert eventLoopContinuatioToRun == null;

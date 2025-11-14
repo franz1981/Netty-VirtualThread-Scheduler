@@ -2,7 +2,7 @@ package io.netty.loom.benchmark;
 
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.loom.LoomSupport;
-import io.netty.loom.MultithreadVirtualEventExecutorGroup;
+import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -33,13 +33,13 @@ public class NettySchedulerBenchmark {
     @Param({"1000", "100000"})
     private int tasks;
 
-    private MultithreadVirtualEventExecutorGroup executorGroup;
+    private VirtualMultithreadIoEventLoopGroup executorGroup;
 
     private ThreadFactory vtFactory;
 
     @Setup
     public void setup() throws ExecutionException, InterruptedException {
-        executorGroup = new MultithreadVirtualEventExecutorGroup(1, NioIoHandler.newFactory());
+        executorGroup = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
     }
 

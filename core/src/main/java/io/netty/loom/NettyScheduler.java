@@ -4,7 +4,6 @@ import io.netty.loom.EventLoopScheduler.SchedulerRef;
 
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Global scheduler — provides execution for virtual threads that do not specify their own scheduler.
@@ -32,6 +31,10 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
         this.jdkBuildinScheduler = jdkBuildinScheduler;
         INSTANCE = this;
         VarHandle.storeStoreFence();
+    }
+
+    Thread.VirtualThreadScheduler jdkBuildinScheduler() {
+        return jdkBuildinScheduler;
     }
 
     @Override
@@ -85,10 +88,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
     @Override
     public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
         var attachment = virtualThreadTask.attachment();
-        if (attachment instanceof AtomicReference<?>) {
-            // TODO create a EventLoopSchedulerRef type
-            @SuppressWarnings("unchecked")
-            var ref = (AtomicReference<EventLoopScheduler>) attachment;
+        if (attachment instanceof SchedulerRef ref) {
             var scheduler = ref.get();
             if (scheduler != null) {
                 if (scheduler.execute(virtualThreadTask)) {
@@ -101,14 +101,13 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
         jdkBuildinScheduler.onContinue(virtualThreadTask);
     }
 
-    // just for benchmark
-    public Thread.VirtualThreadScheduler getJdkBuildinScheduler() {
-        return jdkBuildinScheduler;
-    }
-
     static Thread assignUnstarted(Thread unstarted, SchedulerRef ref) {
         INSTANCE.unstartedThreads.put(unstarted, ref);
         return unstarted;
+    }
+
+    public static boolean isAvailable() {
+        return INSTANCE != null;
     }
 }
 
