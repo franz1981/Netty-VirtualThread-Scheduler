@@ -163,7 +163,6 @@ public class EventLoopScheduler {
          }
       }
       // make sure the event loop thread is fully terminated
-      // TODO verify that isAlive works!
       while (eventLoopThread.isAlive()) {
          runExternalContinuations(RUNNING_YIELD_US);
          runEventLoopContinuation();
