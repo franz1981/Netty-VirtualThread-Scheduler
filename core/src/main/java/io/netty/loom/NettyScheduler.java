@@ -53,20 +53,17 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
             if (currentThread.isVirtual()) {
                 // TODO https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/java/lang/VirtualThread.java#L270C18-L270C33
                 //      in theory should be easy to provide a VirtualThreadTask::current method to avoid the ScopedValue lookup
-                var schedulerRef = EventLoopScheduler.currentThreadEventLoopScheduler();
-                // TODO per carrier sub-pollers goes here, but we want them to inherit the scheduler from the caller context
+                var ctx = EventLoopScheduler.currentThreadSchedulerContext();
+                var schedulerRef = ctx.scheduler();
+                // See https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/sun/nio/ch/Poller.java#L723C48-L723C59
                 if (schedulerRef != null) {
-                    var scheduler = schedulerRef.get();
-                    // See https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/sun/nio/ch/Poller.java#L723C48-L723C59
-                    if (scheduler != null) {
-                        if (virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
-                            // attach the assigned scheduler to the task
-                            virtualThreadTask.attach(schedulerRef);
-                            if (scheduler.execute(virtualThreadTask)) {
-                                return;
-                            }
-                            virtualThreadTask.attach(null);
+                    var runningScheduler = schedulerRef.get();
+                    if (runningScheduler != null && virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
+                        virtualThreadTask.attach(schedulerRef);
+                        if (runningScheduler.execute(virtualThreadTask)) {
+                            return;
                         }
+                        virtualThreadTask.attach(null);
                     }
                 }
             }
@@ -89,9 +86,9 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
     public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
         var attachment = virtualThreadTask.attachment();
         if (attachment instanceof SchedulerRef ref) {
-            var scheduler = ref.get();
-            if (scheduler != null) {
-                if (scheduler.execute(virtualThreadTask)) {
+            var assignedScheduler = ref.get();
+            if (assignedScheduler != null) {
+                if (assignedScheduler.execute(virtualThreadTask)) {
                     return;
                 }
             }

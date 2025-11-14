@@ -1,37 +1,17 @@
 package io.netty.loom;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static java.util.concurrent.StructuredTaskScope.Joiner.allSuccessfulOrThrow;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.Objects;
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -331,37 +311,43 @@ public class VirtualMultithreadIoEventLoopGroupTest {
       group.shutdownGracefully();
    }
 
-   @Test
-   void schedulerIsInherited() throws InterruptedException, ExecutionException {
-      var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
-      final Thread expectedCarrier = group.submit(() -> LoomSupport.getCarrierThread(Thread.currentThread())).get();
-      final CompletableFuture<Thread> vfactoryCarrier = new CompletableFuture<>();
-      group.execute(() -> {
-         group.vThreadFactory().newThread(() -> {
-            vfactoryCarrier.complete(LoomSupport.getCarrierThread(Thread.currentThread()));
-         }).start();
-      });
-      final CompletableFuture<Thread> inheritedCarrier = new CompletableFuture<>();
-      group.execute(() -> {
-         group.vThreadFactory().newThread(() -> {
-            Thread.ofVirtual().start(() -> {
-               inheritedCarrier.complete(LoomSupport.getCarrierThread(Thread.currentThread()));
-            });
-         }).start();
-      });
-      final CompletableFuture<Thread> inheritedVFactoryCarrier = new CompletableFuture<>();
-      group.execute(() -> {
-         group.vThreadFactory().newThread(() -> {
-            Thread.ofVirtual().factory().newThread(() -> {
-               inheritedVFactoryCarrier.complete(LoomSupport.getCarrierThread(Thread.currentThread()));
+    @Test
+    void schedulerIsNotInheritedWithThreadOfVirtual() throws InterruptedException, ExecutionException {
+        try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+            final var expectedScheduler = group.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
+            assertNotNull(expectedScheduler);
+            final var vThreadFactory = group.submit(group::vThreadFactory).get();
+            var groupEventLoopScheduler = new CompletableFuture<EventLoopScheduler>();
+            var noEventLoopScheduler = new CompletableFuture<>();
+            vThreadFactory.newThread(() -> {
+                Thread.ofVirtual().start(() -> noEventLoopScheduler.complete(EventLoopScheduler.currentThreadSchedulerContext().scheduler()));
+                groupEventLoopScheduler.complete(EventLoopScheduler.currentThreadSchedulerContext().scheduler().get());
             }).start();
-         }).start();
-      });
-      assertEquals(expectedCarrier, vfactoryCarrier.get());
-      assertEquals(expectedCarrier, inheritedCarrier.get());
-      assertEquals(expectedCarrier, inheritedVFactoryCarrier.get());
-      group.shutdownGracefully();
-   }
+            assertEquals(expectedScheduler, groupEventLoopScheduler.get());
+            assertNull(noEventLoopScheduler.get());
+        }
+    }
+
+    @Test
+    void schedulerIsInheritedByForkedVTFromTheRightFactory() throws InterruptedException, ExecutionException {
+        try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+            final var expectedEventLoopScheduler = group.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
+            assertNotNull(expectedEventLoopScheduler);
+            final var vThreadFactory = group.submit(group::vThreadFactory).get();
+            var forkInheritedScheduler = new CompletableFuture<EventLoopScheduler>();
+            vThreadFactory.newThread(() -> {
+                try (var scope = StructuredTaskScope.open(allSuccessfulOrThrow(),
+                        cf -> cf.withThreadFactory(vThreadFactory))) {
+                    var task = scope.fork(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get());
+                    scope.join();
+                    forkInheritedScheduler.complete(task.get());
+                } catch (InterruptedException e) {
+                    forkInheritedScheduler.completeExceptionally(e);
+                }
+            }).start();
+            assertEquals(expectedEventLoopScheduler, forkInheritedScheduler.get());
+        }
+    }
 
    @Test
    void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked() throws BrokenBarrierException, InterruptedException, TimeoutException {
@@ -422,16 +408,20 @@ public class VirtualMultithreadIoEventLoopGroupTest {
         }
     }
 
-   /*
-
-   @Test
-   public void testContainsJustBuiltinPollers() throws InterruptedException {
-      assertContainsJustBuiltinPollers(builtinGlobalScheduler());
-   }
-
+    /*
    @Test
    public void testPlatformThreadSpawnsVirtualThreads() throws InterruptedException {
-      testPlatformThreadSpawnsVirtualThreads(builtinGlobalScheduler());
+       CompletableFuture<Thread.VirtualThreadScheduler> schedulerCompletableFuture = new CompletableFuture<>();
+       Thread.ofPlatform()
+               .start(() -> {
+                   Thread.ofVirtual()
+                           .start(() -> {
+                               Thread.VirtualThreadScheduler virtualThreadScheduler = NettyScheduler.internalSchedulerMappings.get(Thread.currentThread());
+                               schedulerCompletableFuture.complete(virtualThreadScheduler);
+                           });
+               });
+       Thread.VirtualThreadScheduler virtualThreadScheduler = schedulerCompletableFuture.join();
+       assertEquals(NettyScheduler.jdkBuildinScheduler, virtualThreadScheduler);
    }
 
    @Test
@@ -586,20 +576,6 @@ public class VirtualMultithreadIoEventLoopGroupTest {
             .allMatch(entry ->
                   entry.getKey().getName().contains("Poller") &&
                         entry.getValue() == NettyScheduler.getJdkBuildinScheduler()));
-   }
-
-   private void testPlatformThreadSpawnsVirtualThreads(NettyScheduler NettyScheduler) {
-      CompletableFuture<Thread.VirtualThreadScheduler> schedulerCompletableFuture = new CompletableFuture<>();
-      Thread.ofPlatform()
-            .start(() -> {
-               Thread.ofVirtual()
-                     .start(() -> {
-                        Thread.VirtualThreadScheduler virtualThreadScheduler = NettyScheduler.internalSchedulerMappings.get(Thread.currentThread());
-                        schedulerCompletableFuture.complete(virtualThreadScheduler);
-                     });
-            });
-      Thread.VirtualThreadScheduler virtualThreadScheduler = schedulerCompletableFuture.join();
-      assertEquals(NettyScheduler.jdkBuildinScheduler, virtualThreadScheduler);
    }
 
    private void testNettyThreadSpawnsVirtualThreads(NettyScheduler NettyScheduler) throws InterruptedException {

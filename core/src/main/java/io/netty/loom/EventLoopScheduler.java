@@ -25,6 +25,23 @@ public class EventLoopScheduler {
         }
     }
 
+    /**
+     * PerCarrier Read-Sub-Pollers are not created through the vThreadFactory and although the NettyScheduler
+     * can dynamically assign them to this scheduler, while running, won't see this scheduler as the current one.
+     * This means that if they try to unpark some virtual thread which belong to this scheduler,
+     * they can still wakeup the carrier thread. It's more a performance defect, but won't affect correctness.
+     */
+    public record SchedulerContext(long vThreadId, SchedulerRef scheduler) {
+
+        /**
+         * Get the assigned scheduler for the current thread, or null if this thread is not assigned to any scheduler.
+         */
+        @Override
+        public SchedulerRef scheduler() {
+            return (Thread.currentThread().threadId() == vThreadId) ? scheduler : null;
+        }
+    }
+
    private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
    // These are the soft-guaranteed yield times for the event loop whilst Thread.yield() is called.
    // Based on the status of the event loop (resuming from blocking or non-blocking, controlled by the running flag)
@@ -32,8 +49,8 @@ public class EventLoopScheduler {
    private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 1));
    private static final long IDLE_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
    // This is required to allow sub-pollers to run on the correct scheduler
-   private static final ScopedValue<SchedulerRef> CURRENT_SCHEDULER = ScopedValue.newInstance();
-   private static final SchedulerRef EMPTY_REF = new SchedulerRef(null);
+   private static final ScopedValue<SchedulerContext> CURRENT_SCHEDULER = ScopedValue.newInstance();
+   private static final SchedulerContext EMPTY_SCHEDULER_CONTEXT = new SchedulerContext(-1, null);
    private final MpscUnboundedStream<Runnable> runQueue;
    private final ManualIoEventLoop ioEventLoop;
    private final Thread eventLoopThread;
@@ -42,17 +59,20 @@ public class EventLoopScheduler {
    private volatile Runnable eventLoopContinuatioToRun;
    private final ThreadFactory vThreadFactory;
    private final AtomicBoolean eventLoopIsRunning;
-   private final SchedulerRef publishedReference;
+   private final SchedulerRef sharedRef;
 
    public EventLoopScheduler(IoEventLoopGroup parent, ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
-      publishedReference = new SchedulerRef(this);
+      sharedRef = new SchedulerRef(this);
       eventLoopIsRunning = new AtomicBoolean(false);
       runQueue = new MpscUnboundedStream<>(resumedContinuationsExpectedCount);
       carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
       var rawVTFactory = Thread.ofVirtual().factory();
       vThreadFactory = runnable ->
               NettyScheduler.assignUnstarted(rawVTFactory.newThread(
-                      () -> ScopedValue.where(CURRENT_SCHEDULER, publishedReference).run(runnable)), publishedReference);
+                      () ->   // this can be inherited by any thread created in the context of this virtual thread
+                              // but only the original virtual thread will have the correct scheduler context
+                              ScopedValue.where(CURRENT_SCHEDULER, new SchedulerContext(Thread.currentThread().threadId(), sharedRef)).run(runnable)
+              ), sharedRef);
       eventLoopThread = vThreadFactory.newThread(() -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
       ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
             ioExecutor -> new AwakeAwareIoHandler(eventLoopIsRunning, ioHandlerFactory.newHandler(ioExecutor)));
@@ -149,7 +169,7 @@ public class EventLoopScheduler {
          runEventLoopContinuation();
       }
       // the event loop should be fully terminated
-      publishedReference.ref = null;
+      sharedRef.ref = null;
       runQueue.close();
       // StoreLoad barrier
       while (!runQueue.isEmpty()) {
@@ -202,11 +222,8 @@ public class EventLoopScheduler {
       var currentThread = Thread.currentThread();
       if (currentThread != eventLoopThread) {
           if (currentThread != carrierThread) {
-              // this is checking for "local" submissions: it assumes that
-              // currentThreadEventLoopScheduler() is the currently assigned one, and up to date
-              // WARNING!!!!!
-              // work-stealing could break this assumption if we don't update the CURRENT_SCHEDULER scoped value accordingly
-              if (currentThreadEventLoopScheduler() != publishedReference) {
+              // this is checking for "local" submissions
+              if (currentThreadSchedulerContext().scheduler() != sharedRef) {
                   ioEventLoop.wakeup();
                   LockSupport.unpark(parkedCarrierThread);
               }
@@ -220,8 +237,7 @@ public class EventLoopScheduler {
       return true;
    }
 
-   public static SchedulerRef currentThreadEventLoopScheduler() {
-      var ref = CURRENT_SCHEDULER.orElse(EMPTY_REF);
-      return ref == EMPTY_REF ? null : ref;
+   public static SchedulerContext currentThreadSchedulerContext() {
+      return CURRENT_SCHEDULER.orElse(EMPTY_SCHEDULER_CONTEXT);
    }
 }
