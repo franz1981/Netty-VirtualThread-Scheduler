@@ -39,16 +39,39 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
         // 2. if a vThread will never start, it will leak here forever
         var assignedSchedulerRef = unstartedThreads.remove(virtualThreadTask.thread());
         if (assignedSchedulerRef == null) {
-            // TODO per carrier sub-pollers goes here, but we want them to inherit the scheduler from the caller context
-        }
-        var scheduler = assignedSchedulerRef != null ? assignedSchedulerRef.get() : null;
-        if (scheduler != null) {
-            // attach the assigned scheduler to the task
-            virtualThreadTask.attach(assignedSchedulerRef);
-            if (scheduler.execute(virtualThreadTask)) {
-                return;
+            // Read-Poller threads are special: if we run from a VThread managed by a VirtualThreadNettyScheduler,
+            // we want should continue using that same scheduler for the Read-Poller thread.
+            var currentThread = Thread.currentThread();
+            if (currentThread.isVirtual()) {
+                // TODO https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/java/lang/VirtualThread.java#L270C18-L270C33
+                //      in theory should be easy to provide a VirtualThreadTask::current method to avoid the ScopedValue lookup
+                var schedulerRef = VirtualThreadNettyScheduler.currentRef();
+                // TODO per carrier sub-pollers goes here, but we want them to inherit the scheduler from the caller context
+                if (schedulerRef != null) {
+                    var scheduler = schedulerRef.get();
+                    // See https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/sun/nio/ch/Poller.java#L723C48-L723C59
+                    if (scheduler != null) {
+                        if (virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
+                            // attach the assigned scheduler to the task
+                            virtualThreadTask.attach(schedulerRef);
+                            if (scheduler.execute(virtualThreadTask)) {
+                                return;
+                            }
+                            virtualThreadTask.attach(null);
+                        }
+                    }
+                }
             }
-            // the v thread has been rejected by its assigned scheduler, clean it up and fallback to JDK
+        } else {
+            var scheduler = assignedSchedulerRef.get();
+            if (scheduler != null) {
+                // attach the assigned scheduler to the task
+                virtualThreadTask.attach(assignedSchedulerRef);
+                if (scheduler.execute(virtualThreadTask)) {
+                    return;
+                }
+            }
+            // the v thread has been rejected by its assigned scheduler or its scheduler is gone
             virtualThreadTask.attach(null);
         }
         jdkBuildinScheduler.onStart(virtualThreadTask);
