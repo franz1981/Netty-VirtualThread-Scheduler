@@ -21,6 +21,7 @@ public class VirtualThreadNettyScheduler {
    private static final long IDLE_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
    // This is required to allow sub-pollers to run on the correct scheduler
    private static final ScopedValue<AtomicReference<VirtualThreadNettyScheduler>> CURRENT_SCHEDULER = ScopedValue.newInstance();
+   private static final AtomicReference<VirtualThreadNettyScheduler> EMPTY_REFERENCE = new AtomicReference<>();
    private final MpscUnboundedStream<Runnable> runQueue;
    private final ManualIoEventLoop ioEventLoop;
    private final Thread eventLoopThread;
@@ -196,5 +197,10 @@ public class VirtualThreadNettyScheduler {
           Thread.yield();
       }
       return true;
+   }
+
+   public static AtomicReference<VirtualThreadNettyScheduler> currentRef() {
+      var ref = CURRENT_SCHEDULER.orElse(EMPTY_REFERENCE);
+      return ref == EMPTY_REFERENCE? null : ref;
    }
 }
