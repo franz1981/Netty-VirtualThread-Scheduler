@@ -56,7 +56,21 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
 
     @Override
     public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
-
+        var attachment = virtualThreadTask.attachment();
+        if (attachment instanceof AtomicReference<?>) {
+            // TODO create a EventLoopSchedulerRef type
+            @SuppressWarnings("unchecked")
+            var ref = (AtomicReference<VirtualThreadNettyScheduler>) attachment;
+            var scheduler = ref.get();
+            if (scheduler != null) {
+                if (scheduler.execute(virtualThreadTask)) {
+                    return;
+                }
+            }
+            // the v thread has been rejected by its assigned scheduler or its scheduler is gone
+            virtualThreadTask.attach(null);
+        }
+        jdkBuildinScheduler.onContinue(virtualThreadTask);
     }
 
     // just for benchmark
