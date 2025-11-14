@@ -37,6 +37,9 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
         // TODO this is not great for 2 reasons:
         // 1. we are doing a remove on a concurrent map even for v threads which are not really interesting to us
         // 2. if a vThread will never start, it will leak here forever
+        // HINT: if we had a VirtualThreadTask::Of(VirtualThread) method, we could perform the assignment BEFORE calling this
+        //       on the vThread factory
+        // or the vThreadFactory could provide in its build method something to access the VirtualThreadTask of an unstarted VirtualThread
         var assignedSchedulerRef = unstartedThreads.remove(virtualThreadTask.thread());
         if (assignedSchedulerRef == null) {
             // Read-Poller threads are special: if we run from a VThread managed by a VirtualThreadNettyScheduler,
