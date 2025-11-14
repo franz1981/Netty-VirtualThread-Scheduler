@@ -48,4 +48,8 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
       return customScheduler.ioEventLoop();
    }
 
+    @Override
+    public void close() {
+        shutdownGracefully();
+    }
 }
