@@ -325,7 +325,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
     public final boolean isEmpty() {
         // Order matters!
         // Loading consumer before producer allows for producer increments after consumer index is read.
-        // This ensures this method is conservative in it's estimate. Note that as this is an MPMC there is
+        // This ensures this method is conservative in it's estimate. Note that as this is an MPSC q there is
         // nothing we can do to make this an exact method.
         return (this.lvConsumerIndex() == (this.lvProducerIndex() & CLOSED_MASK));
     }
