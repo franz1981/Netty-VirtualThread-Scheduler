@@ -46,6 +46,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 
     // MSB is used to store the CLOSED flag
     private static final long CLOSED_BIT = 1L << 63;
+    private static final long CLOSED_MASK = ~CLOSED_BIT;
     // LSB is used during resize (bit 0)
     private static final long RESIZE_BIT = 1L;
 
@@ -78,10 +79,51 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         soProducerLimit(mask); // we know it's all empty to start with
     }
 
+    private void soProducerLimit(long v) {
+        PRODUCER_LIMIT.setRelease(this, v);
+    }
+
+    private long lvProducerLimit() {
+        return (long) PRODUCER_LIMIT.getAcquire(this);
+    }
+
+    private long lvProducerIndex() {
+        return (long) PRODUCER_INDEX.getAcquire(this);
+    }
+
+    private boolean casProducerIndex(long expect, long newValue) {
+        return PRODUCER_INDEX.compareAndSet(this, expect, newValue);
+    }
+
+    private long lvConsumerIndex() {
+        return (long) CONSUMER_INDEX.getAcquire(this);
+    }
+
+    private void soConsumerIndex(long v) {
+        CONSUMER_INDEX.setRelease(this, v);
+    }
+
+    private void soProducerIndex(long v) {
+        PRODUCER_INDEX.setRelease(this, v);
+    }
+
+    private boolean casProducerLimit(long expect, long newValue) {
+        return PRODUCER_LIMIT.compareAndSet(this, expect, newValue);
+    }
+
+    private static <E> void soElement(E[] buffer, int offset, E e) {
+        ARRAY.setRelease(buffer, offset, e);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <E> E lvElement(E[] buffer, int offset) {
+        return (E) ARRAY.getAcquire(buffer, offset);
+    }
+
     /**
      * Offers an element to the queue. This method can be called by multiple producers.
      *
-     * @param element the element to add
+     * @param e the element to add
      * @return true if the element was added, false if the queue is closed
      */
     public boolean offer(E e) {
@@ -101,7 +143,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
                 continue;
             }
             // higher bit is indicative of closed
-            if ((pIndex & CLOSED_BIT) == 1) {
+            if ((pIndex & CLOSED_BIT) != 0) {
                 return false;
             }
             // pIndex is even (lower bit is 0) -> actual index is (pIndex >> 1)
@@ -166,14 +208,15 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 
     private void resize(long oldMask, E[] oldBuffer, long pIndex, final E e) {
         int newBufferLength = getNextBufferSize(oldBuffer);
+        @SuppressWarnings("unchecked")
         final E[] newBuffer = (E[]) new Object[newBufferLength];
 
         producerBuffer = newBuffer;
         final int newMask = (newBufferLength - 2) << 1;
         producerMask = newMask;
 
-        final long offsetInOld = modifiedCalcElementOffset(pIndex, oldMask);
-        final long offsetInNew = modifiedCalcElementOffset(pIndex, newMask);
+        final int offsetInOld = modifiedCalcElementOffset(pIndex, oldMask);
+        final int offsetInNew = modifiedCalcElementOffset(pIndex, newMask);
 
 
         soElement(newBuffer, offsetInNew, e);// element in new array
@@ -220,18 +263,19 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
      * compensated for by reducing the element shift. The computation is constant folded, so there's no cost.
      */
     private static int modifiedCalcElementOffset(long index, long mask) {
-        return (int) ((index & mask) << 1);
+        return (int) ((index & mask) >> 1);
     }
 
+    @SuppressWarnings("unchecked")
     public E poll() {
         final E[] buffer = consumerBuffer;
         final long index = consumerIndex;
         final long mask = consumerMask;
 
-        final long offset = modifiedCalcElementOffset(index, mask);
+        final int offset = modifiedCalcElementOffset(index, mask);
         Object e = lvElement(buffer, offset);// LoadLoad
         if (e == null) {
-            if (index != lvProducerIndex()) {
+            if (index != (lvProducerIndex() & CLOSED_MASK)) {
                 // poll() == null iff queue is empty, null element is not strong enough indicator, so we must
                 // check the producer index. If the queue is indeed not empty we spin until element is
                 // visible.
@@ -253,14 +297,15 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
     }
 
     private E[] getNextBuffer(final E[] buffer, final long mask) {
-        final long nextArrayOffset = nextArrayOffset(mask);
+        final int nextArrayOffset = nextArrayOffset(mask);
+        @SuppressWarnings("unchecked")
         final E[] nextBuffer = (E[]) lvElement(buffer, nextArrayOffset);
         soElement(buffer, nextArrayOffset, null);
         return nextBuffer;
     }
 
     private E newBufferPoll(E[] nextBuffer, final long index) {
-        final long offsetInNew = newBufferAndOffset(nextBuffer, index);
+        final int offsetInNew = newBufferAndOffset(nextBuffer, index);
         final E n = lvElement(nextBuffer, offsetInNew);// LoadLoad
         if (n == null) {
             throw new IllegalStateException("new buffer must have at least one element");
@@ -277,6 +322,45 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         return offsetInNew;
     }
 
+    public final boolean isEmpty() {
+        // Order matters!
+        // Loading consumer before producer allows for producer increments after consumer index is read.
+        // This ensures this method is conservative in it's estimate. Note that as this is an MPMC there is
+        // nothing we can do to make this an exact method.
+        return (this.lvConsumerIndex() == (this.lvProducerIndex() & CLOSED_MASK));
+    }
+
+    public final int size() {
+        // NOTE: because indices are on even numbers we cannot use the size util.
+
+        /*
+         * It is possible for a thread to be interrupted or reschedule between the read of the producer and
+         * consumer indices, therefore protection is required to ensure size is within valid range. In the
+         * event of concurrent polls/offers to this method the size is OVER estimated as we read consumer
+         * index BEFORE the producer index.
+         */
+        long after = lvConsumerIndex();
+        long size;
+        while (true) {
+            final long before = after;
+            final long currentProducerIndex = lvProducerIndex();
+            after = lvConsumerIndex();
+            if (before == after) {
+                // Mask out CLOSED bit for size calculation
+                size = (((currentProducerIndex & CLOSED_MASK) - after) >> 1);
+                break;
+            }
+        }
+        // Long overflow is impossible, so size is always positive. Integer overflow is possible for the unbounded
+        // indexed queues.
+        if (size > Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+        }
+        else {
+            return (int) size;
+        }
+    }
+
     /**
      * Marks the queue as closed. After this, no more elements can be offered.
      * This is done by setting the MSB of the producer index.
@@ -285,16 +369,11 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
     public void close() {
         long pIndex;
         while (true) {
-            pIndex = (long) PRODUCER_INDEX.getVolatile(this);
-
-            // Check if already closed
+            pIndex = lvProducerIndex();
             if ((pIndex & CLOSED_BIT) != 0) {
                 return;
             }
-
-            // Set the CLOSED bit
-            long closedPIndex = pIndex | CLOSED_BIT;
-            if (PRODUCER_INDEX.compareAndSet(this, pIndex, closedPIndex)) {
+            if (casProducerIndex(pIndex, pIndex | CLOSED_BIT)) {
                 return;
             }
         }
@@ -306,7 +385,6 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
      * @return true if the queue is closed
      */
     public boolean isClosed() {
-        long pIndex = (long) PRODUCER_INDEX.getVolatile(this);
-        return (pIndex & CLOSED_BIT) != 0;
+        return (lvProducerIndex() & CLOSED_BIT) != 0;
     }
 }
