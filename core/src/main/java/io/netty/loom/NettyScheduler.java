@@ -18,15 +18,15 @@ import java.util.concurrent.atomic.AtomicReference;
  * the actual underlying scheduler, it will work properly.
  */
 
-public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadScheduler {
+public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
-    private static GlobalDelegateThreadNettyScheduler INSTANCE;
+    private static NettyScheduler INSTANCE;
 
     final Thread.VirtualThreadScheduler jdkBuildinScheduler;
 
-    final ConcurrentHashMap<Thread, AtomicReference<VirtualThreadNettyScheduler>> unstartedThreads = new ConcurrentHashMap<>();
+    final ConcurrentHashMap<Thread, AtomicReference<EventLoopScheduler>> unstartedThreads = new ConcurrentHashMap<>();
 
-    public GlobalDelegateThreadNettyScheduler(Thread.VirtualThreadScheduler jdkBuildinScheduler) {
+    public NettyScheduler(Thread.VirtualThreadScheduler jdkBuildinScheduler) {
         this.jdkBuildinScheduler = jdkBuildinScheduler;
         INSTANCE = this;
         VarHandle.storeStoreFence();
@@ -48,7 +48,7 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
             if (currentThread.isVirtual()) {
                 // TODO https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/java/lang/VirtualThread.java#L270C18-L270C33
                 //      in theory should be easy to provide a VirtualThreadTask::current method to avoid the ScopedValue lookup
-                var schedulerRef = VirtualThreadNettyScheduler.currentRef();
+                var schedulerRef = EventLoopScheduler.currentRef();
                 // TODO per carrier sub-pollers goes here, but we want them to inherit the scheduler from the caller context
                 if (schedulerRef != null) {
                     var scheduler = schedulerRef.get();
@@ -86,7 +86,7 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
         if (attachment instanceof AtomicReference<?>) {
             // TODO create a EventLoopSchedulerRef type
             @SuppressWarnings("unchecked")
-            var ref = (AtomicReference<VirtualThreadNettyScheduler>) attachment;
+            var ref = (AtomicReference<EventLoopScheduler>) attachment;
             var scheduler = ref.get();
             if (scheduler != null) {
                 if (scheduler.execute(virtualThreadTask)) {
@@ -104,7 +104,7 @@ public class GlobalDelegateThreadNettyScheduler implements Thread.VirtualThreadS
         return jdkBuildinScheduler;
     }
 
-    static Thread assignUnstarted(Thread unstarted, AtomicReference<VirtualThreadNettyScheduler> schedulerRef) {
+    static Thread assignUnstarted(Thread unstarted, AtomicReference<EventLoopScheduler> schedulerRef) {
         INSTANCE.unstartedThreads.put(unstarted, schedulerRef);
         return unstarted;
     }

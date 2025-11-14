@@ -72,7 +72,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.GlobalDelegateThreadNettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
+                                <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
                             </configuration>
                         </execution>
                         <execution>
@@ -82,7 +82,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.GlobalDelegateThreadNettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
+                                <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
                             </configuration>
                         </execution>
                     </executions>

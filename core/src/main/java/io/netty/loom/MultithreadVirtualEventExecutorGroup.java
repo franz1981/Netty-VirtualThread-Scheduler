@@ -13,10 +13,10 @@ public class MultithreadVirtualEventExecutorGroup extends MultiThreadIoEventLoop
 
    private static final int RESUMED_CONTINUATIONS_EXPECTED_COUNT = Integer.getInteger("io.netty.loom.resumed.continuations", 1024);
    private ThreadFactory threadFactory;
-   private IdentityHashMap<Thread, VirtualThreadNettyScheduler> schedulers;
-   private final FastThreadLocal<VirtualThreadNettyScheduler> v_thread_factory = new FastThreadLocal<>() {
+   private IdentityHashMap<Thread, EventLoopScheduler> schedulers;
+   private final FastThreadLocal<EventLoopScheduler> v_thread_factory = new FastThreadLocal<>() {
       @Override
-      protected VirtualThreadNettyScheduler initialValue() {
+      protected EventLoopScheduler initialValue() {
          return schedulers.get(Thread.currentThread());
       }
    };
@@ -40,7 +40,7 @@ public class MultithreadVirtualEventExecutorGroup extends MultiThreadIoEventLoop
       if (threadFactory == null) {
          threadFactory = newDefaultThreadFactory();
       }
-      var customScheduler = new VirtualThreadNettyScheduler(this, threadFactory, ioHandlerFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT);
+      var customScheduler = new EventLoopScheduler(this, threadFactory, ioHandlerFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT);
       schedulers.put(customScheduler.eventLoopThread(), customScheduler);
       return customScheduler.ioEventLoop();
    }
