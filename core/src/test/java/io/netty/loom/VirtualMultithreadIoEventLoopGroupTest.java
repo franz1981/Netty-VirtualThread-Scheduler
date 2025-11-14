@@ -349,6 +349,24 @@ public class VirtualMultithreadIoEventLoopGroupTest {
         }
     }
 
+    @Test
+    void schedulerIsNotInheritedByForkedVT() throws InterruptedException, ExecutionException {
+        try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+            final var vThreadFactory = group.submit(group::vThreadFactory).get();
+            var schedulerRef = new CompletableFuture<EventLoopScheduler.SchedulerRef>();
+            vThreadFactory.newThread(() -> {
+                try (var scope = StructuredTaskScope.open(allSuccessfulOrThrow())) {
+                    var task = scope.fork(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler());
+                    scope.join();
+                    schedulerRef.complete(task.get());
+                } catch (InterruptedException e) {
+                    schedulerRef.completeExceptionally(e);
+                }
+            }).start();
+            assertNull(schedulerRef.get());
+        }
+    }
+
    @Test
    void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked() throws BrokenBarrierException, InterruptedException, TimeoutException {
       var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
