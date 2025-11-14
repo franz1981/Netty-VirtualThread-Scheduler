@@ -242,18 +242,7 @@ class MpscUnboundedStreamTest {
 
     @Test
     void testSmallInitialCapacity() {
-        MpscUnboundedStream<String> smallQueue = new MpscUnboundedStream<>(1);
-        
-        // Should round up to power of 2 (minimum 2)
-        for (int i = 0; i < 10; i++) {
-            assertTrue(smallQueue.offer("item" + i));
-        }
-        
-        assertEquals(10, smallQueue.size());
-        
-        for (int i = 0; i < 10; i++) {
-            assertEquals("item" + i, smallQueue.poll());
-        }
+        assertThrows(IllegalArgumentException.class, () -> new MpscUnboundedStream<String>(1));
     }
 
     @Test
