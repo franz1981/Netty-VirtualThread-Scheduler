@@ -38,6 +38,7 @@ public class EventLoopScheduler {
          */
         @Override
         public SchedulerRef scheduler() {
+            // TODO consider returning EMPTY_SCHEDULER_REF instead of null
             return (Thread.currentThread().threadId() == vThreadId) ? scheduler : null;
         }
     }
