@@ -1,7 +1,6 @@
 package io.netty.loom.benchmark;
 
 import io.netty.loom.LoomSupport;
-import io.netty.loom.VirtualThreadNettyScheduler;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.CompilerControl;

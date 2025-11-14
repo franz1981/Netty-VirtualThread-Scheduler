@@ -11,7 +11,7 @@ import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
 import io.netty.util.concurrent.FastThreadLocalThread;
 
-public class VirtualThreadNettyScheduler {
+public class EventLoopScheduler {
 
    private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
    // These are the soft-guaranteed yield times for the event loop whilst Thread.yield() is called.
@@ -20,8 +20,8 @@ public class VirtualThreadNettyScheduler {
    private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 1));
    private static final long IDLE_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
    // This is required to allow sub-pollers to run on the correct scheduler
-   private static final ScopedValue<AtomicReference<VirtualThreadNettyScheduler>> CURRENT_SCHEDULER = ScopedValue.newInstance();
-   private static final AtomicReference<VirtualThreadNettyScheduler> EMPTY_REFERENCE = new AtomicReference<>();
+   private static final ScopedValue<AtomicReference<EventLoopScheduler>> CURRENT_SCHEDULER = ScopedValue.newInstance();
+   private static final AtomicReference<EventLoopScheduler> EMPTY_REFERENCE = new AtomicReference<>();
    private final MpscUnboundedStream<Runnable> runQueue;
    private final ManualIoEventLoop ioEventLoop;
    private final Thread eventLoopThread;
@@ -30,16 +30,16 @@ public class VirtualThreadNettyScheduler {
    private volatile Runnable eventLoopContinuatioToRun;
    private final ThreadFactory vThreadFactory;
    private final AtomicBoolean running;
-   private final AtomicReference<VirtualThreadNettyScheduler> schedulerReference;
+   private final AtomicReference<EventLoopScheduler> schedulerReference;
 
-   public VirtualThreadNettyScheduler(IoEventLoopGroup parent, ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
+   public EventLoopScheduler(IoEventLoopGroup parent, ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
       schedulerReference = new AtomicReference<>(this);
       running = new AtomicBoolean(false);
       runQueue = new MpscUnboundedStream<>(resumedContinuationsExpectedCount);
       carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
       var rawVTFactory = Thread.ofVirtual().factory();
       vThreadFactory = runnable ->
-              GlobalDelegateThreadNettyScheduler.assignUnstarted(rawVTFactory.newThread(
+              NettyScheduler.assignUnstarted(rawVTFactory.newThread(
                       () -> ScopedValue.where(CURRENT_SCHEDULER, schedulerReference).run(runnable)), schedulerReference);
       eventLoopThread = vThreadFactory.newThread(() -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
       ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
@@ -199,7 +199,7 @@ public class VirtualThreadNettyScheduler {
       return true;
    }
 
-   public static AtomicReference<VirtualThreadNettyScheduler> currentRef() {
+   public static AtomicReference<EventLoopScheduler> currentRef() {
       var ref = CURRENT_SCHEDULER.orElse(EMPTY_REFERENCE);
       return ref == EMPTY_REFERENCE? null : ref;
    }
