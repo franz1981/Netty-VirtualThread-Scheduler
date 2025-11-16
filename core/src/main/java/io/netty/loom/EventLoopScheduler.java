@@ -221,6 +221,9 @@ public class EventLoopScheduler {
       }
       var currentThread = Thread.currentThread();
       if (currentThread != eventLoopThread) {
+          // currentThread == carrierThread iff
+          // - event loop start
+          // - Thread::yield within this scheduler
           if (currentThread != carrierThread) {
               // this is checking for "local" submissions
               if (currentThreadSchedulerContext().scheduler() != sharedRef) {
