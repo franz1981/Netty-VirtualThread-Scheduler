@@ -27,10 +27,17 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
     private final ConcurrentHashMap<Thread, SharedRef> unstartedThreads = new ConcurrentHashMap<>();
 
+    private final boolean perCarrierPollers;
+
     public NettyScheduler(Thread.VirtualThreadScheduler jdkBuildinScheduler) {
         this.jdkBuildinScheduler = jdkBuildinScheduler;
         INSTANCE = this;
+        perCarrierPollers = Integer.getInteger("jdk.pollerMode", -1) == 3;
         VarHandle.storeStoreFence();
+    }
+
+    public boolean expectsPerCarrierPollers() {
+        return perCarrierPollers;
     }
 
     Thread.VirtualThreadScheduler jdkBuildinScheduler() {
@@ -47,23 +54,25 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
         // or the vThreadFactory could provide in its build method something to access the VirtualThreadTask of an unstarted VirtualThread
         var assignedSchedulerRef = unstartedThreads.remove(virtualThreadTask.thread());
         if (assignedSchedulerRef == null) {
-            // Read-Poller threads are special: if we run from a VThread managed by a VirtualThreadNettyScheduler,
-            // we want should continue using that same scheduler for the Read-Poller thread.
-            var currentThread = Thread.currentThread();
-            if (currentThread.isVirtual()) {
-                // TODO https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/java/lang/VirtualThread.java#L270C18-L270C33
-                //      in theory should be easy to provide a VirtualThreadTask::current method to avoid the ScopedValue lookup
-                var ctx = EventLoopScheduler.currentThreadSchedulerContext();
-                var schedulerRef = ctx.scheduler();
-                // See https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/sun/nio/ch/Poller.java#L723C48-L723C59
-                if (schedulerRef != null) {
-                    var runningScheduler = schedulerRef.get();
-                    if (runningScheduler != null && virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
-                        virtualThreadTask.attach(schedulerRef);
-                        if (runningScheduler.execute(virtualThreadTask)) {
-                            return;
+            if (perCarrierPollers) {
+                // Read-Poller threads are special: if we run from a VThread managed by a VirtualThreadNettyScheduler,
+                // we want should continue using that same scheduler for the Read-Poller thread.
+                var currentThread = Thread.currentThread();
+                if (currentThread.isVirtual()) {
+                    // TODO https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/java/lang/VirtualThread.java#L270C18-L270C33
+                    //      in theory should be easy to provide a VirtualThreadTask::current method to avoid the ScopedValue lookup
+                    var ctx = EventLoopScheduler.currentThreadSchedulerContext();
+                    var schedulerRef = ctx.scheduler();
+                    // See https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/sun/nio/ch/Poller.java#L723C48-L723C59
+                    if (schedulerRef != null) {
+                        var runningScheduler = schedulerRef.get();
+                        if (runningScheduler != null && virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
+                            virtualThreadTask.attach(schedulerRef);
+                            if (runningScheduler.execute(virtualThreadTask)) {
+                                return;
+                            }
+                            virtualThreadTask.attach(null);
                         }
-                        virtualThreadTask.attach(null);
                     }
                 }
             }
@@ -101,6 +110,10 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
     static Thread assignUnstarted(Thread unstarted, SharedRef ref) {
         INSTANCE.unstartedThreads.put(unstarted, ref);
         return unstarted;
+    }
+
+    public static boolean perCarrierPollers() {
+        return INSTANCE.perCarrierPollers;
     }
 
     public static boolean isAvailable() {
