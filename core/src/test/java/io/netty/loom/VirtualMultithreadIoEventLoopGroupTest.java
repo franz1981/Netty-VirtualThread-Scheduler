@@ -379,6 +379,8 @@ public class VirtualMultithreadIoEventLoopGroupTest {
             vThreadFactory = group.submit(group::vThreadFactory).get();
             schedulerRef = group.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler()).get();
             schedulerWeakRef = new WeakReference<>(schedulerRef.get());
+            assertNotNull(schedulerRef.get());
+            assertNotNull(schedulerWeakRef.get());
         }
         while (schedulerRef.get() != null) {
             Thread.yield();
