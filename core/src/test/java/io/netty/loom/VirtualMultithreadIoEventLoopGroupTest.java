@@ -3,6 +3,8 @@ package io.netty.loom;
 import static java.util.concurrent.StructuredTaskScope.Joiner.allSuccessfulOrThrow;
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.lang.ref.SoftReference;
+import java.lang.ref.WeakReference;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -39,6 +41,7 @@ import io.netty.util.CharsetUtil;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.internal.ThreadExecutorMap;
+import org.junit.jupiter.api.Timeout;
 
 public class VirtualMultithreadIoEventLoopGroupTest {
 
@@ -364,6 +367,32 @@ public class VirtualMultithreadIoEventLoopGroupTest {
             }).start();
             assertNull(schedulerRef.get());
         }
+    }
+
+    @Test
+    @Timeout(10)
+    void schedulerIsNotLeakingIfItsThreadFactoryOutliveIt() throws InterruptedException, ExecutionException {
+        ThreadFactory vThreadFactory;
+        WeakReference<EventLoopScheduler> schedulerWeakRef;
+        EventLoopScheduler.SharedRef schedulerRef;
+        try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+            vThreadFactory = group.submit(group::vThreadFactory).get();
+            schedulerRef = group.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler()).get();
+            schedulerWeakRef = new WeakReference<>(schedulerRef.get());
+        }
+        while (schedulerRef.get() != null) {
+            Thread.yield();
+        }
+        while (schedulerWeakRef.get() != null) {
+            System.gc();
+            System.runFinalization();
+            Thread.sleep(100);
+        }
+        // we can still run virtual threads from the factory without the scheduler
+        var schedulerRefPromise = new CompletableFuture<EventLoopScheduler.SharedRef>();
+        vThreadFactory.newThread(() -> schedulerRefPromise.complete(EventLoopScheduler.currentThreadSchedulerContext().scheduler())).start();
+        assertSame(schedulerRef, schedulerRefPromise.get());
+        assertNull(schedulerRefPromise.get().get());
     }
 
     @Test
