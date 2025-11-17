@@ -43,6 +43,11 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 
     // Sentinel object used to mark a jump to the next buffer
     private static final Object JUMP = new Object();
+    private static final Object BUFFER_CONSUMED = new Object();
+    private static final int CONTINUE_TO_P_INDEX_CAS = 0;
+    private static final int RETRY = 1;
+    private static final int QUEUE_FULL = 2;
+    private static final int QUEUE_RESIZE = 3;
 
     // MSB is used to store the CLOSED flag
     private static final long CLOSED_BIT = 1L << 63;
@@ -111,12 +116,12 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         return PRODUCER_LIMIT.compareAndSet(this, expect, newValue);
     }
 
-    private static <E> void soElement(E[] buffer, int offset, E e) {
+    private static <E> void soRefElement(E[] buffer, int offset, E e) {
         ARRAY.setRelease(buffer, offset, e);
     }
 
     @SuppressWarnings("unchecked")
-    private static <E> E lvElement(E[] buffer, int offset) {
+    private static <E> E lvRefElement(E[] buffer, int offset) {
         return (E) ARRAY.getAcquire(buffer, offset);
     }
 
@@ -157,13 +162,13 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
             if (producerLimit <= pIndex) {
                 int result = offerSlowPath(mask, pIndex, producerLimit);
                 switch (result) {
-                    case 0:
+                    case CONTINUE_TO_P_INDEX_CAS:
                         break;
-                    case 1:
+                    case RETRY:
                         continue;
-                    case 2:
+                    case QUEUE_FULL:
                         return false;
-                    case 3:
+                    case QUEUE_RESIZE:
                         resize(mask, buffer, pIndex, e);
                         return true;
                 }
@@ -174,8 +179,8 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
             }
         }
         // INDEX visible before ELEMENT, consistent with consumer expectation
-        final int offset = modifiedCalcElementOffset(pIndex, mask);
-        soElement(buffer, offset, e);
+        final int offset = modifiedCalcCircularRefElementOffset(pIndex, mask);
+        soRefElement(buffer, offset, e);
         return true;
     }
 
@@ -183,27 +188,28 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
      * We do not inline resize into this method because we do not resize on fill.
      */
     private int offerSlowPath(long mask, long pIndex, long producerLimit) {
-        int result;
         final long cIndex = lvConsumerIndex();
         long bufferCapacity = getCurrentBufferCapacity(mask);
-        result = 0;// 0 - goto pIndex CAS
         if (cIndex + bufferCapacity > pIndex) {
             if (!casProducerLimit(producerLimit, cIndex + bufferCapacity)) {
-                result = 1;// retry from top
+                // retry from top
+                return RETRY;
             }
+            // continue to pIndex CAS
+            return CONTINUE_TO_P_INDEX_CAS;
         }
         // full and cannot grow
         else if (availableInQueue(pIndex, cIndex) <= 0) {
-            result = 2;// -> return false;
+            // offer should return false;
+            return QUEUE_FULL;
         }
         // grab index for resize -> set lower bit
         else if (casProducerIndex(pIndex, pIndex + 1)) {
-            result = 3;// -> resize
+            // trigger a resize
+            return QUEUE_RESIZE;
         }
-        else {
-            result = 1;// failed resize attempt, retry from top
-        }
-        return result;
+        // failed resize attempt, retry from top
+        return RETRY;
     }
 
     private void resize(long oldMask, E[] oldBuffer, long pIndex, final E e) {
@@ -215,12 +221,12 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         final int newMask = (newBufferLength - 2) << 1;
         producerMask = newMask;
 
-        final int offsetInOld = modifiedCalcElementOffset(pIndex, oldMask);
-        final int offsetInNew = modifiedCalcElementOffset(pIndex, newMask);
+        final int offsetInOld = modifiedCalcCircularRefElementOffset(pIndex, oldMask);
+        final int offsetInNew = modifiedCalcCircularRefElementOffset(pIndex, newMask);
 
 
-        soElement(newBuffer, offsetInNew, e);// element in new array
-        soElement(oldBuffer, nextArrayOffset(oldMask), newBuffer);// buffer linked
+        soRefElement(newBuffer, offsetInNew, e);// element in new array
+        soRefElement(oldBuffer, nextArrayOffset(oldMask), newBuffer);// buffer linked
 
         // ASSERT code
         final long cIndex = lvConsumerIndex();
@@ -239,11 +245,11 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         // INDEX visible before ELEMENT, consistent with consumer expectation
 
         // make resize visible to consumer
-        soElement(oldBuffer, offsetInOld, JUMP);
+        soRefElement(oldBuffer, offsetInOld, JUMP);
     }
 
     private int nextArrayOffset(final long mask) {
-        return modifiedCalcElementOffset(mask + 2, Long.MAX_VALUE);
+        return modifiedCalcCircularRefElementOffset(mask + 2, Long.MAX_VALUE);
     }
 
     protected int getNextBufferSize(E[] buffer) {
@@ -262,7 +268,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
      * This method assumes index is actually (index << 1) because lower bit is used for resize. This is
      * compensated for by reducing the element shift. The computation is constant folded, so there's no cost.
      */
-    private static int modifiedCalcElementOffset(long index, long mask) {
+    private static int modifiedCalcCircularRefElementOffset(long index, long mask) {
         return (int) ((index & mask) >> 1);
     }
 
@@ -272,54 +278,49 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         final long index = consumerIndex;
         final long mask = consumerMask;
 
-        final int offset = modifiedCalcElementOffset(index, mask);
-        Object e = lvElement(buffer, offset);// LoadLoad
+        final int offset = modifiedCalcCircularRefElementOffset(index, mask);
+        Object e = lvRefElement(buffer, offset);// LoadLoad
         if (e == null) {
-            if (index != (lvProducerIndex() & CLOSED_MASK)) {
-                // poll() == null iff queue is empty, null element is not strong enough indicator, so we must
-                // check the producer index. If the queue is indeed not empty we spin until element is
-                // visible.
-                do {
-                    e = lvElement(buffer, offset);
-                } while (e == null);
-            }
-            else {
+            long pIndex = lvProducerIndex() & CLOSED_MASK;
+            pIndex += (pIndex & RESIZE_BIT);
+            // isEmpty?
+            if (index == pIndex) {
                 return null;
             }
+            // poll() == null iff queue is empty, null element is not strong enough indicator, so we must
+            // spin until element is visible.
+            do {
+                e = lvRefElement(buffer, offset);
+            } while (e == null);
         }
         if (e == JUMP) {
-            final E[] nextBuffer = getNextBuffer(buffer, mask);
+            final E[] nextBuffer = nextBuffer(buffer, mask);
             return newBufferPoll(nextBuffer, index);
         }
-        soElement(buffer, offset, null);
+        soRefElement(buffer, offset, null);
         soConsumerIndex(index + 2);
         return (E) e;
     }
 
-    private E[] getNextBuffer(final E[] buffer, final long mask) {
+    private E[] nextBuffer(final E[] buffer, final long mask) {
         final int nextArrayOffset = nextArrayOffset(mask);
         @SuppressWarnings("unchecked")
-        final E[] nextBuffer = (E[]) lvElement(buffer, nextArrayOffset);
-        soElement(buffer, nextArrayOffset, null);
+        final E[] nextBuffer = (E[]) lvRefElement(buffer, nextArrayOffset);
+        consumerBuffer = nextBuffer;
+        consumerMask = (nextBuffer.length - 2) << 1;
+        soRefElement(buffer, nextArrayOffset, BUFFER_CONSUMED);
         return nextBuffer;
     }
 
     private E newBufferPoll(E[] nextBuffer, final long index) {
-        final int offsetInNew = newBufferAndOffset(nextBuffer, index);
-        final E n = lvElement(nextBuffer, offsetInNew);// LoadLoad
+        final int offset = modifiedCalcCircularRefElementOffset(index, consumerMask);
+        final E n = lvRefElement(nextBuffer, offset);// LoadLoad
         if (n == null) {
             throw new IllegalStateException("new buffer must have at least one element");
         }
-        soElement(nextBuffer, offsetInNew, null);// StoreStore
+        soRefElement(nextBuffer, offset, null);// StoreStore
         soConsumerIndex(index + 2);
         return n;
-    }
-
-    private int newBufferAndOffset(E[] nextBuffer, final long index) {
-        consumerBuffer = nextBuffer;
-        consumerMask = (nextBuffer.length - 2) << 1;
-        final int offsetInNew = modifiedCalcElementOffset(index, consumerMask);
-        return offsetInNew;
     }
 
     public final boolean isEmpty() {
@@ -327,7 +328,10 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         // Loading consumer before producer allows for producer increments after consumer index is read.
         // This ensures this method is conservative in it's estimate. Note that as this is an MPSC q there is
         // nothing we can do to make this an exact method.
-        return (this.lvConsumerIndex() == (this.lvProducerIndex() & CLOSED_MASK));
+        long cIndex = lvConsumerIndex();
+        long pIndex = lvProducerIndex() & CLOSED_MASK;
+        pIndex += (pIndex & RESIZE_BIT);
+        return cIndex == pIndex;
     }
 
     public final int size() {
@@ -347,7 +351,9 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
             after = lvConsumerIndex();
             if (before == after) {
                 // Mask out CLOSED bit for size calculation
-                size = (((currentProducerIndex & CLOSED_MASK) - after) >> 1);
+                long pIndex = currentProducerIndex & CLOSED_MASK;
+                pIndex += (pIndex & RESIZE_BIT);
+                size = (pIndex - after) >> 1;
                 break;
             }
         }
