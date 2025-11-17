@@ -66,17 +66,21 @@ public class EventLoopScheduler {
       eventLoopIsRunning = new AtomicBoolean(false);
       runQueue = new MpscUnboundedStream<>(resumedContinuationsExpectedCount);
       carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
-      var rawVTFactory = Thread.ofVirtual().factory();
-      vThreadFactory = runnable ->
-              NettyScheduler.assignUnstarted(rawVTFactory.newThread(
-                      () ->   // this can be inherited by any thread created in the context of this virtual thread
-                              // but only the original virtual thread will have the correct scheduler context
-                              ScopedValue.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef)).run(runnable)
-              ), sharedRef);
+      vThreadFactory = newEventLoopSchedulerFactory(sharedRef);
       eventLoopThread = vThreadFactory.newThread(() -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
       ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
             ioExecutor -> new AwakeAwareIoHandler(eventLoopIsRunning, ioHandlerFactory.newHandler(ioExecutor)));
       carrierThread.start();
+   }
+
+   private static ThreadFactory newEventLoopSchedulerFactory(SharedRef sharedRef) {
+       var rawVTFactory = Thread.ofVirtual().factory();
+       return runnable ->
+               NettyScheduler.assignUnstarted(rawVTFactory.newThread(
+                       () ->   // this can be inherited by any thread created in the context of this virtual thread
+                               // but only the original virtual thread will have the correct scheduler context
+                               ScopedValue.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef)).run(runnable)
+               ), sharedRef);
    }
 
    int externalContinuationsCount() {
