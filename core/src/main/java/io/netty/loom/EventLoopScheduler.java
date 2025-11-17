@@ -12,11 +12,11 @@ import io.netty.util.concurrent.FastThreadLocalThread;
 
 public class EventLoopScheduler {
 
-    public static final class SchedulerRef {
+    public static final class SharedRef {
 
         private volatile EventLoopScheduler ref;
 
-        private SchedulerRef(EventLoopScheduler ref) {
+        private SharedRef(EventLoopScheduler ref) {
             this.ref = ref;
         }
 
@@ -31,13 +31,13 @@ public class EventLoopScheduler {
      * This means that if they try to unpark some virtual thread which belong to this scheduler,
      * they can still wakeup the carrier thread. It's more a performance defect, but won't affect correctness.
      */
-    public record SchedulerContext(long vThreadId, SchedulerRef scheduler) {
+    public record SchedulingContext(long vThreadId, SharedRef scheduler) {
 
         /**
          * Get the assigned scheduler for the current thread, or null if this thread is not assigned to any scheduler.
          */
         @Override
-        public SchedulerRef scheduler() {
+        public SharedRef scheduler() {
             // TODO consider returning EMPTY_SCHEDULER_REF instead of null
             return (Thread.currentThread().threadId() == vThreadId) ? scheduler : null;
         }
@@ -50,8 +50,8 @@ public class EventLoopScheduler {
    private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 1));
    private static final long IDLE_YIELD_US = TimeUnit.MICROSECONDS.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
    // This is required to allow sub-pollers to run on the correct scheduler
-   private static final ScopedValue<SchedulerContext> CURRENT_SCHEDULER = ScopedValue.newInstance();
-   private static final SchedulerContext EMPTY_SCHEDULER_CONTEXT = new SchedulerContext(-1, null);
+   private static final ScopedValue<SchedulingContext> CURRENT_SCHEDULER = ScopedValue.newInstance();
+   private static final SchedulingContext EMPTY_SCHEDULER_CONTEXT = new SchedulingContext(-1, null);
    private final MpscUnboundedStream<Runnable> runQueue;
    private final ManualIoEventLoop ioEventLoop;
    private final Thread eventLoopThread;
@@ -60,10 +60,10 @@ public class EventLoopScheduler {
    private volatile Runnable eventLoopContinuatioToRun;
    private final ThreadFactory vThreadFactory;
    private final AtomicBoolean eventLoopIsRunning;
-   private final SchedulerRef sharedRef;
+   private final SharedRef sharedRef;
 
    public EventLoopScheduler(IoEventLoopGroup parent, ThreadFactory threadFactory, IoHandlerFactory ioHandlerFactory, int resumedContinuationsExpectedCount) {
-      sharedRef = new SchedulerRef(this);
+      sharedRef = new SharedRef(this);
       eventLoopIsRunning = new AtomicBoolean(false);
       runQueue = new MpscUnboundedStream<>(resumedContinuationsExpectedCount);
       carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
@@ -72,7 +72,7 @@ public class EventLoopScheduler {
               NettyScheduler.assignUnstarted(rawVTFactory.newThread(
                       () ->   // this can be inherited by any thread created in the context of this virtual thread
                               // but only the original virtual thread will have the correct scheduler context
-                              ScopedValue.where(CURRENT_SCHEDULER, new SchedulerContext(Thread.currentThread().threadId(), sharedRef)).run(runnable)
+                              ScopedValue.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef)).run(runnable)
               ), sharedRef);
       eventLoopThread = vThreadFactory.newThread(() -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
       ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
@@ -240,7 +240,7 @@ public class EventLoopScheduler {
       return true;
    }
 
-   public static SchedulerContext currentThreadSchedulerContext() {
+   public static SchedulingContext currentThreadSchedulerContext() {
       return CURRENT_SCHEDULER.orElse(EMPTY_SCHEDULER_CONTEXT);
    }
 }
