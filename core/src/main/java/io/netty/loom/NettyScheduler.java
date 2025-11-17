@@ -1,6 +1,6 @@
 package io.netty.loom;
 
-import io.netty.loom.EventLoopScheduler.SchedulerRef;
+import io.netty.loom.EventLoopScheduler.SharedRef;
 
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,7 +25,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
     private final Thread.VirtualThreadScheduler jdkBuildinScheduler;
 
-    private final ConcurrentHashMap<Thread, SchedulerRef> unstartedThreads = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Thread, SharedRef> unstartedThreads = new ConcurrentHashMap<>();
 
     public NettyScheduler(Thread.VirtualThreadScheduler jdkBuildinScheduler) {
         this.jdkBuildinScheduler = jdkBuildinScheduler;
@@ -85,7 +85,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
     @Override
     public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
         var attachment = virtualThreadTask.attachment();
-        if (attachment instanceof SchedulerRef ref) {
+        if (attachment instanceof SharedRef ref) {
             var assignedScheduler = ref.get();
             if (assignedScheduler != null) {
                 if (assignedScheduler.execute(virtualThreadTask)) {
@@ -98,7 +98,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
         jdkBuildinScheduler.onContinue(virtualThreadTask);
     }
 
-    static Thread assignUnstarted(Thread unstarted, SchedulerRef ref) {
+    static Thread assignUnstarted(Thread unstarted, SharedRef ref) {
         INSTANCE.unstartedThreads.put(unstarted, ref);
         return unstarted;
     }

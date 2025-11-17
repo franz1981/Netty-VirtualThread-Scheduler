@@ -353,7 +353,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
     void schedulerIsNotInheritedByForkedVT() throws InterruptedException, ExecutionException {
         try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
             final var vThreadFactory = group.submit(group::vThreadFactory).get();
-            var schedulerRef = new CompletableFuture<EventLoopScheduler.SchedulerRef>();
+            var schedulerRef = new CompletableFuture<EventLoopScheduler.SharedRef>();
             vThreadFactory.newThread(() -> {
                 try (var scope = StructuredTaskScope.open(allSuccessfulOrThrow())) {
                     var task = scope.fork(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler());
