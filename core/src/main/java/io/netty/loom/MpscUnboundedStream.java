@@ -51,7 +51,8 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 
     // MSB is used to store the CLOSED flag
     private static final long CLOSED_BIT = 1L << 63;
-    private static final long CLOSED_MASK = ~CLOSED_BIT;
+    private static final long NOT_CLOSED_MASK = ~CLOSED_BIT;
+    private static final long IGNORE_CLOSED_AND_RESIZE_MASK = NOT_CLOSED_MASK & ~1L;
     // LSB is used during resize (bit 0)
     private static final long RESIZE_BIT = 1L;
 
@@ -281,7 +282,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         final int offset = modifiedCalcCircularRefElementOffset(index, mask);
         Object e = lvRefElement(buffer, offset);// LoadLoad
         if (e == null) {
-            long pIndex = lvProducerIndex() & CLOSED_MASK;
+            long pIndex = lvProducerIndex() & NOT_CLOSED_MASK;
             pIndex += (pIndex & RESIZE_BIT);
             // isEmpty?
             if (index == pIndex) {
@@ -329,8 +330,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
         // This ensures this method is conservative in it's estimate. Note that as this is an MPSC q there is
         // nothing we can do to make this an exact method.
         long cIndex = lvConsumerIndex();
-        long pIndex = lvProducerIndex() & CLOSED_MASK;
-        pIndex += (pIndex & RESIZE_BIT);
+        long pIndex = lvProducerIndex() & IGNORE_CLOSED_AND_RESIZE_MASK;
         return cIndex == pIndex;
     }
 
@@ -350,9 +350,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
             final long currentProducerIndex = lvProducerIndex();
             after = lvConsumerIndex();
             if (before == after) {
-                // Mask out CLOSED bit for size calculation
-                long pIndex = currentProducerIndex & CLOSED_MASK;
-                pIndex += (pIndex & RESIZE_BIT);
+                long pIndex = currentProducerIndex & IGNORE_CLOSED_AND_RESIZE_MASK;
                 size = (pIndex - after) >> 1;
                 break;
             }
