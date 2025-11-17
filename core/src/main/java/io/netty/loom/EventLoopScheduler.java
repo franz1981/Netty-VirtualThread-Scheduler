@@ -26,10 +26,9 @@ public class EventLoopScheduler {
     }
 
     /**
-     * PerCarrier Read-Sub-Pollers are not created through the vThreadFactory and although the NettyScheduler
-     * can dynamically assign them to this scheduler, while running, won't see this scheduler as the current one.
-     * This means that if they try to unpark some virtual thread which belong to this scheduler,
-     * they can still wakeup the carrier thread. It's more a performance defect, but won't affect correctness.
+     * We currently lack a way to query the current thread's assigned scheduler: this is a workaround using ScopedValues.<br>
+     * The same functionality could have been achieved (in a less hacky way) using ThreadLocals, which are way more expensive, for VirtualThreads.<br>
+     * Read sub-poller(s) sadly won't work as expected with this, because are not created using the event loop scheduler factory.
      */
     public record SchedulingContext(long vThreadId, SharedRef scheduler) {
 
@@ -163,8 +162,8 @@ public class EventLoopScheduler {
             parkedCarrierThread = null;
          }
       }
-      // make sure the event loop thread is fully terminated
-      while (eventLoopThread.isAlive()) {
+      // make sure the event loop thread is fully terminated and all tasks are run
+      while (eventLoopThread.isAlive() || !canBlock()) {
          runExternalContinuations(RUNNING_YIELD_US);
          runEventLoopContinuation();
       }

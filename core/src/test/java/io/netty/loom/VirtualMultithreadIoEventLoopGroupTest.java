@@ -2,7 +2,6 @@ package io.netty.loom;
 
 import static java.util.concurrent.StructuredTaskScope.Joiner.allSuccessfulOrThrow;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -365,6 +364,22 @@ public class VirtualMultithreadIoEventLoopGroupTest {
             }).start();
             assertNull(schedulerRef.get());
         }
+    }
+
+    @Test
+    void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed() throws InterruptedException, ExecutionException, BrokenBarrierException, TimeoutException {
+        var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+        final var barrier = new CyclicBarrier(2);
+        final var vThreadFactory = group.submit(group::vThreadFactory).get();
+        vThreadFactory.newThread(() -> {
+            try {
+                group.shutdownGracefully().get();
+                barrier.await();
+            } catch (Throwable e) {
+                // ignore
+            }
+        }).start();
+        barrier.await(5, TimeUnit.SECONDS);
     }
 
    @Test
