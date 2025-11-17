@@ -58,6 +58,9 @@
                     <configuration>
                         <source>${java.version}</source>
                         <target>${java.version}</target>
+                        <compilerArgs>
+                            <arg>--enable-preview</arg>
+                        </compilerArgs>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -72,7 +75,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
+                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
                             </configuration>
                         </execution>
                         <execution>
@@ -82,7 +85,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
+                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
                             </configuration>
                         </execution>
                     </executions>
