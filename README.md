@@ -30,7 +30,7 @@ Caveats:
 
 See the runnable example and step-by-step instructions in the example module:
 
-- example-echo/README.md
+- [`example-echo/README.md`](example-echo/README.md)
 
 (That README contains the minimal build and run commands, including how to start the example server and run a quick curl smoke test.)
 
@@ -59,7 +59,7 @@ mvn clean install
 
 ## Integration tips and runtime flags
 - Install the Netty scheduler as the JVM virtual-thread scheduler with:
-  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler
+  `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler`
 
 - Some blocking I/O integrations rely on per-carrier pollers. The code checks `jdk.pollerMode` and expects value `3` for per-carrier pollers. This can be controlled via JVM flags or defaults depending on your JVM version.
 
@@ -85,7 +85,6 @@ java -jar target/benchmarks.jar
 ```
 
 ## Prerequisites
-- Java 21 or newer (with Loom support)
 - Maven 3.6+
 - To use the `VirtualMultithreadIoEventLoopGroup` set the JVM property to install the Netty scheduler:
   -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler
