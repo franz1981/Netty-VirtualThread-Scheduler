@@ -1,7 +1,6 @@
 package io.netty.loom.benchmark;
 
 import io.netty.channel.nio.NioIoHandler;
-import io.netty.loom.LoomSupport;
 import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -15,6 +14,7 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.infra.BenchmarkParams;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -25,9 +25,6 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
-@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
-		"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
-		"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"})
 @State(Scope.Thread)
 public class NettySchedulerBenchmark {
 
@@ -39,13 +36,18 @@ public class NettySchedulerBenchmark {
 	private ThreadFactory vtFactory;
 
 	@Setup
-	public void setup() throws ExecutionException, InterruptedException {
-		executorGroup = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-		vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
+	public void setup(BenchmarkParams params) throws ExecutionException, InterruptedException {
+		if (params.getBenchmark().contains("Netty")) {
+			executorGroup = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+			vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
+		}
 	}
 
 	@Benchmark
-	public void global() {
+	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3"})
+	public void scheduleToFjFromNetty() {
 		CountDownLatch countDown = new CountDownLatch(tasks);
 		vtFactory.newThread(() -> {
 			for (int i = 0; i < tasks; i++) {
@@ -60,15 +62,49 @@ public class NettySchedulerBenchmark {
 	}
 
 	@Benchmark
-	public void inheritFromParent() {
+	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false"})
+	public void scheduleToFjFromFjWithBuiltInScheduler() {
+		CountDownLatch countDown = new CountDownLatch(tasks);
+		Thread.startVirtualThread(() -> {
+			for (int i = 0; i < tasks; i++) {
+				Thread.startVirtualThread(countDown::countDown);
+			}
+		}).start();
+		try {
+			countDown.await();
+		} catch (InterruptedException e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3"})
+	public void scheduleToFjFromFjWithCustomScheduler() {
+		CountDownLatch countDown = new CountDownLatch(tasks);
+		Thread.startVirtualThread(() -> {
+			for (int i = 0; i < tasks; i++) {
+				Thread.startVirtualThread(countDown::countDown);
+			}
+		}).start();
+		try {
+			countDown.await();
+		} catch (InterruptedException e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3"})
+	public void scheduleToNettyFromNetty() {
 		CountDownLatch countDown = new CountDownLatch(tasks);
 		vtFactory.newThread(() -> {
-			Thread.VirtualThreadScheduler parentScheduler = LoomSupport.getScheduler(Thread.currentThread());
-			// Simulate the behavior of the previous version
-			// get the scheduler from the parent thread before starting, instead of
-			// pre-initializing the `vtFactory`.
 			for (int i = 0; i < tasks; i++) {
-				Thread.ofVirtual().scheduler(parentScheduler).start(countDown::countDown);
+				vtFactory.newThread(countDown::countDown).start();
 			}
 		}).start();
 		try {
@@ -80,6 +116,8 @@ public class NettySchedulerBenchmark {
 
 	@TearDown
 	public void tearDown() {
-		executorGroup.shutdownGracefully();
+		if (executorGroup != null) {
+			executorGroup.shutdownGracefully();
+		}
 	}
 }

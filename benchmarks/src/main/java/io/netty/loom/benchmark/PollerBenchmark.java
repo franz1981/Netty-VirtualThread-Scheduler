@@ -26,7 +26,6 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 
-import io.netty.loom.LoomSupport;
 import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
 
 /**
@@ -134,11 +133,11 @@ public class PollerBenchmark {
 			blockingReadTasks.add(task);
 			LockSupport.unpark(carrierParked);
 		};
-		readThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), readScheduler).factory();
-		writeThreadFactory = LoomSupport.setVirtualThreadFactoryScheduler(Thread.ofVirtual(), task -> {
+		readThreadFactory = Thread.ofVirtual().scheduler(Thread.VirtualThreadScheduler.adapt(readScheduler)).factory();
+		writeThreadFactory = Thread.ofVirtual().scheduler(Thread.VirtualThreadScheduler.adapt(task -> {
 			blockingWriteTasks.add(task);
 			LockSupport.unpark(carrierParked);
-		}).factory();
+		})).factory();
 		clientIn = clientSocket.getInputStream();
 		serverOut = serverSocket.getOutputStream();
 		clientSocket.setTcpNoDelay(true);
