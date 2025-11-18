@@ -26,64 +26,60 @@ import java.util.concurrent.TimeUnit;
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
 @Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
-        "-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"})
+		"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
+		"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"})
 @State(Scope.Thread)
 public class NettySchedulerBenchmark {
 
-    @Param({"1000", "100000"})
-    private int tasks;
+	@Param({"1000", "100000"})
+	private int tasks;
 
-    private VirtualMultithreadIoEventLoopGroup executorGroup;
+	private VirtualMultithreadIoEventLoopGroup executorGroup;
 
-    private ThreadFactory vtFactory;
+	private ThreadFactory vtFactory;
 
-    @Setup
-    public void setup() throws ExecutionException, InterruptedException {
-        executorGroup = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-        vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
-    }
+	@Setup
+	public void setup() throws ExecutionException, InterruptedException {
+		executorGroup = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+		vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
+	}
 
-    @Benchmark
-    public void global() {
-        CountDownLatch countDown = new CountDownLatch(tasks);
-        vtFactory.newThread(
-                () -> {
-                    for (int i = 0; i < tasks; i++) {
-                        Thread.startVirtualThread(countDown::countDown);
-                    }
-                }
-        ).start();
-        try {
-            countDown.await();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-    }
+	@Benchmark
+	public void global() {
+		CountDownLatch countDown = new CountDownLatch(tasks);
+		vtFactory.newThread(() -> {
+			for (int i = 0; i < tasks; i++) {
+				Thread.startVirtualThread(countDown::countDown);
+			}
+		}).start();
+		try {
+			countDown.await();
+		} catch (InterruptedException e) {
+			throw new RuntimeException(e);
+		}
+	}
 
-    @Benchmark
-    public void inheritFromParent() {
-        CountDownLatch countDown = new CountDownLatch(tasks);
-        vtFactory.newThread(
-                () -> {
-                    Thread.VirtualThreadScheduler parentScheduler = LoomSupport.getScheduler(Thread.currentThread());
-                    // Simulate the behavior of the previous version
-                    // get the scheduler from the parent thread before starting, instead of pre-initializing the `vtFactory`.
-                    for (int i = 0; i < tasks; i++) {
-                        Thread.ofVirtual()
-                                .scheduler(parentScheduler)
-                                .start(countDown::countDown);
-                    }
-                }
-        ).start();
-        try {
-            countDown.await();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-    }
+	@Benchmark
+	public void inheritFromParent() {
+		CountDownLatch countDown = new CountDownLatch(tasks);
+		vtFactory.newThread(() -> {
+			Thread.VirtualThreadScheduler parentScheduler = LoomSupport.getScheduler(Thread.currentThread());
+			// Simulate the behavior of the previous version
+			// get the scheduler from the parent thread before starting, instead of
+			// pre-initializing the `vtFactory`.
+			for (int i = 0; i < tasks; i++) {
+				Thread.ofVirtual().scheduler(parentScheduler).start(countDown::countDown);
+			}
+		}).start();
+		try {
+			countDown.await();
+		} catch (InterruptedException e) {
+			throw new RuntimeException(e);
+		}
+	}
 
-    @TearDown
-    public void tearDown() {
-        executorGroup.shutdownGracefully();
-    }
+	@TearDown
+	public void tearDown() {
+		executorGroup.shutdownGracefully();
+	}
 }
