@@ -1,7 +1,6 @@
 package io.netty.loom;
 
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicLong;
@@ -22,6 +21,9 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 		super(nThreads, (Executor) command -> {
 			throw new UnsupportedOperationException("this executor is not supposed to be used");
 		}, ioHandlerFactory);
+	}
+
+	private static void validateNettyAvailability() {
 		if (!NettyScheduler.isAvailable()) {
 			throw new IllegalStateException(
 					"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler is required to use VirtualMultithreadIoEventLoopGroup");
@@ -63,6 +65,7 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 	@Override
 	protected IoEventLoop newChild(Executor executor, IoHandlerFactory ioHandlerFactory,
 			@SuppressWarnings("unused") Object... args) {
+		validateNettyAvailability();
 		if (eventLoopSchedulers == null) {
 			eventLoopSchedulers = new ArrayList<>(executorCount());
 			nextScheduler = new AtomicLong();

@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
-	private static NettyScheduler INSTANCE;
+	private static volatile NettyScheduler INSTANCE;
 
 	private final Thread.VirtualThreadScheduler jdkBuildinScheduler;
 
@@ -30,11 +30,25 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
 	private final boolean perCarrierPollers;
 
+	private static NettyScheduler ensureInstalled() {
+		var instance = INSTANCE;
+		if (instance != null) {
+			return instance;
+		}
+		Thread.ofVirtual().unstarted(new Runnable() {
+			@Override
+			public void run() {
+
+			}
+		});
+		// we expect VirtualThread clinit to have loaded it by now
+		return INSTANCE;
+	}
+
 	public NettyScheduler(Thread.VirtualThreadScheduler jdkBuildinScheduler) {
 		this.jdkBuildinScheduler = jdkBuildinScheduler;
-		INSTANCE = this;
 		perCarrierPollers = Integer.getInteger("jdk.pollerMode", -1) == 3;
-		VarHandle.storeStoreFence();
+		INSTANCE = this;
 	}
 
 	public boolean expectsPerCarrierPollers() {
@@ -59,24 +73,21 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 		var assignedSchedulerRef = unstartedThreads.remove(virtualThreadTask.thread());
 		if (assignedSchedulerRef == null) {
 			if (perCarrierPollers) {
-				// Read-Poller threads are special: if we run from a VThread managed by a
-				// VirtualThreadNettyScheduler,
-				// we want should continue using that same scheduler for the Read-Poller thread.
-				var currentThread = Thread.currentThread();
-				if (currentThread.isVirtual()) {
+				// Read-Poller threads should always inherit the event loop scheduler from the
+				// caller thread
+				if (Thread.currentThread().isVirtual()) {
 					// TODO
 					// https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/java/lang/VirtualThread.java#L270C18-L270C33
 					// in theory should be easy to provide a VirtualThreadTask::current method to
 					// avoid the ScopedValue lookup
-					var ctx = EventLoopScheduler.currentThreadSchedulerContext();
-					var schedulerRef = ctx.scheduler();
+					var schedulerRef = EventLoopScheduler.currentThreadSchedulerContext().scheduler();
 					// See
 					// https://github.com/openjdk/loom/blob/12ddf39bb59252a8274d8b937bd075b2a6dbc3f8/src/java.base/share/classes/sun/nio/ch/Poller.java#L723C48-L723C59
 					if (schedulerRef != null) {
-						var runningScheduler = schedulerRef.get();
-						if (runningScheduler != null && virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
+						var scheduler = schedulerRef.get();
+						if (scheduler != null && virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
 							virtualThreadTask.attach(schedulerRef);
-							if (runningScheduler.execute(virtualThreadTask)) {
+							if (scheduler.execute(virtualThreadTask)) {
 								return;
 							}
 							virtualThreadTask.attach(null);
@@ -118,15 +129,15 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 	}
 
 	static Thread assignUnstarted(Thread unstarted, SharedRef ref) {
-		INSTANCE.unstartedThreads.put(unstarted, ref);
+		ensureInstalled().unstartedThreads.put(unstarted, ref);
 		return unstarted;
 	}
 
 	public static boolean perCarrierPollers() {
-		return INSTANCE.perCarrierPollers;
+		return ensureInstalled().perCarrierPollers;
 	}
 
 	public static boolean isAvailable() {
-		return INSTANCE != null;
+		return ensureInstalled() != null;
 	}
 }
