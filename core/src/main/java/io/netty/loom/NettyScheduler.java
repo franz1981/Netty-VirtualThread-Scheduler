@@ -7,21 +7,25 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Global Netty scheduler proxy for virtual threads.
  *
- * <p>Inheritance rule (exact): a newly started virtual thread inherits the
+ * <p>
+ * Inheritance rule (exact): a newly started virtual thread inherits the
  * caller's {@code EventLoopScheduler} only when both conditions are true:
  * <ol>
- *   <li>{@code jdk.pollerMode} is {@code 3} (per-carrier pollers); and</li>
- *   <li>the thread performing the start/poller I/O is itself running under an
- *       {@code EventLoopScheduler} (i.e. {@code EventLoopScheduler.currentThreadSchedulerContext().scheduler()}
- *       returns a non-null {@code SharedRef}).</li>
+ * <li>{@code jdk.pollerMode} is {@code 3} (per-carrier pollers); and</li>
+ * <li>the thread performing the start/poller I/O is itself running under an
+ * {@code EventLoopScheduler} (i.e.
+ * {@code EventLoopScheduler.currentThreadSchedulerContext().scheduler()}
+ * returns a non-null {@code SharedRef}).</li>
  * </ol>
  *
- * <p>The current implementation only attempts scheduler inheritance for
- * poller-created virtual threads (recognized by the {@code "-Read-Poller"}
- * name suffix). If either condition above is not met (or the thread kind is
+ * <p>
+ * The current implementation only attempts scheduler inheritance for
+ * poller-created virtual threads (recognized by the {@code "-Read-Poller"} name
+ * suffix). If either condition above is not met (or the thread kind is
  * unrecognized) the virtual thread falls back to the default JDK scheduler.
  *
- * <p>This class is a proxy/dispatcher and does not implement a standalone
+ * <p>
+ * This class is a proxy/dispatcher and does not implement a standalone
  * scheduling policy. See {@link EventLoopScheduler} for details about scheduler
  * attachment and execution.
  */
