@@ -61,12 +61,14 @@
                 </configuration>
                 <executions>
                     <execution>
+                        <id>apply-formatting</id>
                         <phase>compile</phase>
                         <goals>
                             <goal>apply</goal>
                         </goals>
                     </execution>
                     <execution>
+                        <id>check-formatting</id>
                         <phase>verify</phase>
                         <goals>
                             <goal>check</goal>
