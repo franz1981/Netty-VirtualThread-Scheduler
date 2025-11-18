@@ -2,22 +2,30 @@ package io.netty.loom;
 
 import io.netty.loom.EventLoopScheduler.SharedRef;
 
-import java.lang.invoke.VarHandle;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Global scheduler — provides execution for virtual threads that do not specify
- * their own scheduler. Note: this is not a real scheduler, but merely a
- * proxy/dispatcher for schedulers. 1. Platform threads → delegate to the
- * built-in ForkJoin scheduler. 2. Virtual threads derived from a
- * VirtualThreadNettyScheduler → continue using that same
- * VirtualThreadNettyScheduler. 3. Other virtual threads → use the default
- * JDK-provided scheduler. 4. Virtual threads spawned by case (2) → still use
- * the originating VirtualThreadNettyScheduler. 5. Poller: - VTHREAD_POLLERS →
- * not relevant here; simply use the JDK’s built-in scheduler. -
- * POLLER_PER_CARRIER → initialized lazily upon first network I/O usage, so as
- * long as this GlobalDelegateThreadNettyScheduler correctly “inherits” the
- * actual underlying scheduler, it will work properly.
+ * Global Netty scheduler proxy for virtual threads.
+ *
+ * <p>Exact inheritance rule: a newly started virtual thread will inherit the
+ * caller's {@code EventLoopScheduler} only when both of the following are true:
+ * <ul>
+ *   <li>{@code jdk.pollerMode} is {@code 3} (per-carrier pollers); and</li>
+ *   <li>the thread performing the start/poller I/O is itself run by an
+ *       {@code EventLoopScheduler} (i.e. the current thread's
+ *       {@code EventLoopScheduler.currentThreadSchedulerContext().scheduler()} is
+ *       non-null).</li>
+ * </ul>
+ *
+ * <p>If either condition is false the virtual thread does not inherit an
+ * {@code EventLoopScheduler} and falls back to the default JDK scheduler.
+ *
+ * <p>Implementation note: the current implementation attempts inheritance only
+ * for poller-created virtual threads (recognized by the {@code "-Read-Poller"}
+ * name suffix).
+ *
+ * <p>This class is a proxy/dispatcher; see {@link EventLoopScheduler} for
+ * details about scheduler attachment and execution.
  */
 
 public class NettyScheduler implements Thread.VirtualThreadScheduler {
