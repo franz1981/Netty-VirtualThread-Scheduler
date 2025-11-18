@@ -12,6 +12,10 @@ import io.netty.util.concurrent.FastThreadLocalThread;
 
 public class EventLoopScheduler {
 
+	/**
+	 * A shared reference to an EventLoopScheduler, which can be cleared when the
+	 * scheduler is fully terminated.
+	 */
 	public static final class SharedRef {
 
 		private volatile EventLoopScheduler ref;
@@ -103,8 +107,8 @@ public class EventLoopScheduler {
 		return vThreadFactory;
 	}
 
-	public Thread eventLoopThread() {
-		return eventLoopThread;
+	Thread carrierThread() {
+		return carrierThread;
 	}
 
 	public ManualIoEventLoop ioEventLoop() {
@@ -257,6 +261,10 @@ public class EventLoopScheduler {
 		return true;
 	}
 
+	/**
+	 * Get the current thread's associated EventLoopScheduler context, or an empty
+	 * one if none is associated.
+	 */
 	public static SchedulingContext currentThreadSchedulerContext() {
 		return CURRENT_SCHEDULER.orElse(EMPTY_SCHEDULER_CONTEXT);
 	}

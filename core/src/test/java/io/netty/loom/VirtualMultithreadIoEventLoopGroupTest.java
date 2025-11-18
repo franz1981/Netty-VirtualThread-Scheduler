@@ -13,9 +13,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -494,14 +496,16 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 					var clientOut = clientSocket.getOutputStream();
 					var serverIn = serverSocket.getInputStream()) {
 				var readerVThreadPromise = new CompletableFuture<Thread>();
+				var readCompleted = new CompletableFuture<Void>();
 				group.execute(() -> {
 					var readerThread = group.vThreadFactory().newThread(() -> {
 						var eventLoopScheduler = EventLoopScheduler.currentThreadSchedulerContext().scheduler().get();
 						assertEquals(0, eventLoopScheduler.externalContinuationsCount());
 						try {
 							serverIn.read();
-						} catch (IOException e) {
-							throw new RuntimeException(e);
+							readCompleted.complete(null);
+						} catch (Throwable e) {
+							readCompleted.completeExceptionally(e);
 						}
 					});
 					readerVThreadPromise.complete(readerThread);
@@ -515,6 +519,135 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 				}
 				clientOut.write(1);
 				readerVThread.join();
+			}
+		}
+	}
+
+	@Test
+	void testShutdownSchedulerOnBlockingIO() throws IOException, InterruptedException, ExecutionException {
+		assumeTrue(NettyScheduler.perCarrierPollers());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+				var serverAcceptor = new ServerSocket(0)) {
+			var serverSocketPromise = new CompletableFuture<Socket>();
+			Thread.ofVirtual().start(() -> {
+				try {
+					serverSocketPromise.complete(serverAcceptor.accept());
+				} catch (Throwable e) {
+					// complete exceptionally
+					serverSocketPromise.completeExceptionally(e);
+				}
+			});
+			try (var clientSocket = new Socket("localhost", serverAcceptor.getLocalPort());
+					var serverSocket = serverSocketPromise.join();
+					var clientOut = clientSocket.getOutputStream();
+					var serverIn = serverSocket.getInputStream()) {
+				var schedulerRef = new AtomicReference<EventLoopScheduler.SharedRef>();
+				var firstReadCompleted = new CompletableFuture<Void>();
+				var secondReadCompleted = new CompletableFuture<Void>();
+				var readerVThreadPromise = new CompletableFuture<Thread>();
+				group.execute(() -> {
+					var readerThread = group.vThreadFactory().newThread(() -> {
+						schedulerRef.lazySet(EventLoopScheduler.currentThreadSchedulerContext().scheduler());
+						var eventLoopScheduler = EventLoopScheduler.currentThreadSchedulerContext().scheduler().get();
+						assertEquals(0, eventLoopScheduler.externalContinuationsCount());
+						try {
+							serverIn.read();
+							firstReadCompleted.complete(null);
+							try {
+								serverIn.read();
+								secondReadCompleted.complete(null);
+							} catch (Throwable e) {
+								secondReadCompleted.completeExceptionally(e);
+							}
+						} catch (Throwable e) {
+							firstReadCompleted.completeExceptionally(e);
+						}
+					});
+					readerVThreadPromise.complete(readerThread);
+					readerThread.start();
+
+				});
+				var readerVThread = readerVThreadPromise.get();
+				// it has to be waiting on read
+				while (readerVThread.getState() != Thread.State.WAITING) {
+					Thread.sleep(1);
+				}
+				Thread carrier = schedulerRef.get().get().carrierThread();
+				group.shutdownGracefully().get();
+				assertTrue(carrier.join(Duration.MAX));
+				// unblock the client and expect the read to complete
+				clientOut.write(1);
+				firstReadCompleted.join();
+				// it has to be waiting on read
+				while (readerVThread.getState() != Thread.State.WAITING) {
+					Thread.sleep(1);
+				}
+				clientOut.write(1);
+				secondReadCompleted.join();
+			}
+		}
+	}
+
+	@Test
+	void testShutdownSchedulerOnLongBlockingIO() throws IOException, InterruptedException, ExecutionException {
+		assumeTrue(NettyScheduler.perCarrierPollers());
+		int bytesToWrite = 16;
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+				var serverAcceptor = new ServerSocket(0)) {
+			var serverSocketPromise = new CompletableFuture<Socket>();
+			Thread.ofVirtual().start(() -> {
+				try {
+					serverSocketPromise.complete(serverAcceptor.accept());
+				} catch (Throwable e) {
+					// complete exceptionally
+					serverSocketPromise.completeExceptionally(e);
+				}
+			});
+			try (var clientSocket = new Socket("localhost", serverAcceptor.getLocalPort());
+					var serverSocket = serverSocketPromise.join();
+					var clientOut = clientSocket.getOutputStream();
+					var serverIn = serverSocket.getInputStream()) {
+				var schedulerRef = new AtomicReference<EventLoopScheduler.SharedRef>();
+				var readCompleted = new CompletableFuture<byte[]>();;
+				var readerVThreadPromise = new CompletableFuture<Thread>();
+				group.execute(() -> {
+					var readerThread = group.vThreadFactory().newThread(() -> {
+						schedulerRef.lazySet(EventLoopScheduler.currentThreadSchedulerContext().scheduler());
+						var eventLoopScheduler = EventLoopScheduler.currentThreadSchedulerContext().scheduler().get();
+						assertEquals(0, eventLoopScheduler.externalContinuationsCount());
+						try {
+							byte[] data = serverIn.readNBytes(bytesToWrite);
+							readCompleted.complete(data);
+						} catch (Throwable e) {
+							readCompleted.completeExceptionally(e);
+						}
+					});
+					readerVThreadPromise.complete(readerThread);
+					readerThread.start();
+
+				});
+				var readerVThread = readerVThreadPromise.get();
+				byte[] toWrite = new byte[bytesToWrite];
+				int shutDownAt = toWrite.length / 2;
+				for (int i = 0; i < toWrite.length; i++) {
+					toWrite[i] = (byte) i;
+				}
+                // it has to be waiting on read
+                while (readerVThread.getState() != Thread.State.WAITING) {
+                    Thread.sleep(1);
+                }
+				for (int i = 0; i < toWrite.length; i++) {
+                    Thread.sleep(10); // make sure the read is parked
+					byte b = toWrite[i];
+					// shutdown whilst the read is parked
+					if (i == shutDownAt) {
+						Thread carrier = schedulerRef.get().get().carrierThread();
+						group.shutdownGracefully().get();
+						assertTrue(carrier.join(Duration.MAX));
+					}
+					clientOut.write(b);
+				}
+				assertArrayEquals(toWrite, readCompleted.join());
 			}
 		}
 	}
