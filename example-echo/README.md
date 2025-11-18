@@ -10,27 +10,29 @@ Prerequisites
 
 How to build and run (minimal)
 
-1) Build (from repository root):
+Note: This project requires a Loom-enabled JDK for both building and running because
+the code targets a recent Java release with preview features. Set `JAVA_HOME` to your
+Loom JDK before running the build and the server.
+
+1) Build (from repository root)
 
 ```bash
-# build quickly (skip tests)
-mvn -DskipTests package
+# point to a Loom-enabled JDK first
+export JAVA_HOME=/path/to/loom/build/linux-x86_64-server-release/jdk/
+
+# build the example-echo module and produce the shaded (uber) jar
+mvn -DskipTests -pl example-echo -am package
 ```
 
-2) Start the server (adjust `JAVA_HOME`):
+The shade plugin in `example-echo/pom.xml` creates an executable jar in
+`example-echo/target/` (artifact name: `example-echo-<version>.jar`).
+
+2) Start the server (using the same Loom JDK)
 
 ```bash
-# compute runtime classpath for example-echo
-CP_LINE=$(mvn -q -pl example-echo dependency:build-classpath -DincludeScope=runtime -DskipTests | tail -n1)
-CP="core/target/netty-virtualthread-core-1.0-SNAPSHOT.jar:example-echo/target/example-echo-1.0-SNAPSHOT.jar:${CP_LINE}"
-
-# start server in background (use your Loom JDK)
-export JAVA_HOME=/path/to/loom/build/linux-x86_64-server-release/jdk/
 "$JAVA_HOME/bin/java" --enable-preview \
   -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler \
-  -Djdk.pollerMode=3 \
-  --add-opens=java.base/java.lang=ALL-UNNAMED \
-  -cp "$CP" io.netty.loom.example.EchoServer &
+  -jar example-echo/target/example-echo-1.0-SNAPSHOT.jar &
 
 # note the PID in $!
 ```
@@ -47,10 +49,10 @@ curl -v http://localhost:8080/
 
 ```bash
 # short 5s test
-jbang wrk@hyperfoil -t1 -c10 -d5s -R10 --latency http://localhost:8080/
+jbang wrk@hyperfoil -t1 -c10 -d5s http://localhost:8080/
 ```
 
 Notes
-- `-Djdk.pollerMode=3` enables per-carrier pollers (useful for blocking I/O tests). Remove or change if you don't need it.
-- Use a Loom-enabled JDK and set `JAVA_HOME` accordingly.
+- `-Djdk.pollerMode=3` is optional; only add it if you need per-carrier pollers for blocking I/O tests.
+- Use a Loom-enabled JDK and set `JAVA_HOME` accordingly before build and run.
 - If anything fails, paste the exact output here and I'll help debug.
