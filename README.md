@@ -1,76 +1,98 @@
 # Netty VirtualThread Scheduler
 
 ## Introduction
-This project provides an advanced integration between Java Virtual Threads (Project Loom) and Netty's event loop, enabling seamless execution of blocking operations within the Netty event loop itself. Unlike standard approaches, which require offloading blocking tasks to external thread pools (incurring multiple thread hand-offs), this scheduler allows blocking code to run directly on the event loop's carrier thread, leveraging the virtual thread execution model.
+This project provides an integration between Java Virtual Threads (Project Loom) and Netty's event loop, enabling low-overhead execution of blocking or CPU-bound work started from the Netty event loop without the usual extra thread hand-offs.
 
-## Motivation
-In traditional Netty applications, blocking operations (e.g., JDBC, file I/O) must not run on the event loop. The usual workaround is:
-1. Offload the blocking task to an external thread pool (often using the default virtual thread scheduler).
-2. Once complete, hand control back to the Netty event loop to continue processing (e.g., send a response).
+At a high level:
+- Each Netty event loop is backed by a virtual thread (the "event loop virtual thread").
+- Each such virtual thread is executed on a dedicated carrier platform thread.
+- Virtual threads created from the event-loop-specific ThreadFactory returned by the group will be associated with the same EventLoopScheduler and, when possible, will run on the same carrier platform thread as the event loop.
 
-This process involves at least two thread hand-offs, which not only increases latency and complexity, but also wastes CPU cycles due to waking up both the external thread pool and the event loop again. Additionally, moving data between threads harms cache locality, reducing cache friendliness and overall performance.
+This allows code that must block (for example, blocking I/O or synchronous library calls) to be executed without moving work between unrelated threads, reducing wake-ups and improving cache locality compared to offloading to an external thread pool.
 
-## Technical Approach
-- The Netty event loop runs as a special, long-lived virtual thread.
-- Blocking operations issued from the event loop are executed as continuations, scheduled to run on the same platform thread (the "carrier")—unless work-stealing occurs (not implemented at the moment).
-- Any virtual thread created from the event loop will, by default, run on the same carrier platform thread (again, unless work-stealing is introduced).
-- This enables blocking libraries to be used transparently, without extra thread pools or hand-offs.
+## Key behavior (user-facing)
+- Create a `VirtualMultithreadIoEventLoopGroup` like any other Netty `EventLoopGroup`. It behaves like a `MultiThreadIoEventLoopGroup` from the Netty API, but the event loops are driven by virtual threads and coordinated with carrier platform threads by a per-event-loop `EventLoopScheduler`.
+- Call `group.vThreadFactory()` to obtain a `ThreadFactory` that creates virtual threads tied to an `EventLoopScheduler` of the group. When those virtual threads block, the scheduler parks them and resumes them later using the carrier thread.
+- Virtual threads created via the group's `vThreadFactory()` will attempt to inherit the scheduler and run with low-overhead handoffs back to the event loop when continuing work.
+- Virtual threads created with `Thread.ofVirtual().factory()` (the JVM default factory) do NOT automatically inherit the group's scheduler.
+- The library requires a custom global virtual thread scheduler implementation to be installed: set `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler` (or use the convenience helpers in the code/tests that set up the scheduler).
+- Blocking I/O support that relies on per-carrier pollers currently depends on the JVM poller mode (the code checks `jdk.pollerMode==3`). See notes below.
 
-## Comparison Table
+## When to use this
+- You have code that must perform blocking operations from a Netty handler and you want to avoid an extra thread hand-off.
+- You want fewer CPU wake-ups and better cache locality by keeping related work on the same carrier platform thread.
 
-| Aspect                | Standard Netty + Loom (Default)         | Netty with VirtualThread Scheduler (This Project) |
-|-----------------------|-----------------------------------------|--------------------------------------------------|
-| Blocking Operation    | Offloaded to external thread pool       | Runs as continuation on event loop carrier        |
-| Thread Hand-offs      | 2+                                      | 0                                                |
-| Cache Friendliness    | Poor (data moves between threads)        | High (data stays on carrier thread)               |
-| CPU Wakeups           | More (wakes both pools)                  | Fewer (single carrier thread)                     |
+Caveats:
+- This project leverages experimental JVM features (Project Loom) and assumes recent Java versions (Java 21+ recommended).
+- You must install the Netty-specific scheduler (see above) for `VirtualMultithreadIoEventLoopGroup` to be usable.
 
-## Architecture Diagrams
+## Usage example (simple)
 
+See the runnable example and step-by-step instructions in the example module:
+
+- example-echo/README.md
+
+(That README contains the minimal build and run commands, including how to start the example server and run a quick curl smoke test.)
+
+## About the Loom build used
+
+This work targets Project Loom features and was developed and tested against very recent OpenJDK / Loom builds. If you don't want to build OpenJDK yourself, a convenient set of prebuilt Loom-enabled JDK images is available from Shipilev's builds:
+
+- https://builds.shipilev.net/openjdk-jdk-loom/
+
+Follow that site to download a suitable JDK image for your platform and point `JAVA_HOME` to the JDK image before running the project. Example:
+
+```sh
+export JAVA_HOME=/path/to/loom/build/linux-x86_64-server-release/jdk/
 ```
-Standard Netty + Loom (Default):
 
-┌──────────────┐   offload   ┌────────────────────────────┐   callback   ┌──────────────┐
-│  EventLoop   │───────────▶│ Virtual Thread (Scheduler) │────────────▶│  EventLoop   │
-│ (OS Thread)  │             │ (External Thread Pool)     │              │ (OS Thread)  │
-└──────────────┘             └────────────────────────────┘              └──────────────┘
+If you prefer to build from the OpenJDK `loom` repository yourself, the upstream source is:
 
-Netty with VirtualThread Scheduler:
+- https://github.com/openjdk/loom
 
-┌────────────────────────────────────────────┐
-│         Platform Thread (Carrier)          │
-│  ┌──────────────────────────────────────┐  │
-│  │   EventLoop (Virtual Thread)         │  │
-│  │   (runs on carrier platform thread)  │  │
-│  │   ────────────────────────────────   │  │
-│  │   Blocking Operation                 │  │
-│  │   (Continuation, same platform)      │  │
-│  └──────────────────────────────────────┘  │
-└────────────────────────────────────────────┘
+If you have a local build of the latest Loom-enabled OpenJDK, point `JAVA_HOME` to that build before running tests and benchmarks. Example:
+
+```sh
+export JAVA_HOME=/path/to/your/loom/build/linux-x86_64-server-release/jdk/
+mvn clean install
 ```
+
+## Integration tips and runtime flags
+- Install the Netty scheduler as the JVM virtual-thread scheduler with:
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler
+
+- Some blocking I/O integrations rely on per-carrier pollers. The code checks `jdk.pollerMode` and expects value `3` for per-carrier pollers. This can be controlled via JVM flags or defaults depending on your JVM version.
+
+- Use `group.vThreadFactory()` from inside Netty handlers if you want the spawned virtual thread to be associated with the same event loop scheduler as the handler's event loop.
+
+- If you need the virtual thread to inherit the scheduler when forking tasks via StructuredTaskScope, pass the group's `vThreadFactory()` to the scope's `withThreadFactory(...)`.
 
 ## Build and Run
-
 This project uses Maven for build and dependency management.
 
-1. **Build the project:**
-   ```sh
-   mvn clean install
-   ```
-2. **Run Benchmarks:**
-   ```sh
-   cd benchmarks
-   mvn clean install
-   java -jar target/benchmarks.jar
-   ```
+1. Build the project:
+
+```sh
+mvn clean install
+```
+
+2. Run the benchmarks (optional):
+
+```sh
+cd benchmarks
+mvn clean install
+java -jar target/benchmarks.jar
+```
 
 ## Prerequisites
 - Java 21 or newer (with Loom support)
 - Maven 3.6+
+- To use the `VirtualMultithreadIoEventLoopGroup` set the JVM property to install the Netty scheduler:
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler
 
 ## References
-- [Project Loom (OpenJDK)](https://openjdk.org/projects/loom/)
-- [Netty Project](https://netty.io/)
+- Project Loom (OpenJDK): https://openjdk.org/projects/loom/
+- Netty Project: https://netty.io/
 
 ---
 For more details, see the source code and benchmark results in the respective modules.
