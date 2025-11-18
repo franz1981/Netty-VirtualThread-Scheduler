@@ -88,15 +88,10 @@ public class EventLoopScheduler {
 	}
 
 	private static ThreadFactory newEventLoopSchedulerFactory(SharedRef sharedRef) {
-		var rawVTFactory = Thread.ofVirtual().factory();
-		return runnable -> NettyScheduler.assignUnstarted(rawVTFactory.newThread(() -> // this can be inherited by any
-																						// thread created in the context
-																						// of this virtual thread
-																						// but only the original virtual
-																						// thread will have the correct
-																						// scheduler context
-		ScopedValue.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef))
-				.run(runnable)), sharedRef);
+		var rawVTFactory = Thread.ofVirtual().attach(sharedRef).factory();
+		return runnable -> rawVTFactory.newThread(() -> ScopedValue
+				.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef))
+				.run(runnable));
 	}
 
 	int externalContinuationsCount() {

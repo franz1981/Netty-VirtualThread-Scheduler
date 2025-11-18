@@ -2,8 +2,6 @@ package io.netty.loom;
 
 import io.netty.loom.EventLoopScheduler.SharedRef;
 
-import java.util.concurrent.ConcurrentHashMap;
-
 /**
  * Global Netty scheduler proxy for virtual threads.
  *
@@ -35,8 +33,6 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 	private static volatile NettyScheduler INSTANCE;
 
 	private final Thread.VirtualThreadScheduler jdkBuildinScheduler;
-
-	private final ConcurrentHashMap<Thread, SharedRef> unstartedThreads = new ConcurrentHashMap<>();
 
 	private final boolean perCarrierPollers;
 
@@ -71,17 +67,15 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
 	@Override
 	public void onStart(Thread.VirtualThreadTask virtualThreadTask) {
-		// TODO this is not great for 2 reasons:
-		// 1. we are doing a remove on a concurrent map even for v threads which are not
-		// really interesting to us
-		// 2. if a vThread will never start, it will leak here forever
-		// HINT: if we had a VirtualThreadTask::Of(VirtualThread) method, we could
-		// perform the assignment BEFORE calling this
-		// on the vThread factory
-		// or the vThreadFactory could provide in its build method something to access
-		// the VirtualThreadTask of an unstarted VirtualThread
-		var assignedSchedulerRef = unstartedThreads.remove(virtualThreadTask.thread());
-		if (assignedSchedulerRef == null) {
+		if (virtualThreadTask.attachment() instanceof SharedRef ref) {
+			var eventLoop = ref.get();
+			if (eventLoop != null && eventLoop.execute(virtualThreadTask)) {
+				return;
+			}
+			// the v thread has been rejected by its assigned scheduler or its scheduler is
+			// gone
+			virtualThreadTask.attach(null);
+		} else {
 			if (perCarrierPollers) {
 				// Read-Poller threads should always inherit the event loop scheduler from the
 				// caller thread
@@ -105,42 +99,22 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 					}
 				}
 			}
-		} else {
-			var scheduler = assignedSchedulerRef.get();
-			if (scheduler != null) {
-				// attach the assigned scheduler to the task
-				virtualThreadTask.attach(assignedSchedulerRef);
-				if (scheduler.execute(virtualThreadTask)) {
-					return;
-				}
-			}
-			// the v thread has been rejected by its assigned scheduler or its scheduler is
-			// gone
-			virtualThreadTask.attach(null);
 		}
 		jdkBuildinScheduler.onStart(virtualThreadTask);
 	}
 
 	@Override
 	public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
-		var attachment = virtualThreadTask.attachment();
-		if (attachment instanceof SharedRef ref) {
-			var assignedScheduler = ref.get();
-			if (assignedScheduler != null) {
-				if (assignedScheduler.execute(virtualThreadTask)) {
-					return;
-				}
+		if (virtualThreadTask.attachment() instanceof SharedRef ref) {
+			var eventLoop = ref.get();
+			if (eventLoop != null && eventLoop.execute(virtualThreadTask)) {
+				return;
 			}
 			// the v thread has been rejected by its assigned scheduler or its scheduler is
 			// gone
 			virtualThreadTask.attach(null);
 		}
 		jdkBuildinScheduler.onContinue(virtualThreadTask);
-	}
-
-	static Thread assignUnstarted(Thread unstarted, SharedRef ref) {
-		ensureInstalled().unstartedThreads.put(unstarted, ref);
-		return unstarted;
 	}
 
 	public static boolean perCarrierPollers() {
