@@ -16,48 +16,47 @@ import java.util.concurrent.TimeUnit;
 @Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions"})
 public class GetCarrierThread {
 
-    private static final MethodHandle CARRIER_THREAD_FIELD;
-    static {
-        try {
-            var field = Class.forName("java.lang.VirtualThread")
-                    .getDeclaredField("carrierThread");
-            field.setAccessible(true);
-            MethodHandle carrierThreadMh = MethodHandles.lookup().unreflectGetter(field);
-            // adapt using VirtualThread into Thread
-            CARRIER_THREAD_FIELD = carrierThreadMh.asType(MethodType.methodType(Thread.class, Thread.class));
-        } catch (Throwable e) {
-            throw new RuntimeException(e);
-        }
-    }
+	private static final MethodHandle CARRIER_THREAD_FIELD;
+	static {
+		try {
+			var field = Class.forName("java.lang.VirtualThread").getDeclaredField("carrierThread");
+			field.setAccessible(true);
+			MethodHandle carrierThreadMh = MethodHandles.lookup().unreflectGetter(field);
+			// adapt using VirtualThread into Thread
+			CARRIER_THREAD_FIELD = carrierThreadMh.asType(MethodType.methodType(Thread.class, Thread.class));
+		} catch (Throwable e) {
+			throw new RuntimeException(e);
+		}
+	}
 
-    private static Thread getCarrierThread(Thread t) {
-        if (!t.isVirtual()) {
-            return t;
-        }
-        try {
-            return (Thread) CARRIER_THREAD_FIELD.invokeExact(t);
-        } catch (Throwable e) {
-            throw new RuntimeException(e);
-        }
-    }
+	private static Thread getCarrierThread(Thread t) {
+		if (!t.isVirtual()) {
+			return t;
+		}
+		try {
+			return (Thread) CARRIER_THREAD_FIELD.invokeExact(t);
+		} catch (Throwable e) {
+			throw new RuntimeException(e);
+		}
+	}
 
-    private Thread vThread;
+	private Thread vThread;
 
-    @Setup
-    public void init() {
-        vThread = Thread.ofVirtual().unstarted(() -> {
-        });
-    }
+	@Setup
+	public void init() {
+		vThread = Thread.ofVirtual().unstarted(() -> {
+		});
+	}
 
-    @Benchmark
-    @CompilerControl(CompilerControl.Mode.DONT_INLINE)
-    public Thread carrierThreadMh() {
-        return getCarrierThread(vThread);
-    }
+	@Benchmark
+	@CompilerControl(CompilerControl.Mode.DONT_INLINE)
+	public Thread carrierThreadMh() {
+		return getCarrierThread(vThread);
+	}
 
-    @Benchmark
-    @CompilerControl(CompilerControl.Mode.DONT_INLINE)
-    public Thread volatileCarrierThreadVh() {
-        return LoomSupport.getCarrierThread(vThread);
-    }
+	@Benchmark
+	@CompilerControl(CompilerControl.Mode.DONT_INLINE)
+	public Thread volatileCarrierThreadVh() {
+		return LoomSupport.getCarrierThread(vThread);
+	}
 }

@@ -25,17 +25,17 @@ import java.util.concurrent.TimeUnit;
 @Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions"})
 public class GetScheduler {
 
-    private static final Executor vtExecutor = Executors.newVirtualThreadPerTaskExecutor();
+	private static final Executor vtExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
-    @Benchmark
-    @CompilerControl(CompilerControl.Mode.DONT_INLINE)
-    public Thread.VirtualThreadScheduler fromJDKPublicMethod() {
-       return CompletableFuture.supplyAsync(Thread.VirtualThreadScheduler::current, vtExecutor).join();
-    }
+	@Benchmark
+	@CompilerControl(CompilerControl.Mode.DONT_INLINE)
+	public Thread.VirtualThreadScheduler fromJDKPublicMethod() {
+		return CompletableFuture.supplyAsync(Thread.VirtualThreadScheduler::current, vtExecutor).join();
+	}
 
-    @Benchmark
-    @CompilerControl(CompilerControl.Mode.DONT_INLINE)
-    public Thread.VirtualThreadScheduler fromJDKInternalField() {
-        return CompletableFuture.supplyAsync(() -> LoomSupport.getScheduler(Thread.currentThread()), vtExecutor).join();
-    }
+	@Benchmark
+	@CompilerControl(CompilerControl.Mode.DONT_INLINE)
+	public Thread.VirtualThreadScheduler fromJDKInternalField() {
+		return CompletableFuture.supplyAsync(() -> LoomSupport.getScheduler(Thread.currentThread()), vtExecutor).join();
+	}
 }
