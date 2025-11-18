@@ -55,24 +55,15 @@
                 <artifactId>spotless-maven-plugin</artifactId>
                 <version>3.0.0</version>
                 <configuration>
-                    <java>
-                        <eclipse />
-                    </java>
+                    <java><eclipse/></java>
                 </configuration>
+
                 <executions>
-                    <execution>
-                        <id>apply-formatting</id>
-                        <phase>compile</phase>
-                        <goals>
-                            <goal>apply</goal>
-                        </goals>
-                    </execution>
+                    <!-- ONLY check in CI -->
                     <execution>
                         <id>check-formatting</id>
                         <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
+                        <goals><goal>check</goal></goals>
                     </execution>
                 </executions>
             </plugin>
@@ -121,4 +112,26 @@
             </plugins>
         </pluginManagement>
     </build>
+    <profiles>
+        <profile>
+            <id>dev</id>
+            <activation><activeByDefault>true</activeByDefault></activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.diffplug.spotless</groupId>
+                        <artifactId>spotless-maven-plugin</artifactId>
+                        <executions>
+                            <!-- only local dev: auto-format before compile -->
+                            <execution>
+                                <id>apply-formatting</id>
+                                <phase>compile</phase>
+                                <goals><goal>apply</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
