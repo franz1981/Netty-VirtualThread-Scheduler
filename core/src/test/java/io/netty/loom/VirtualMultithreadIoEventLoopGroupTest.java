@@ -632,12 +632,12 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 				for (int i = 0; i < toWrite.length; i++) {
 					toWrite[i] = (byte) i;
 				}
-                // it has to be waiting on read
-                while (readerVThread.getState() != Thread.State.WAITING) {
-                    Thread.sleep(1);
-                }
+				// it has to be waiting on read
+				while (readerVThread.getState() != Thread.State.WAITING) {
+					Thread.sleep(1);
+				}
 				for (int i = 0; i < toWrite.length; i++) {
-                    Thread.sleep(10); // make sure the read is parked
+					Thread.sleep(10); // make sure the read is parked
 					byte b = toWrite[i];
 					// shutdown whilst the read is parked
 					if (i == shutDownAt) {
