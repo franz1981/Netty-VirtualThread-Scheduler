@@ -1,0 +1,64 @@
+project:
+  name: netty-virtualthread-scheduler
+  description: Integration between Java Virtual Threads (Project Loom) and Netty's event loop
+  longDescription: |
+    This project provides an integration between Java Virtual Threads (Project Loom) and Netty's event loop, 
+    enabling low-overhead execution of blocking or CPU-bound work started from the Netty event loop without 
+    the usual extra thread hand-offs.
+  website: https://github.com/franz1981/Netty-VirtualThread-Scheduler
+  authors:
+    - Francesco Nigro
+  license: Apache-2.0
+  inceptionYear: 2024
+  java:
+    groupId: io.netty.loom
+    version: 26
+
+release:
+  github:
+    owner: franz1981
+    name: Netty-VirtualThread-Scheduler
+    tagName: '{{projectVersion}}'
+    releaseName: 'Release {{projectVersion}}'
+    overwrite: true
+    changelog:
+      formatted: ALWAYS
+      preset: conventional-commits
+    milestone:
+      close: false
+
+deploy:
+  maven:
+    nexus2:
+      maven-central:
+        active: ALWAYS
+        url: https://s01.oss.sonatype.org/service/local
+        closeRepository: true
+        releaseRepository: true
+        stagingRepositories: target/staging-deploy
+        # Only deploy the core artifact
+        artifactIds:
+          - netty-virtualthread-core
+
+# Post-release: bump all module versions back to SNAPSHOT
+hooks:
+  command:
+    after:
+      - condition: '{{ Env.RELEASE_VERSION != "" }}'
+        cmd: |
+          # Get next version (increment patch)
+          VERSION={{ Env.RELEASE_VERSION }}
+          IFS='.' read -ra PARTS <<< "$VERSION"
+          MAJOR=${PARTS[0]}
+          MINOR=${PARTS[1]}
+          PATCH=${PARTS[2]}
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-SNAPSHOT"
+          
+          # Update all pom.xml files to SNAPSHOT
+          mvn versions:set -DnewVersion=${NEXT_VERSION} -DgenerateBackupPoms=false
+          
+          # Commit the version change
+          git add .
+          git commit -m "Prepare for next development iteration: ${NEXT_VERSION}"
+          git push origin master

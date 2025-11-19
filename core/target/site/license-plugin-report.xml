@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<licensePluginReport goal="FORMAT" timestamp="1763543245526">
+    <module artifactId="netty-virtualthread-core" groupId="io.netty.loom" version="1.0-SNAPSHOT"/>
+    <files>
+        <file path="pom.xml" result="ADDED"/>
+        <file path="src/main/java/io/netty/loom/AwakeAwareIoHandler.java" result="ADDED"/>
+        <file path="src/main/java/io/netty/loom/EventLoopScheduler.java" result="ADDED"/>
+        <file path="src/main/java/io/netty/loom/MpscUnboundedStream.java" result="ADDED"/>
+        <file path="src/main/java/io/netty/loom/NettyScheduler.java" result="ADDED"/>
+        <file path="src/main/java/io/netty/loom/VirtualMultithreadIoEventLoopGroup.java" result="ADDED"/>
+        <file path="src/test/java/io/netty/loom/MpscUnboundedStreamTest.java" result="ADDED"/>
+        <file path="src/test/java/io/netty/loom/NettySchedulerClassInitTest.java" result="ADDED"/>
+        <file path="src/test/java/io/netty/loom/VirtualMultithreadIoEventLoopGroupTest.java" result="ADDED"/>
+    </files>
+</licensePluginReport>

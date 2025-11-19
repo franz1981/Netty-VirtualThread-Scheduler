@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<licensePluginReport goal="FORMAT" timestamp="1763543245556">
+    <module artifactId="example-echo" groupId="io.netty.loom" version="1.0-SNAPSHOT"/>
+    <files>
+        <file path="pom.xml" result="ADDED"/>
+        <file path="src/main/java/io/netty/loom/example/EchoServer.java" result="ADDED"/>
+    </files>
+</licensePluginReport>

@@ -1,4 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Copyright © 2024 Francesco Nigro (nigro.fra@gmail.com)
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+-->
 <project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xmlns="http://maven.apache.org/POM/4.0.0"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -8,6 +25,32 @@
     <artifactId>netty-virtualthread-parent</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
+
+    <name>Netty VirtualThread Scheduler</name>
+    <description>Integration between Java Virtual Threads (Project Loom) and Netty's event loop</description>
+    <url>https://github.com/franz1981/Netty-VirtualThread-Scheduler</url>
+    <inceptionYear>2024</inceptionYear>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>franz1981</id>
+            <name>Francesco Nigro</name>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/franz1981/Netty-VirtualThread-Scheduler.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/franz1981/Netty-VirtualThread-Scheduler.git</developerConnection>
+        <url>https://github.com/franz1981/Netty-VirtualThread-Scheduler</url>
+    </scm>
 
     <modules>
         <module>core</module>
@@ -21,6 +64,7 @@
         <junit.version>5.11.4</junit.version>
         <jmh.version>1.37</jmh.version>
         <java.version>26</java.version>
+        <jreleaser-maven-plugin.version>1.15.0</jreleaser-maven-plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -67,6 +111,35 @@
                         <goals><goal>check</goal></goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>com.mycila</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <version>4.3</version>
+                <configuration>
+                    <properties>
+                        <owner>Francesco Nigro</owner>
+                        <email>nigro.fra@gmail.com</email>
+                        <year>2024</year>
+                    </properties>
+                    <licenseSets>
+                        <licenseSet>
+                            <header>com/mycila/maven/plugin/license/templates/APACHE-2.txt</header>
+                            <excludes>
+                                <exclude>**/README</exclude>
+                                <exclude>**/LICENSE</exclude>
+                                <exclude>**/*.md</exclude>
+                                <exclude>**/*.txt</exclude>
+                                <exclude>**/*.yml</exclude>
+                                <exclude>**/*.yaml</exclude>
+                                <exclude>**/.sdkmanrc</exclude>
+                                <exclude>**/.gitignore</exclude>
+                                <exclude>**/target/**</exclude>
+                                <exclude>**/.mvn/**</exclude>
+                            </excludes>
+                        </licenseSet>
+                    </licenseSets>
+                </configuration>
             </plugin>
         </plugins>
         <pluginManagement>
@@ -130,6 +203,111 @@
                                 <goals><goal>apply</goal></goals>
                             </execution>
                         </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.6.3</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                                <configuration>
+                                    <attach>true</attach>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.jreleaser</groupId>
+                        <artifactId>jreleaser-maven-plugin</artifactId>
+                        <version>${jreleaser-maven-plugin.version}</version>
+                        <configuration>
+                            <jreleaser>
+                                <project>
+                                    <name>netty-virtualthread-scheduler</name>
+                                    <description>Integration between Java Virtual Threads (Project Loom) and Netty's event loop</description>
+                                    <longDescription>This project provides an integration between Java Virtual Threads (Project Loom) and Netty's event loop, enabling low-overhead execution of blocking or CPU-bound work started from the Netty event loop without the usual extra thread hand-offs.</longDescription>
+                                    <website>https://github.com/franz1981/Netty-VirtualThread-Scheduler</website>
+                                    <authors>
+                                        <author>Francesco Nigro</author>
+                                    </authors>
+                                    <license>Apache-2.0</license>
+                                    <inceptionYear>2024</inceptionYear>
+                                </project>
+                                <release>
+                                    <github>
+                                        <owner>franz1981</owner>
+                                        <name>Netty-VirtualThread-Scheduler</name>
+                                        <tagName>{{projectVersion}}</tagName>
+                                        <releaseName>Release {{projectVersion}}</releaseName>
+                                        <overwrite>true</overwrite>
+                                        <changelog>
+                                            <formatted>ALWAYS</formatted>
+                                            <preset>conventional-commits</preset>
+                                        </changelog>
+                                    </github>
+                                </release>
+                                <deploy>
+                                    <maven>
+                                        <nexus2>
+                                            <maven-central>
+                                                <active>ALWAYS</active>
+                                                <url>https://s01.oss.sonatype.org/service/local</url>
+                                                <closeRepository>true</closeRepository>
+                                                <releaseRepository>true</releaseRepository>
+                                                <stagingRepositories>target/staging-deploy</stagingRepositories>
+                                                <artifactIds>
+                                                    <artifactId>netty-virtualthread-core</artifactId>
+                                                </artifactIds>
+                                            </maven-central>
+                                        </nexus2>
+                                    </maven>
+                                </deploy>
+                            </jreleaser>
+                        </configuration>
                     </plugin>
                 </plugins>
             </build>
