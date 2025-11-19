@@ -91,46 +91,26 @@ java -jar target/benchmarks.jar
 
 ## Release Process
 
-This project uses [JReleaser](https://jreleaser.org/) to automate the release process.
+This project uses [JReleaser](https://jreleaser.org/) to automate the release process. See [RELEASE.md](RELEASE.md) for detailed instructions on setting up and triggering releases.
 
-### Prerequisites for Release
+### Quick Start
 
-1. Configure GitHub secrets in the repository:
-   - `MAVEN_USERNAME`: Your Sonatype OSSRH username
-   - `MAVEN_PASSWORD`: Your Sonatype OSSRH password
-   - `GPG_PRIVATE_KEY`: Base64-encoded GPG private key (for signing artifacts)
-   - `GPG_PASSPHRASE`: Passphrase for the GPG key
-   - `GPG_PUBLIC_KEY`: Your GPG public key
+1. Configure GitHub secrets (see [RELEASE.md](RELEASE.md))
+2. Go to [Actions](../../actions) → Release workflow
+3. Click "Run workflow" and enter the release version
+4. The workflow will handle everything automatically
 
-2. Ensure you have proper access rights to:
-   - Push to the repository
-   - Create releases in GitHub
-   - Deploy to Maven Central via Sonatype OSSRH
+### What Gets Released
 
-### Triggering a Release
+- **Maven Central**: Only `netty-virtualthread-core` artifact
+- **GitHub**: Full release with changelog
+- **Post-Release**: All modules automatically bumped to next SNAPSHOT version
 
-Releases are triggered manually via GitHub Actions:
+For detailed prerequisites and troubleshooting, see [RELEASE.md](RELEASE.md).
 
-1. Go to the [Actions tab](../../actions) in GitHub
-2. Select the "Release" workflow
-3. Click "Run workflow"
-4. Enter the desired release version (e.g., `1.0.0`)
-5. Click "Run workflow" to start the release process
+## License
 
-### What Happens During Release
-
-1. **Version Update**: Sets the project version to the release version
-2. **Build & Verify**: Compiles and verifies all modules
-3. **Sign Artifacts**: Signs JARs with GPG
-4. **Stage to Maven Central**: Only the `netty-virtualthread-core` artifact is deployed to Maven Central
-5. **Create GitHub Release**: Creates a GitHub release with changelog
-6. **Version Bump**: Automatically bumps all modules to the next SNAPSHOT version
-
-### Release Configuration
-
-- **Published Artifacts**: Only the core module (`netty-virtualthread-core`) is published to Maven Central
-- **Other Modules**: Benchmarks and examples are not published but their versions are bumped to SNAPSHOT
-- **License**: All source code is licensed under Apache License 2.0
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ## References
 - Project Loom (OpenJDK): https://openjdk.org/projects/loom/
