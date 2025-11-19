@@ -39,26 +39,3 @@ deploy:
         # Only deploy the core artifact
         artifactIds:
           - netty-virtualthread-core
-
-# Post-release: bump all module versions back to SNAPSHOT
-hooks:
-  command:
-    after:
-      - condition: '{{ Env.RELEASE_VERSION != "" }}'
-        cmd: |
-          # Get next version (increment patch)
-          VERSION={{ Env.RELEASE_VERSION }}
-          IFS='.' read -ra PARTS <<< "$VERSION"
-          MAJOR=${PARTS[0]}
-          MINOR=${PARTS[1]}
-          PATCH=${PARTS[2]}
-          NEXT_PATCH=$((PATCH + 1))
-          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-SNAPSHOT"
-          
-          # Update all pom.xml files to SNAPSHOT
-          mvn versions:set -DnewVersion=${NEXT_VERSION} -DgenerateBackupPoms=false
-          
-          # Commit the version change
-          git add .
-          git commit -m "Prepare for next development iteration: ${NEXT_VERSION}"
-          git push origin master

@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<licensePluginReport goal="FORMAT" timestamp="1763543244603">
-    <module artifactId="netty-virtualthread-parent" groupId="io.netty.loom" version="1.0-SNAPSHOT"/>
-    <files>
-        <file path="pom.xml" result="ADDED"/>
-    </files>
-</licensePluginReport>

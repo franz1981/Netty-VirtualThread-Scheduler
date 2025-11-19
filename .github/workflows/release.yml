@@ -11,6 +11,9 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     
     steps:
       - name: Checkout code
@@ -91,13 +94,19 @@ jobs:
           NEXT_PATCH=$((PATCH + 1))
           NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-SNAPSHOT"
           
+          echo "Bumping version to ${NEXT_VERSION}"
+          
           # Update all pom.xml files to SNAPSHOT
           mvn versions:set -DnewVersion=${NEXT_VERSION} -DgenerateBackupPoms=false
           
           # Commit and push the version change
-          git add .
-          git commit -m "Prepare for next development iteration: ${NEXT_VERSION}" || echo "No changes to commit"
-          git push origin master || echo "Failed to push, might need manual intervention"
+          git add pom.xml */pom.xml
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Prepare for next development iteration: ${NEXT_VERSION}"
+            git push origin HEAD:master
+          fi
       
       - name: JReleaser output
         if: always()

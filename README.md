@@ -89,9 +89,53 @@ java -jar target/benchmarks.jar
 - To use the `VirtualMultithreadIoEventLoopGroup` set the JVM property to install the Netty scheduler:
   -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler
 
+## Release Process
+
+This project uses [JReleaser](https://jreleaser.org/) to automate the release process.
+
+### Prerequisites for Release
+
+1. Configure GitHub secrets in the repository:
+   - `MAVEN_USERNAME`: Your Sonatype OSSRH username
+   - `MAVEN_PASSWORD`: Your Sonatype OSSRH password
+   - `GPG_PRIVATE_KEY`: Base64-encoded GPG private key (for signing artifacts)
+   - `GPG_PASSPHRASE`: Passphrase for the GPG key
+   - `GPG_PUBLIC_KEY`: Your GPG public key
+
+2. Ensure you have proper access rights to:
+   - Push to the repository
+   - Create releases in GitHub
+   - Deploy to Maven Central via Sonatype OSSRH
+
+### Triggering a Release
+
+Releases are triggered manually via GitHub Actions:
+
+1. Go to the [Actions tab](../../actions) in GitHub
+2. Select the "Release" workflow
+3. Click "Run workflow"
+4. Enter the desired release version (e.g., `1.0.0`)
+5. Click "Run workflow" to start the release process
+
+### What Happens During Release
+
+1. **Version Update**: Sets the project version to the release version
+2. **Build & Verify**: Compiles and verifies all modules
+3. **Sign Artifacts**: Signs JARs with GPG
+4. **Stage to Maven Central**: Only the `netty-virtualthread-core` artifact is deployed to Maven Central
+5. **Create GitHub Release**: Creates a GitHub release with changelog
+6. **Version Bump**: Automatically bumps all modules to the next SNAPSHOT version
+
+### Release Configuration
+
+- **Published Artifacts**: Only the core module (`netty-virtualthread-core`) is published to Maven Central
+- **Other Modules**: Benchmarks and examples are not published but their versions are bumped to SNAPSHOT
+- **License**: All source code is licensed under Apache License 2.0
+
 ## References
 - Project Loom (OpenJDK): https://openjdk.org/projects/loom/
 - Netty Project: https://netty.io/
+- JReleaser: https://jreleaser.org/
 
 ---
 For more details, see the source code and benchmark results in the respective modules.
