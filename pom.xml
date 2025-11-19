@@ -17,7 +17,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <netty.version>4.2.2.Final</netty.version>
+        <netty.version>4.2.7.Final</netty.version>
         <junit.version>6.0.1</junit.version>
         <jmh.version>1.37</jmh.version>
         <java.version>26</java.version>
@@ -54,7 +54,7 @@
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
-                <version>3.0.0</version>
+                <version>3.1.0</version>
                 <configuration>
                     <java><eclipse/></java>
                 </configuration>
@@ -74,7 +74,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.11.0</version>
+                    <version>3.14.1</version>
                     <configuration>
                         <source>${java.version}</source>
                         <target>${java.version}</target>
@@ -86,7 +86,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.1.2</version>
+                    <version>3.5.4</version>
                     <executions>
                         <execution>
                             <id>default-test</id>
