@@ -2,8 +2,8 @@ project:
   name: netty-virtualthread-scheduler
   description: Integration between Java Virtual Threads (Project Loom) and Netty's event loop
   longDescription: |
-    This project provides an integration between Java Virtual Threads (Project Loom) and Netty's event loop, 
-    enabling low-overhead execution of blocking or CPU-bound work started from the Netty event loop without 
+    This project provides an integration between Java Virtual Threads (Project Loom) and Netty's event loop,
+    enabling low-overhead execution of blocking or CPU-bound work started from the Netty event loop without
     the usual extra thread hand-offs.
   website: https://github.com/franz1981/Netty-VirtualThread-Scheduler
   authors:
