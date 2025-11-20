@@ -68,34 +68,34 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 
 		boolean isAvailable() {
-            return switch (this) {
-                case NIO -> true;
-                case EPOLL -> Epoll.isAvailable();
-                case IO_URING -> IoUring.isAvailable();
-                case LOCAL -> true;
-                default -> false;
-            };
+			return switch (this) {
+				case NIO -> true;
+				case EPOLL -> Epoll.isAvailable();
+				case IO_URING -> IoUring.isAvailable();
+				case LOCAL -> true;
+				default -> false;
+			};
 		}
 
 		IoHandlerFactory handlerFactory() {
-            return switch (this) {
-                case NIO -> NioIoHandler.newFactory();
-                case EPOLL -> EpollIoHandler.newFactory();
-                case IO_URING -> IoUringIoHandler.newFactory();
-                case LOCAL -> LocalIoHandler.newFactory();
-                default -> throw new IllegalStateException();
-            };
+			return switch (this) {
+				case NIO -> NioIoHandler.newFactory();
+				case EPOLL -> EpollIoHandler.newFactory();
+				case IO_URING -> IoUringIoHandler.newFactory();
+				case LOCAL -> LocalIoHandler.newFactory();
+				default -> throw new IllegalStateException();
+			};
 		}
 
 		Class<? extends io.netty.channel.ServerChannel> serverChannelClass() {
-            return switch (this) {
-                case NIO -> NioServerSocketChannel.class;
-                case EPOLL -> EpollServerSocketChannel.class;
-                case IO_URING -> IoUringServerSocketChannel.class;
-                case LOCAL -> throw new IllegalStateException(
-                        "LOCAL transport does not provide a ServerChannel class for real networking");
-                default -> throw new IllegalStateException();
-            };
+			return switch (this) {
+				case NIO -> NioServerSocketChannel.class;
+				case EPOLL -> EpollServerSocketChannel.class;
+				case IO_URING -> IoUringServerSocketChannel.class;
+				case LOCAL -> throw new IllegalStateException(
+						"LOCAL transport does not provide a ServerChannel class for real networking");
+				default -> throw new IllegalStateException();
+			};
 		}
 	}
 
