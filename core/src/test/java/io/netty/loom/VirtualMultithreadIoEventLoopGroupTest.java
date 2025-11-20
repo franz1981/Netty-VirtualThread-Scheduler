@@ -18,6 +18,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -28,8 +29,13 @@ import io.netty.channel.IoHandlerContext;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.IoRegistration;
 import io.netty.channel.local.LocalIoHandler;
+import io.netty.channel.epoll.Epoll;
+import io.netty.channel.epoll.EpollIoHandler;
+import io.netty.channel.epoll.EpollServerSocketChannel;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.nio.NioIoHandler;
@@ -50,13 +56,74 @@ import org.junit.jupiter.api.Timeout;
 
 public class VirtualMultithreadIoEventLoopGroupTest {
 
-	@Test
-	void processHttpRequestWithVirtualThreadOnManualNettyEventLoop() throws InterruptedException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+	// Transport enumeration to drive tests across available Netty transports.
+	private enum Transport {
+		NIO, EPOLL, LOCAL;
+
+		boolean isLocal() {
+			return this == LOCAL;
+		}
+
+		boolean isAvailable() {
+			switch (this) {
+				case NIO :
+					return true;
+				case EPOLL :
+					return Epoll.isAvailable();
+				case LOCAL :
+					return true;
+				default :
+					return false;
+			}
+		}
+
+		IoHandlerFactory handlerFactory() {
+			switch (this) {
+				case NIO :
+					return NioIoHandler.newFactory();
+				case EPOLL :
+					return EpollIoHandler.newFactory();
+				case LOCAL :
+					return LocalIoHandler.newFactory();
+				default :
+					throw new IllegalStateException();
+			}
+		}
+
+		Class<? extends io.netty.channel.ServerChannel> serverChannelClass() {
+			switch (this) {
+				case NIO :
+					return NioServerSocketChannel.class;
+				case EPOLL :
+					return EpollServerSocketChannel.class;
+				case LOCAL :
+					throw new IllegalStateException(
+							"LOCAL transport does not provide a ServerChannel class for real networking");
+				default :
+					throw new IllegalStateException();
+			}
+		}
+	}
+
+	private static Stream<Transport> transportsForNetworking() {
+		return Stream.of(Transport.values()).filter(t -> !t.isLocal() && t.isAvailable());
+	}
+
+	private static Stream<Transport> transportsAllowLocal() {
+		return Stream.of(Transport.values()).filter(Transport::isAvailable);
+	}
+
+	@ParameterizedTest
+	@MethodSource("transportsForNetworking")
+	void processHttpRequestWithVirtualThreadOnManualNettyEventLoop(Transport transport) throws InterruptedException {
+		assumeTrue(transport.isAvailable());
+		// avoid LOCAL for real networking tests
+		assumeTrue(!transport.isLocal());
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 		// create a simple http request server
 		InetSocketAddress inetAddress = new InetSocketAddress(8080);
 		CountDownLatch sendResponse = new CountDownLatch(1);
-		var bootstrap = new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
+		var bootstrap = new ServerBootstrap().group(group).channel(transport.serverChannelClass())
 				.childHandler(new ChannelInitializer<SocketChannel>() {
 
 					@Override
@@ -114,16 +181,19 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		group.shutdownGracefully();
 	}
 
-	@Test
-	void busyYieldMakeEveryoneToProgress() throws InterruptedException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+	@ParameterizedTest
+	@MethodSource("transportsForNetworking")
+	void busyYieldMakeEveryoneToProgress(Transport transport) throws InterruptedException {
+		assumeTrue(transport.isAvailable());
+		assumeTrue(!transport.isLocal());
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 		// create a simple http request server
 		InetSocketAddress inetAddress = new InetSocketAddress(8080);
 		CountDownLatch sendResponse = new CountDownLatch(1);
 		AtomicBoolean secondVThreadHasDone = new AtomicBoolean(false);
 		AtomicInteger yields = new AtomicInteger();
 		CyclicBarrier bothDone = new CyclicBarrier(2);
-		var bootstrap = new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
+		var bootstrap = new ServerBootstrap().group(group).channel(transport.serverChannelClass())
 				.childHandler(new ChannelInitializer<SocketChannel>() {
 
 					@Override
