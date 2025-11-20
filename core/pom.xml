@@ -36,6 +36,21 @@
             <classifier>linux-x86_64</classifier>
             <scope>test</scope>
         </dependency>
+        <!-- Add native transport test dependency for io_uring so IOUring classes are available in tests. -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-native-io_uring</artifactId>
+            <version>${netty.version}</version>
+            <classifier>linux-x86_64</classifier>
+            <scope>test</scope>
+        </dependency>
+        <!-- Add the io_uring "classes" artifact so the Java wrappers and handler classes are present at test time. -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-classes-io_uring</artifactId>
+            <version>${netty.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
