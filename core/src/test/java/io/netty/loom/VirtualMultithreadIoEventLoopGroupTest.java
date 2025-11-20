@@ -122,7 +122,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		return Stream.of(Transport.values()).filter(Transport::isAvailable);
 	}
 
-	@ParameterizedTest
+	@ParameterizedTest(name = "{index} => transport={0}")
 	@MethodSource("transportsForNetworking")
 	void processHttpRequestWithVirtualThreadOnManualNettyEventLoop(Transport transport) throws InterruptedException {
 		assumeTrue(transport.isAvailable());
@@ -190,7 +190,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		group.shutdownGracefully();
 	}
 
-	@ParameterizedTest
+	@ParameterizedTest(name = "{index} => transport={0}")
 	@MethodSource("transportsForNetworking")
 	void busyYieldMakeEveryoneToProgress(Transport transport) throws InterruptedException {
 		assumeTrue(transport.isAvailable());
