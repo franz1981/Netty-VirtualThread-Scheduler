@@ -33,6 +33,9 @@ import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 
+import io.netty.channel.uring.IoUring;
+import io.netty.channel.uring.IoUringIoHandler;
+import io.netty.channel.uring.IoUringServerSocketChannel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -58,7 +61,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 
 	// Transport enumeration to drive tests across available Netty transports.
 	private enum Transport {
-		NIO, EPOLL, LOCAL;
+		NIO, EPOLL, IO_URING, LOCAL;
 
 		boolean isLocal() {
 			return this == LOCAL;
@@ -70,6 +73,8 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 					return true;
 				case EPOLL :
 					return Epoll.isAvailable();
+				case IO_URING :
+					return IoUring.isAvailable();
 				case LOCAL :
 					return true;
 				default :
@@ -83,6 +88,8 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 					return NioIoHandler.newFactory();
 				case EPOLL :
 					return EpollIoHandler.newFactory();
+				case IO_URING :
+					return IoUringIoHandler.newFactory();
 				case LOCAL :
 					return LocalIoHandler.newFactory();
 				default :
@@ -96,6 +103,8 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 					return NioServerSocketChannel.class;
 				case EPOLL :
 					return EpollServerSocketChannel.class;
+				case IO_URING :
+					return IoUringServerSocketChannel.class;
 				case LOCAL :
 					throw new IllegalStateException(
 							"LOCAL transport does not provide a ServerChannel class for real networking");
