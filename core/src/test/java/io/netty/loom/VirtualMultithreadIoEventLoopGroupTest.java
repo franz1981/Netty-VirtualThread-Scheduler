@@ -36,7 +36,6 @@ import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.uring.IoUring;
 import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.channel.uring.IoUringServerSocketChannel;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -57,6 +56,7 @@ import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.internal.ThreadExecutorMap;
 import org.junit.jupiter.api.Timeout;
 
+@Timeout(10)
 public class VirtualMultithreadIoEventLoopGroupTest {
 
 	// Transport enumeration to drive tests across available Netty transports.
@@ -68,49 +68,34 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 
 		boolean isAvailable() {
-			switch (this) {
-				case NIO :
-					return true;
-				case EPOLL :
-					return Epoll.isAvailable();
-				case IO_URING :
-					return IoUring.isAvailable();
-				case LOCAL :
-					return true;
-				default :
-					return false;
-			}
+            return switch (this) {
+                case NIO -> true;
+                case EPOLL -> Epoll.isAvailable();
+                case IO_URING -> IoUring.isAvailable();
+                case LOCAL -> true;
+                default -> false;
+            };
 		}
 
 		IoHandlerFactory handlerFactory() {
-			switch (this) {
-				case NIO :
-					return NioIoHandler.newFactory();
-				case EPOLL :
-					return EpollIoHandler.newFactory();
-				case IO_URING :
-					return IoUringIoHandler.newFactory();
-				case LOCAL :
-					return LocalIoHandler.newFactory();
-				default :
-					throw new IllegalStateException();
-			}
+            return switch (this) {
+                case NIO -> NioIoHandler.newFactory();
+                case EPOLL -> EpollIoHandler.newFactory();
+                case IO_URING -> IoUringIoHandler.newFactory();
+                case LOCAL -> LocalIoHandler.newFactory();
+                default -> throw new IllegalStateException();
+            };
 		}
 
 		Class<? extends io.netty.channel.ServerChannel> serverChannelClass() {
-			switch (this) {
-				case NIO :
-					return NioServerSocketChannel.class;
-				case EPOLL :
-					return EpollServerSocketChannel.class;
-				case IO_URING :
-					return IoUringServerSocketChannel.class;
-				case LOCAL :
-					throw new IllegalStateException(
-							"LOCAL transport does not provide a ServerChannel class for real networking");
-				default :
-					throw new IllegalStateException();
-			}
+            return switch (this) {
+                case NIO -> NioServerSocketChannel.class;
+                case EPOLL -> EpollServerSocketChannel.class;
+                case IO_URING -> IoUringServerSocketChannel.class;
+                case LOCAL -> throw new IllegalStateException(
+                        "LOCAL transport does not provide a ServerChannel class for real networking");
+                default -> throw new IllegalStateException();
+            };
 		}
 	}
 
@@ -181,9 +166,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		group.shutdownGracefully();
 	}
 
-	@Test
-	void virtualEventExecutorGroupCorrectlySetEventExecutor() throws ExecutionException, InterruptedException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void virtualEventExecutorGroupCorrectlySetEventExecutor(Transport transport)
+			throws ExecutionException, InterruptedException {
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 		var ioEventLoop = group.next();
 		assertInstanceOf(EventExecutor.class, ioEventLoop);
 		assertTrue(group.submit(() -> ThreadExecutorMap.currentExecutor() == ioEventLoop).get());
@@ -281,12 +268,15 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		group.shutdownGracefully();
 	}
 
-	@Test
-	void saveWakeupsOnVirtualThreads() throws InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void saveWakeupsOnVirtualThreads(Transport transport) throws InterruptedException, ExecutionException {
+		assumeTrue(transport.isAvailable());
+		assumeTrue(!transport.isLocal());
 		var wakeupCounter = new AtomicInteger();
-		var nioFactory = NioIoHandler.newFactory();
+		IoHandlerFactory baseFactory = transport.handlerFactory();
 		IoHandlerFactory counterHandlerFactory = ioExecutor -> {
-			var ioHandler = nioFactory.newHandler(ioExecutor);
+			var ioHandler = baseFactory.newHandler(ioExecutor);
 			return new IoHandler() {
 
 				@Override
@@ -331,7 +321,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		InetSocketAddress inetAddress = new InetSocketAddress(8080);
 		var innerVThreadCreationFromVThread = new CompletableFuture<Integer>();
 		var innerWriteFromVThread = new CompletableFuture<Integer>();
-		var bootstrap = new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
+		var bootstrap = new ServerBootstrap().group(group).channel(transport.serverChannelClass())
 				.childHandler(new ChannelInitializer<SocketChannel>() {
 
 					@Override
@@ -382,9 +372,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		group.shutdownGracefully();
 	}
 
-	@Test
-	void schedulerIsNotInheritedWithThreadOfVirtual() throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void schedulerIsNotInheritedWithThreadOfVirtual(Transport transport)
+			throws InterruptedException, ExecutionException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
 			final var expectedScheduler = group
 					.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
 			assertNotNull(expectedScheduler);
@@ -401,9 +393,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void schedulerIsInheritedByForkedVTFromTheRightFactory() throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void schedulerIsInheritedByForkedVTFromTheRightFactory(Transport transport)
+			throws InterruptedException, ExecutionException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
 			final var expectedEventLoopScheduler = group
 					.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
 			assertNotNull(expectedEventLoopScheduler);
@@ -423,9 +417,10 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void schedulerIsNotInheritedByForkedVT() throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void schedulerIsNotInheritedByForkedVT(Transport transport) throws InterruptedException, ExecutionException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
 			final var vThreadFactory = group.submit(group::vThreadFactory).get();
 			var schedulerRef = new CompletableFuture<EventLoopScheduler.SharedRef>();
 			vThreadFactory.newThread(() -> {
@@ -441,13 +436,14 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	@Timeout(10)
-	void schedulerIsNotLeakingIfItsThreadFactoryOutliveIt() throws InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void schedulerIsNotLeakingIfItsThreadFactoryOutliveIt(Transport transport)
+			throws InterruptedException, ExecutionException {
 		ThreadFactory vThreadFactory;
 		WeakReference<EventLoopScheduler> schedulerWeakRef;
 		EventLoopScheduler.SharedRef schedulerRef;
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
 			vThreadFactory = group.submit(group::vThreadFactory).get();
 			schedulerRef = group.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler()).get();
 			schedulerWeakRef = new WeakReference<>(schedulerRef.get());
@@ -471,10 +467,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		assertNull(schedulerRefPromise.get().get());
 	}
 
-	@Test
-	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed()
-			throws InterruptedException, ExecutionException, BrokenBarrierException, TimeoutException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed(Transport transport)
+			throws InterruptedException, ExecutionException, TimeoutException, BrokenBarrierException {
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 		final var barrier = new CyclicBarrier(2);
 		final var vThreadFactory = group.submit(group::vThreadFactory).get();
 		vThreadFactory.newThread(() -> {
@@ -488,10 +485,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		barrier.await(5, TimeUnit.SECONDS);
 	}
 
-	@Test
-	void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked()
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked(Transport transport)
 			throws BrokenBarrierException, InterruptedException, TimeoutException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 		var allBlocked = new CyclicBarrier(3);
 		group.execute(() -> {
 			group.vThreadFactory().newThread(() -> {
@@ -512,11 +510,12 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void testFairness() throws ExecutionException, InterruptedException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testFairness(Transport transport) throws ExecutionException, InterruptedException {
 		final long V_TASK_DURATION_NS = TimeUnit.MILLISECONDS.toNanos(100);
 		int tasks = 4;
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 		var interleavingVirtualThreads = new AtomicBoolean(false);
 
 		var nonBlockingTasksCompleted = new CountDownLatch(tasks);
@@ -547,19 +546,21 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void testPlatformThreadSpawnsVirtualThreads() throws ExecutionException, InterruptedException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testPlatformThreadSpawnsVirtualThreads(Transport transport) throws ExecutionException, InterruptedException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 				var executor = Executors.newVirtualThreadPerTaskExecutor()) {
 			var scheduler = executor.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler());
 			assertNull(scheduler.get());
 		}
 	}
 
-	@Test
-	void testBlockingIO() throws IOException, InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testBlockingIO(Transport transport) throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
@@ -602,10 +603,12 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void testShutdownSchedulerOnBlockingIO() throws IOException, InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testShutdownSchedulerOnBlockingIO(Transport transport)
+			throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
@@ -667,11 +670,13 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void testShutdownSchedulerOnLongBlockingIO() throws IOException, InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testShutdownSchedulerOnLongBlockingIO(Transport transport)
+			throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
 		int bytesToWrite = 16;
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
