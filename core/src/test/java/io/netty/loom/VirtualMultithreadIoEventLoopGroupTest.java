@@ -18,6 +18,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -27,9 +28,16 @@ import io.netty.channel.IoHandler;
 import io.netty.channel.IoHandlerContext;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.IoRegistration;
+import io.netty.channel.epoll.Epoll;
 import io.netty.channel.local.LocalIoHandler;
+import io.netty.channel.epoll.EpollIoHandler;
+import io.netty.channel.epoll.EpollServerSocketChannel;
 
-import org.junit.jupiter.api.Test;
+import io.netty.channel.uring.IoUring;
+import io.netty.channel.uring.IoUringIoHandler;
+import io.netty.channel.uring.IoUringServerSocketChannel;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.nio.NioIoHandler;
@@ -48,117 +56,82 @@ import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.internal.ThreadExecutorMap;
 import org.junit.jupiter.api.Timeout;
 
+@Timeout(10)
 public class VirtualMultithreadIoEventLoopGroupTest {
 
-	@Test
-	void processHttpRequestWithVirtualThreadOnManualNettyEventLoop() throws InterruptedException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-		// create a simple http request server
-		InetSocketAddress inetAddress = new InetSocketAddress(8080);
-		CountDownLatch sendResponse = new CountDownLatch(1);
-		var bootstrap = new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
-				.childHandler(new ChannelInitializer<SocketChannel>() {
+	// Transport enumeration to drive tests across available Netty transports.
+	private enum Transport {
+		NIO, EPOLL, IO_URING, LOCAL;
 
-					@Override
-					protected void initChannel(SocketChannel ch) {
-						ch.pipeline().addLast(new HttpServerCodec());
-						// Netty is going to create a new one for each connection
-						ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
-
-							@Override
-							public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
-								if (msg instanceof DefaultHttpRequest) {
-									group.vThreadFactory().newThread(() -> {
-										try {
-											sendResponse.await();
-											var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
-											contentBytes.writeCharSequence("HELLO!", CharsetUtil.US_ASCII);
-											var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
-													HttpResponseStatus.OK, contentBytes);
-											response.headers()
-													.set(HttpHeaderNames.CONTENT_TYPE, HttpHeaderValues.TEXT_PLAIN)
-													.set(HttpHeaderNames.CONTENT_LENGTH, contentBytes.readableBytes())
-													.set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
-											ctx.writeAndFlush(response, ctx.voidPromise());
-										} catch (InterruptedException e) {
-											Thread.currentThread().interrupt();
-										}
-									}).start();
-								}
-								ReferenceCountUtil.release(msg);
-							}
-						});
-					}
-				});
-		Channel channel = bootstrap.bind(inetAddress).sync().channel();
-		// use a http client to send a random request and check the response
-		try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
-			var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
-					.header("Content-Type", "text/plain").GET().build();
-			var httpResponseFuture = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
-			sendResponse.countDown();
-			var httpResponse = httpResponseFuture.join();
-			assertEquals(200, httpResponse.statusCode());
-			assertEquals("HELLO!", httpResponse.body());
+		boolean isLocal() {
+			return this == LOCAL;
 		}
-		channel.close().await();
-		group.shutdownGracefully();
+
+		boolean isAvailable() {
+			return switch (this) {
+				case NIO -> true;
+				case EPOLL -> Epoll.isAvailable();
+				case IO_URING -> IoUring.isAvailable();
+				case LOCAL -> true;
+				default -> false;
+			};
+		}
+
+		IoHandlerFactory handlerFactory() {
+			return switch (this) {
+				case NIO -> NioIoHandler.newFactory();
+				case EPOLL -> EpollIoHandler.newFactory();
+				case IO_URING -> IoUringIoHandler.newFactory();
+				case LOCAL -> LocalIoHandler.newFactory();
+				default -> throw new IllegalStateException();
+			};
+		}
+
+		Class<? extends io.netty.channel.ServerChannel> serverChannelClass() {
+			return switch (this) {
+				case NIO -> NioServerSocketChannel.class;
+				case EPOLL -> EpollServerSocketChannel.class;
+				case IO_URING -> IoUringServerSocketChannel.class;
+				case LOCAL -> throw new IllegalStateException(
+						"LOCAL transport does not provide a ServerChannel class for real networking");
+				default -> throw new IllegalStateException();
+			};
+		}
 	}
 
-	@Test
-	void virtualEventExecutorGroupCorrectlySetEventExecutor() throws ExecutionException, InterruptedException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-		var ioEventLoop = group.next();
-		assertInstanceOf(EventExecutor.class, ioEventLoop);
-		assertTrue(group.submit(() -> ThreadExecutorMap.currentExecutor() == ioEventLoop).get());
-		group.shutdownGracefully();
+	private static Stream<Transport> transportsForNetworking() {
+		return Stream.of(Transport.values()).filter(t -> !t.isLocal() && t.isAvailable());
 	}
 
-	@Test
-	void busyYieldMakeEveryoneToProgress() throws InterruptedException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-		// create a simple http request server
-		InetSocketAddress inetAddress = new InetSocketAddress(8080);
-		CountDownLatch sendResponse = new CountDownLatch(1);
-		AtomicBoolean secondVThreadHasDone = new AtomicBoolean(false);
-		AtomicInteger yields = new AtomicInteger();
-		CyclicBarrier bothDone = new CyclicBarrier(2);
-		var bootstrap = new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
-				.childHandler(new ChannelInitializer<SocketChannel>() {
+	private static Stream<Transport> transportsAllowLocal() {
+		return Stream.of(Transport.values()).filter(Transport::isAvailable);
+	}
 
-					@Override
-					protected void initChannel(SocketChannel ch) {
-						ch.pipeline().addLast(new HttpServerCodec());
-						// Netty is going to create a new one for each connection
-						ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsForNetworking")
+	void processHttpRequestWithVirtualThreadOnManualNettyEventLoop(Transport transport) throws InterruptedException {
+		assumeTrue(transport.isAvailable());
+		// avoid LOCAL for real networking tests
+		assumeTrue(!transport.isLocal());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+			// create a simple http request server
+			InetSocketAddress inetAddress = new InetSocketAddress(8080);
+			CountDownLatch sendResponse = new CountDownLatch(1);
+			var bootstrap = new ServerBootstrap().group(group).channel(transport.serverChannelClass())
+					.childHandler(new ChannelInitializer<SocketChannel>() {
 
-							@Override
-							public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
-								if (msg instanceof DefaultHttpRequest) {
-									var vthreadFactory = group.vThreadFactory();
-									vthreadFactory.newThread(() -> {
-										try {
-											sendResponse.await();
-											vthreadFactory.newThread(() -> {
-												try {
-													Thread.sleep(1000);
-												} catch (InterruptedException e) {
-													// ignore
-												} finally {
-													secondVThreadHasDone.lazySet(true);
-												}
-												try {
-													bothDone.await();
-												} catch (BrokenBarrierException | InterruptedException e) {
-													// ignore
-												}
-											}).start();
-											while (!secondVThreadHasDone.get()) {
-												yields.lazySet(yields.get() + 1);
-												Thread.yield();
-											}
+						@Override
+						protected void initChannel(SocketChannel ch) {
+							ch.pipeline().addLast(new HttpServerCodec());
+							// Netty is going to create a new one for each connection
+							ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+
+								@Override
+								public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
+									if (msg instanceof DefaultHttpRequest) {
+										group.vThreadFactory().newThread(() -> {
 											try {
-												bothDone.await();
+												sendResponse.await();
 												var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
 												contentBytes.writeCharSequence("HELLO!", CharsetUtil.US_ASCII);
 												var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
@@ -169,45 +142,143 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 																contentBytes.readableBytes())
 														.set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
 												ctx.writeAndFlush(response, ctx.voidPromise());
-											} catch (BrokenBarrierException e) {
-												// ignore
+											} catch (InterruptedException e) {
+												Thread.currentThread().interrupt();
 											}
-										} catch (InterruptedException e) {
-											Thread.currentThread().interrupt();
-										} finally {
-
-										}
-									}).start();
-
+										}).start();
+									}
+									ReferenceCountUtil.release(msg);
 								}
-								ReferenceCountUtil.release(msg);
-							}
-						});
-					}
-				});
-		Channel channel = bootstrap.bind(inetAddress).sync().channel();
-		// use a http client to send a random request and check the response
-		try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
-			var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
-					.header("Content-Type", "text/plain").GET().build();
-			var httpResponseFuture = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
-			sendResponse.countDown();
-			var httpResponse = httpResponseFuture.join();
-			assertEquals(200, httpResponse.statusCode());
-			assertEquals("HELLO!", httpResponse.body());
-			// assert yields more than 1
-			assertNotEquals(0, yields.get());
+							});
+						}
+					});
+			Channel channel = bootstrap.bind(inetAddress).sync().channel();
+			// use a http client to send a random request and check the response
+			try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+				var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
+						.header("Content-Type", "text/plain").GET().build();
+				var httpResponseFuture = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+				sendResponse.countDown();
+				var httpResponse = httpResponseFuture.join();
+				assertEquals(200, httpResponse.statusCode());
+				assertEquals("HELLO!", httpResponse.body());
+			}
+			channel.close().await();
 		}
-		channel.close().await();
-		group.shutdownGracefully();
 	}
 
-	@Test
-	void saveWakeupsOnVirtualThreads() throws InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void virtualEventExecutorGroupCorrectlySetEventExecutor(Transport transport)
+			throws ExecutionException, InterruptedException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+			var ioEventLoop = group.next();
+			assertInstanceOf(EventExecutor.class, ioEventLoop);
+			assertTrue(group.submit(() -> ThreadExecutorMap.currentExecutor() == ioEventLoop).get());
+		}
+	}
+
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsForNetworking")
+	void busyYieldMakeEveryoneToProgress(Transport transport) throws InterruptedException {
+		assumeTrue(transport.isAvailable());
+		assumeTrue(!transport.isLocal());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+			// create a simple http request server
+			InetSocketAddress inetAddress = new InetSocketAddress(8080);
+			CountDownLatch sendResponse = new CountDownLatch(1);
+			AtomicBoolean secondVThreadHasDone = new AtomicBoolean(false);
+			AtomicInteger yields = new AtomicInteger();
+			CyclicBarrier bothDone = new CyclicBarrier(2);
+			var bootstrap = new ServerBootstrap().group(group).channel(transport.serverChannelClass())
+					.childHandler(new ChannelInitializer<SocketChannel>() {
+
+						@Override
+						protected void initChannel(SocketChannel ch) {
+							ch.pipeline().addLast(new HttpServerCodec());
+							// Netty is going to create a new one for each connection
+							ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+
+								@Override
+								public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
+									if (msg instanceof DefaultHttpRequest) {
+										var vthreadFactory = group.vThreadFactory();
+										vthreadFactory.newThread(() -> {
+											try {
+												sendResponse.await();
+												vthreadFactory.newThread(() -> {
+													try {
+														Thread.sleep(1000);
+													} catch (InterruptedException e) {
+														// ignore
+													} finally {
+														secondVThreadHasDone.lazySet(true);
+													}
+													try {
+														bothDone.await();
+													} catch (BrokenBarrierException | InterruptedException e) {
+														// ignore
+													}
+												}).start();
+												while (!secondVThreadHasDone.get()) {
+													yields.lazySet(yields.get() + 1);
+													Thread.yield();
+												}
+												try {
+													bothDone.await();
+													var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
+													contentBytes.writeCharSequence("HELLO!", CharsetUtil.US_ASCII);
+													var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
+															HttpResponseStatus.OK, contentBytes);
+													response.headers()
+															.set(HttpHeaderNames.CONTENT_TYPE,
+																	HttpHeaderValues.TEXT_PLAIN)
+															.set(HttpHeaderNames.CONTENT_LENGTH,
+																	contentBytes.readableBytes())
+															.set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
+													ctx.writeAndFlush(response, ctx.voidPromise());
+												} catch (BrokenBarrierException e) {
+													// ignore
+												}
+											} catch (InterruptedException e) {
+												Thread.currentThread().interrupt();
+											} finally {
+
+											}
+										}).start();
+
+									}
+									ReferenceCountUtil.release(msg);
+								}
+							});
+						}
+					});
+			Channel channel = bootstrap.bind(inetAddress).sync().channel();
+			// use a http client to send a random request and check the response
+			try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+				var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
+						.header("Content-Type", "text/plain").GET().build();
+				var httpResponseFuture = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+				sendResponse.countDown();
+				var httpResponse = httpResponseFuture.join();
+				assertEquals(200, httpResponse.statusCode());
+				assertEquals("HELLO!", httpResponse.body());
+				// assert yields more than 1
+				assertNotEquals(0, yields.get());
+			}
+			channel.close().await();
+		}
+	}
+
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void saveWakeupsOnVirtualThreads(Transport transport) throws InterruptedException, ExecutionException {
+		assumeTrue(transport.isAvailable());
+		assumeTrue(!transport.isLocal());
 		var wakeupCounter = new AtomicInteger();
-		var nioFactory = NioIoHandler.newFactory();
+		IoHandlerFactory baseFactory = transport.handlerFactory();
 		IoHandlerFactory counterHandlerFactory = ioExecutor -> {
-			var ioHandler = nioFactory.newHandler(ioExecutor);
+			var ioHandler = baseFactory.newHandler(ioExecutor);
 			return new IoHandler() {
 
 				@Override
@@ -247,65 +318,68 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 				}
 			};
 		};
-		var group = new VirtualMultithreadIoEventLoopGroup(1, counterHandlerFactory);
-		// create a simple http request server
-		InetSocketAddress inetAddress = new InetSocketAddress(8080);
-		var innerVThreadCreationFromVThread = new CompletableFuture<Integer>();
-		var innerWriteFromVThread = new CompletableFuture<Integer>();
-		var bootstrap = new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
-				.childHandler(new ChannelInitializer<SocketChannel>() {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, counterHandlerFactory)) {
+			// create a simple http request server
+			InetSocketAddress inetAddress = new InetSocketAddress(8080);
+			var innerVThreadCreationFromVThread = new CompletableFuture<Integer>();
+			var innerWriteFromVThread = new CompletableFuture<Integer>();
+			var bootstrap = new ServerBootstrap().group(group).channel(transport.serverChannelClass())
+					.childHandler(new ChannelInitializer<SocketChannel>() {
 
-					@Override
-					protected void initChannel(SocketChannel ch) {
-						ch.pipeline().addLast(new HttpServerCodec());
-						// Netty is going to create a new one for each connection
-						ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+						@Override
+						protected void initChannel(SocketChannel ch) {
+							ch.pipeline().addLast(new HttpServerCodec());
+							// Netty is going to create a new one for each connection
+							ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
 
-							@Override
-							public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
-								if (msg instanceof DefaultHttpRequest) {
-									var factory = group.vThreadFactory();
-									factory.newThread(() -> {
-										final int beforeInner = wakeupCounter.get();
+								@Override
+								public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
+									if (msg instanceof DefaultHttpRequest) {
+										var factory = group.vThreadFactory();
 										factory.newThread(() -> {
-											var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
-											contentBytes.writeCharSequence("HELLO!", CharsetUtil.US_ASCII);
-											var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
-													HttpResponseStatus.OK, contentBytes);
-											response.headers()
-													.set(HttpHeaderNames.CONTENT_TYPE, HttpHeaderValues.TEXT_PLAIN)
-													.set(HttpHeaderNames.CONTENT_LENGTH, contentBytes.readableBytes())
-													.set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
-											final int beforeWrite = wakeupCounter.get();
-											ctx.writeAndFlush(response, ctx.voidPromise());
-											final int afterWrite = wakeupCounter.get();
-											innerWriteFromVThread.complete(afterWrite - beforeWrite);
+											final int beforeInner = wakeupCounter.get();
+											factory.newThread(() -> {
+												var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
+												contentBytes.writeCharSequence("HELLO!", CharsetUtil.US_ASCII);
+												var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
+														HttpResponseStatus.OK, contentBytes);
+												response.headers()
+														.set(HttpHeaderNames.CONTENT_TYPE, HttpHeaderValues.TEXT_PLAIN)
+														.set(HttpHeaderNames.CONTENT_LENGTH,
+																contentBytes.readableBytes())
+														.set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
+												final int beforeWrite = wakeupCounter.get();
+												ctx.writeAndFlush(response, ctx.voidPromise());
+												final int afterWrite = wakeupCounter.get();
+												innerWriteFromVThread.complete(afterWrite - beforeWrite);
+											}).start();
+											final int afterInner = wakeupCounter.get();
+											innerVThreadCreationFromVThread.complete(afterInner - beforeInner);
 										}).start();
-										final int afterInner = wakeupCounter.get();
-										innerVThreadCreationFromVThread.complete(afterInner - beforeInner);
-									}).start();
+									}
+									ReferenceCountUtil.release(msg);
 								}
-								ReferenceCountUtil.release(msg);
-							}
-						});
-					}
-				});
-		Channel channel = bootstrap.bind(inetAddress).sync().channel();
-		// use a http client to send a random request and check the response
-		try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
-			var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
-					.header("Content-Type", "text/plain").GET().build();
-			client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+							});
+						}
+					});
+			Channel channel = bootstrap.bind(inetAddress).sync().channel();
+			// use a http client to send a random request and check the response
+			try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+				var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
+						.header("Content-Type", "text/plain").GET().build();
+				client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+			}
+			assertEquals(0, innerVThreadCreationFromVThread.get().intValue());
+			assertEquals(0, innerWriteFromVThread.get().intValue());
+			channel.close().await();
 		}
-		assertEquals(0, innerVThreadCreationFromVThread.get().intValue());
-		assertEquals(0, innerWriteFromVThread.get().intValue());
-		channel.close().await();
-		group.shutdownGracefully();
 	}
 
-	@Test
-	void schedulerIsNotInheritedWithThreadOfVirtual() throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void schedulerIsNotInheritedWithThreadOfVirtual(Transport transport)
+			throws InterruptedException, ExecutionException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
 			final var expectedScheduler = group
 					.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
 			assertNotNull(expectedScheduler);
@@ -322,9 +396,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void schedulerIsInheritedByForkedVTFromTheRightFactory() throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void schedulerIsInheritedByForkedVTFromTheRightFactory(Transport transport)
+			throws InterruptedException, ExecutionException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
 			final var expectedEventLoopScheduler = group
 					.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
 			assertNotNull(expectedEventLoopScheduler);
@@ -344,9 +420,10 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void schedulerIsNotInheritedByForkedVT() throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void schedulerIsNotInheritedByForkedVT(Transport transport) throws InterruptedException, ExecutionException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
 			final var vThreadFactory = group.submit(group::vThreadFactory).get();
 			var schedulerRef = new CompletableFuture<EventLoopScheduler.SharedRef>();
 			vThreadFactory.newThread(() -> {
@@ -362,22 +439,24 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	@Timeout(10)
-	void schedulerIsNotLeakingIfItsThreadFactoryOutliveIt() throws InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void schedulerIsNotLeakingIfItsThreadFactoryOutliveIt(Transport transport)
+			throws InterruptedException, ExecutionException {
 		ThreadFactory vThreadFactory;
 		WeakReference<EventLoopScheduler> schedulerWeakRef;
 		EventLoopScheduler.SharedRef schedulerRef;
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory())) {
-			vThreadFactory = group.submit(group::vThreadFactory).get();
-			schedulerRef = group.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler()).get();
-			schedulerWeakRef = new WeakReference<>(schedulerRef.get());
-			assertNotNull(schedulerRef.get());
-			assertNotNull(schedulerWeakRef.get());
-		}
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
+		vThreadFactory = group.submit(group::vThreadFactory).get();
+		schedulerRef = group.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler()).get();
+		schedulerWeakRef = new WeakReference<>(schedulerRef.get());
+		assertNotNull(schedulerRef.get());
+		assertNotNull(schedulerWeakRef.get());
+		group.close();
 		while (schedulerRef.get() != null) {
 			Thread.yield();
 		}
+		group = null;
 		while (schedulerWeakRef.get() != null) {
 			System.gc();
 			System.runFinalization();
@@ -392,72 +471,71 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		assertNull(schedulerRefPromise.get().get());
 	}
 
-	@Test
-	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed()
-			throws InterruptedException, ExecutionException, BrokenBarrierException, TimeoutException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed(Transport transport)
+			throws InterruptedException, ExecutionException, TimeoutException, BrokenBarrierException {
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 		final var barrier = new CyclicBarrier(2);
 		final var vThreadFactory = group.submit(group::vThreadFactory).get();
 		vThreadFactory.newThread(() -> {
 			try {
-				group.shutdownGracefully().get();
+				group.close();
 				barrier.await();
 			} catch (Throwable e) {
 				// ignore
 			}
 		}).start();
-		barrier.await(5, TimeUnit.SECONDS);
+		barrier.await();
 	}
 
-	@Test
-	void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked()
-			throws BrokenBarrierException, InterruptedException, TimeoutException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-		var allBlocked = new CyclicBarrier(3);
-		group.execute(() -> {
-			group.vThreadFactory().newThread(() -> {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked(Transport transport)
+			throws BrokenBarrierException, InterruptedException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+			var allBlocked = new CyclicBarrier(3);
+			group.execute(() -> {
+				group.vThreadFactory().newThread(() -> {
+					try {
+						allBlocked.await();
+					} catch (Throwable t) {
+					}
+				}).start();
 				try {
 					allBlocked.await();
-				} catch (Throwable t) {
+				} catch (Throwable e) {
 				}
-			}).start();
-			try {
-				allBlocked.await();
-			} catch (Throwable e) {
-			}
-		});
-		try {
-			allBlocked.await(5, java.util.concurrent.TimeUnit.SECONDS);
-		} finally {
-			group.shutdownGracefully();
+			});
+			allBlocked.await();
 		}
 	}
 
-	@Test
-	void testFairness() throws ExecutionException, InterruptedException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testFairness(Transport transport) throws ExecutionException, InterruptedException {
 		final long V_TASK_DURATION_NS = TimeUnit.MILLISECONDS.toNanos(100);
 		int tasks = 4;
-		var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
 		var interleavingVirtualThreads = new AtomicBoolean(false);
-
-		var nonBlockingTasksCompleted = new CountDownLatch(tasks);
-		group.submit(() -> {
-			var counter = new AtomicInteger();
-			for (int i = 0; i < tasks; i++) {
-				group.vThreadFactory().newThread(() -> {
-					spinWait(V_TASK_DURATION_NS);
-					int count = counter.incrementAndGet();
-					group.execute(() -> {
-						if (counter.get() != count) {
-							interleavingVirtualThreads.set(true);
-						}
-						nonBlockingTasksCompleted.countDown();
-					});
-				}).start();
-			}
-		}).get();
-		nonBlockingTasksCompleted.await();
-		group.shutdownGracefully();
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+			var nonBlockingTasksCompleted = new CountDownLatch(tasks);
+			group.submit(() -> {
+				var counter = new AtomicInteger();
+				for (int i = 0; i < tasks; i++) {
+					group.vThreadFactory().newThread(() -> {
+						spinWait(V_TASK_DURATION_NS);
+						int count = counter.incrementAndGet();
+						group.execute(() -> {
+							if (counter.get() != count) {
+								interleavingVirtualThreads.set(true);
+							}
+							nonBlockingTasksCompleted.countDown();
+						});
+					}).start();
+				}
+			}).get();
+			nonBlockingTasksCompleted.await();
+		}
 		assertFalse(interleavingVirtualThreads.get());
 	}
 
@@ -468,19 +546,21 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void testPlatformThreadSpawnsVirtualThreads() throws ExecutionException, InterruptedException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testPlatformThreadSpawnsVirtualThreads(Transport transport) throws ExecutionException, InterruptedException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 				var executor = Executors.newVirtualThreadPerTaskExecutor()) {
 			var scheduler = executor.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler());
 			assertNull(scheduler.get());
 		}
 	}
 
-	@Test
-	void testBlockingIO() throws IOException, InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testBlockingIO(Transport transport) throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
@@ -523,10 +603,12 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void testShutdownSchedulerOnBlockingIO() throws IOException, InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testShutdownSchedulerOnBlockingIO(Transport transport)
+			throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
@@ -573,7 +655,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 					Thread.sleep(1);
 				}
 				Thread carrier = schedulerRef.get().get().carrierThread();
-				group.shutdownGracefully().get();
+				group.close();
 				assertTrue(carrier.join(Duration.MAX));
 				// unblock the client and expect the read to complete
 				clientOut.write(1);
@@ -588,11 +670,13 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@Test
-	void testShutdownSchedulerOnLongBlockingIO() throws IOException, InterruptedException, ExecutionException {
+	@ParameterizedTest(name = "{index} => transport={0}")
+	@MethodSource("transportsAllowLocal")
+	void testShutdownSchedulerOnLongBlockingIO(Transport transport)
+			throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
 		int bytesToWrite = 16;
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
@@ -642,7 +726,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 					// shutdown whilst the read is parked
 					if (i == shutDownAt) {
 						Thread carrier = schedulerRef.get().get().carrierThread();
-						group.shutdownGracefully().get();
+						group.close();
 						assertTrue(carrier.join(Duration.MAX));
 					}
 					clientOut.write(b);
