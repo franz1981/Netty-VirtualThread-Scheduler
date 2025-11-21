@@ -82,10 +82,10 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 
 	@Override
 	public void close() {
-        try {
-            shutdownGracefully(0, 0, TimeUnit.SECONDS).get();
-        } catch (Throwable _) {
+		try {
+			shutdownGracefully(0, 0, TimeUnit.SECONDS).get();
+		} catch (Throwable _) {
 
-        }
-    }
+		}
+	}
 }
