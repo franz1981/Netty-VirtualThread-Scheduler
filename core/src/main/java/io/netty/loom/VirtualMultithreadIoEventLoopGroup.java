@@ -3,6 +3,7 @@ package io.netty.loom;
 import java.util.ArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import io.netty.channel.IoEventLoop;
@@ -81,6 +82,10 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 
 	@Override
 	public void close() {
-		shutdownGracefully();
-	}
+        try {
+            shutdownGracefully(0, 0, TimeUnit.SECONDS).get();
+        } catch (Throwable _) {
+
+        }
+    }
 }
