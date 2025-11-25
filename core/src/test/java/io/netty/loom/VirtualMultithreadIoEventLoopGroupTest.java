@@ -70,7 +70,8 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		boolean isAvailable() {
 			return switch (this) {
 				case NIO -> true;
-				case EPOLL -> Epoll.isAvailable();
+                // TODO disable EPOLL due to https://github.com/netty/netty/issues/15922
+				case EPOLL -> false;
 				case IO_URING -> IoUring.isAvailable();
 				case LOCAL -> true;
 				default -> false;
