@@ -8,6 +8,9 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  schedule:
+    # Run nightly at 2:00 AM UTC to detect breaking changes in Loom JDK
+    - cron: '0 2 * * *'
 
 jobs:
   test-with-loom:
