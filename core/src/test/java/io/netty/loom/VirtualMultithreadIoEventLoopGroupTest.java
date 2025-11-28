@@ -20,15 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.IoHandle;
-import io.netty.channel.IoHandler;
-import io.netty.channel.IoHandlerContext;
-import io.netty.channel.IoHandlerFactory;
-import io.netty.channel.IoRegistration;
-import io.netty.channel.epoll.Epoll;
+import io.netty.channel.*;
 import io.netty.channel.local.LocalIoHandler;
 import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.epoll.EpollServerSocketChannel;
@@ -36,6 +28,7 @@ import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.uring.IoUring;
 import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.channel.uring.IoUringServerSocketChannel;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -475,7 +468,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 	@ParameterizedTest(name = "{index} => transport={0}")
 	@MethodSource("transportsAllowLocal")
 	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed(Transport transport)
-			throws InterruptedException, ExecutionException, TimeoutException, BrokenBarrierException {
+			throws InterruptedException, ExecutionException, BrokenBarrierException {
 		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
 		final var barrier = new CyclicBarrier(2);
 		final var vThreadFactory = group.submit(group::vThreadFactory).get();
@@ -734,6 +727,25 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 				}
 				assertArrayEquals(toWrite, readCompleted.join());
 			}
+		}
+	}
+
+	@Test
+	void vThreadFactoryMappingShouldReturnNullIfNoneIsFound() throws InterruptedException, ExecutionException {
+		try (var otherGroup = new VirtualMultithreadIoEventLoopGroup(1, LocalIoHandler.newFactory());
+				var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory())) {
+			var otherEventLoop = otherGroup.next();
+			assertNull(group.vThreadFactoryOf(otherEventLoop));
+		}
+	}
+
+	@Test
+	void vThreadFactoryMappingShouldReturnTheRightOne() throws InterruptedException, ExecutionException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, NioIoHandler.newFactory())) {
+			var eventLoopScheduler = group
+					.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
+			assertSame(eventLoopScheduler.virtualThreadFactory(),
+					group.vThreadFactoryOf(eventLoopScheduler.ioEventLoop()));
 		}
 	}
 }
