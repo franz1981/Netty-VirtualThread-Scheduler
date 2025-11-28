@@ -1,7 +1,5 @@
 package io.netty.loom;
 
-import io.netty.util.internal.shaded.org.jctools.util.Pow2;
-
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
@@ -73,7 +71,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 		if (initialCapacity < 2) {
 			throw new IllegalArgumentException("Initial capacity must be 2 or more");
 		}
-		int p2capacity = Pow2.roundToPowerOfTwo(initialCapacity);
+		int p2capacity = roundToPowerOfTwo(initialCapacity);
 		// leave lower bit of mask clear
 		long mask = (p2capacity - 1) << 1;
 		// need extra element to point at next array
@@ -84,6 +82,18 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 		producerMask = mask;
 		consumerMask = mask;
 		soProducerLimit(mask); // we know it's all empty to start with
+	}
+
+	private static int roundToPowerOfTwo(final int value) {
+		if (value > 1 << 30) {
+			throw new IllegalArgumentException(
+					"There is no larger power of 2 int for value:" + value + " since it exceeds 2^31.");
+		}
+		if (value < 0) {
+			throw new IllegalArgumentException("Given value:" + value + ". Expecting value >= 0.");
+		}
+		final int nextPow2 = 1 << (32 - Integer.numberOfLeadingZeros(value - 1));
+		return nextPow2;
 	}
 
 	private void soProducerLimit(long v) {
