@@ -20,7 +20,7 @@
         <netty.version>4.2.7.Final</netty.version>
         <junit.version>6.0.1</junit.version>
         <jmh.version>1.37</jmh.version>
-        <java.version>26</java.version>
+        <java.version>27</java.version>
     </properties>
 
     <dependencyManagement>
