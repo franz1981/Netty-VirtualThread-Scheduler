@@ -93,9 +93,16 @@ public class EventLoopScheduler {
 		// and share it between the thread attachment and the SchedulingContext,
 		// enabling
 		// work-stealing to change it for both
-		return runnable -> NettyScheduler.newEventLoopScheduledThread(() -> ScopedValue
-				.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef))
-				.run(runnable), sharedRef);
+		var unstartedBuilder = Thread.ofVirtual();
+		// we're not enforcing a preferred carrier on purpose, despite we could - to prevent leaks to happen:
+		// once this scheduler is gone, but a virtual thread is still to complete, we would like to offload it
+		// to the default scheduler rather than trying to reuse this scheduler's carrier thread
+		return runnable -> unstartedBuilder.unstarted(() -> runWithContext(runnable, sharedRef), null, sharedRef);
+	}
+
+	private static void runWithContext(Runnable runnable, SharedRef sharedRef) {
+		ScopedValue.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef))
+				.run(runnable);
 	}
 
 	int externalContinuationsCount() {
