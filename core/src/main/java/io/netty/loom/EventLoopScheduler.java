@@ -94,9 +94,12 @@ public class EventLoopScheduler {
 		// enabling
 		// work-stealing to change it for both
 		var unstartedBuilder = Thread.ofVirtual();
-		// we're not enforcing a preferred carrier on purpose, despite we could - to prevent leaks to happen:
-		// once this scheduler is gone, but a virtual thread is still to complete, we would like to offload it
-		// to the default scheduler rather than trying to reuse this scheduler's carrier thread
+		// we're not enforcing a preferred carrier on purpose, despite we could - to
+		// prevent leaks to happen:
+		// once this scheduler is gone, but a virtual thread is still to complete, we
+		// would like to offload it
+		// to the default scheduler rather than trying to reuse this scheduler's carrier
+		// thread
 		return runnable -> unstartedBuilder.unstarted(() -> runWithContext(runnable, sharedRef), null, sharedRef);
 	}
 
