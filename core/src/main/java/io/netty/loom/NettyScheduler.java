@@ -117,10 +117,6 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 		jdkBuildinScheduler.onContinue(virtualThreadTask);
 	}
 
-	static Thread newEventLoopScheduledThread(Runnable task, SharedRef sharedRef) {
-		return Thread.VirtualThreadScheduler.newThread(task, sharedRef);
-	}
-
 	public static boolean perCarrierPollers() {
 		return ensureInstalled().perCarrierPollers;
 	}
