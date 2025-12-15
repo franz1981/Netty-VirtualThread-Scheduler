@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import io.netty.channel.*;
+import io.netty.channel.epoll.Epoll;
 import io.netty.channel.local.LocalIoHandler;
 import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.epoll.EpollServerSocketChannel;
@@ -63,8 +64,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		boolean isAvailable() {
 			return switch (this) {
 				case NIO -> true;
-				// TODO disable EPOLL due to https://github.com/netty/netty/issues/15922
-				case EPOLL -> false;
+				case EPOLL -> Epoll.isAvailable();
 				case IO_URING -> IoUring.isAvailable();
 				case LOCAL -> true;
 				default -> false;

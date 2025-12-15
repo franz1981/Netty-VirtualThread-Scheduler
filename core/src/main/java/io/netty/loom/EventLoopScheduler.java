@@ -83,7 +83,12 @@ public class EventLoopScheduler {
 		eventLoopThread = vThreadFactory
 				.newThread(() -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
 		ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
-				ioExecutor -> new AwakeAwareIoHandler(eventLoopIsRunning, ioHandlerFactory.newHandler(ioExecutor)));
+				ioExecutor -> new AwakeAwareIoHandler(eventLoopIsRunning, ioHandlerFactory.newHandler(ioExecutor))) {
+			@Override
+			public boolean canBlock() {
+				return runQueue.isEmpty();
+			}
+		};
 		carrierThread.start();
 	}
 
