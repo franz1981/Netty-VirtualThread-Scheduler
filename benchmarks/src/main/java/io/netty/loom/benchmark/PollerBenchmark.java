@@ -133,11 +133,31 @@ public class PollerBenchmark {
 			blockingReadTasks.add(task);
 			LockSupport.unpark(carrierParked);
 		};
-		readThreadFactory = Thread.ofVirtual().scheduler(Thread.VirtualThreadScheduler.adapt(readScheduler)).factory();
-		writeThreadFactory = Thread.ofVirtual().scheduler(Thread.VirtualThreadScheduler.adapt(task -> {
-			blockingWriteTasks.add(task);
-			LockSupport.unpark(carrierParked);
-		})).factory();
+		readThreadFactory = Thread.ofVirtual().scheduler(new Thread.VirtualThreadScheduler() {
+			@Override
+			public void onStart(Thread.VirtualThreadTask virtualThreadTask) {
+				readScheduler.execute(virtualThreadTask);
+			}
+
+			@Override
+			public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
+				readScheduler.execute(virtualThreadTask);
+			}
+		}).factory();
+		writeThreadFactory = Thread.ofVirtual().scheduler(new Thread.VirtualThreadScheduler() {
+
+			@Override
+			public void onStart(Thread.VirtualThreadTask virtualThreadTask) {
+				blockingWriteTasks.add(virtualThreadTask);
+				LockSupport.unpark(carrierParked);
+			}
+
+			@Override
+			public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
+				blockingWriteTasks.add(virtualThreadTask);
+				LockSupport.unpark(carrierParked);
+			}
+		}).factory();
 		clientIn = clientSocket.getInputStream();
 		serverOut = serverSocket.getOutputStream();
 		clientSocket.setTcpNoDelay(true);
