@@ -32,7 +32,7 @@
 	"remoteUser": "root",
 
 	// Forward any ports that might be needed for the example-echo server
-	"forwardPorts": [8080, 8443],
+	"forwardPorts": [8080],
 
 	// Container environment variables
 	"containerEnv": {
