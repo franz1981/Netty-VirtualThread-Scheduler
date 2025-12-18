@@ -36,7 +36,27 @@ See the runnable example and step-by-step instructions in the example module:
 
 ## About the Loom build used
 
-This work targets Project Loom features and was developed and tested against very recent OpenJDK / Loom builds. If you don't want to build OpenJDK yourself, a convenient set of prebuilt Loom-enabled JDK images is available from Shipilev's builds:
+This work targets Project Loom features and was developed and tested against very recent OpenJDK / Loom builds. 
+
+### Option 1: Dev Containers (Recommended for local development)
+
+The easiest way to get started is using the provided dev container configuration, which uses the same Shipilev Loom container image as our CI:
+
+1. Install [Docker](https://www.docker.com/products/docker-desktop) and [VS Code](https://code.visualstudio.com/)
+2. Install the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) in VS Code
+3. Open this repository in VS Code
+4. When prompted, click "Reopen in Container" (or run the command "Dev Containers: Reopen in Container")
+
+The dev container will automatically:
+- Use the `shipilev/openjdk:loom` Docker image with a fresh Loom build
+- Install Maven and other dependencies
+- Configure the Java environment
+
+No need to download or build JDK manually!
+
+### Option 2: Manual Loom JDK Setup
+
+If you don't want to use dev containers, you can manually set up a Loom JDK. A convenient set of prebuilt Loom-enabled JDK images is available from Shipilev's builds:
 
 - https://builds.shipilev.net/openjdk-jdk-loom/
 
