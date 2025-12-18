@@ -5,7 +5,7 @@
 	// Install Maven and other dependencies
 	"onCreateCommand": ["sh", "-c", "apt-get update && apt-get install -y maven git"],
 	
-	// Verify Java and Maven installation
+	// Display Java and Maven versions
 	"postCreateCommand": "java -version && mvn --version",
 
 	// Welcome message
