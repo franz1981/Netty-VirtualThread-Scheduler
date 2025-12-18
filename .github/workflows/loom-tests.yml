@@ -15,26 +15,15 @@ on:
 jobs:
   test-with-loom:
     runs-on: ubuntu-latest
+    container:
+      image: shipilev/openjdk:loom
 
     steps:
     - uses: actions/checkout@v6
     
-    - name: Download and setup Loom JDK
-      run: |
-        # Download the latest Loom build
-        wget -q https://builds.shipilev.net/openjdk-jdk-loom/openjdk-jdk-loom-linux-x86_64-server.tar.xz
-        
-        # Extract the archive
-        tar -xf openjdk-jdk-loom-linux-x86_64-server.tar.xz
-        
-        # Set JAVA_HOME for subsequent steps
-        echo "JAVA_HOME=$PWD/jdk" >> $GITHUB_ENV
-        echo "$PWD/jdk/bin" >> $GITHUB_PATH
-    
     - name: Verify Java version
       run: |
         java -version
-        echo "JAVA_HOME=$JAVA_HOME"
     
     - name: Verify Java version in Maven
       run: |
