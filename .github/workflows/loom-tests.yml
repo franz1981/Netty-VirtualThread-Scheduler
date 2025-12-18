@@ -21,6 +21,11 @@ jobs:
     steps:
     - uses: actions/checkout@v6
     
+    - name: Install Maven
+      run: |
+        apt-get update
+        apt-get install -y maven
+    
     - name: Verify Java version
       run: |
         java -version
