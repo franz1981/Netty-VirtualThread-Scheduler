@@ -10,19 +10,13 @@
 				"vscjava.vscode-maven"
 			],
 			"settings": {
-				"java.configuration.runtimes": [
-					{
-						"name": "JavaSE-27",
-						"path": "/usr/lib/jvm/java",
-						"default": true
-					}
-				]
+				"java.jdt.ls.java.home": "/opt/jdk"
 			}
 		}
 	},
 
 	// Install Maven and other dependencies
-	"onCreateCommand": "apt-get update && apt-get install -y maven git",
+	"onCreateCommand": ["sh", "-c", "apt-get update && apt-get install -y maven git"],
 	
 	// Set the default shell
 	"postCreateCommand": "java -version && mvn --version",
