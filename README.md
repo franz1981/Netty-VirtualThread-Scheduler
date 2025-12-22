@@ -93,5 +93,11 @@ java -jar target/benchmarks.jar
 - Project Loom (OpenJDK): https://openjdk.org/projects/loom/
 - Netty Project: https://netty.io/
 
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+All source files include the Apache License header, and license compliance is enforced via the Spotless Maven plugin during the build process.
+
 ---
 For more details, see the source code and benchmark results in the respective modules.
