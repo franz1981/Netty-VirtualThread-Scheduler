@@ -36,7 +36,39 @@ See the runnable example and step-by-step instructions in the example module:
 
 ## About the Loom build used
 
-This work targets Project Loom features and was developed and tested against very recent OpenJDK / Loom builds. If you don't want to build OpenJDK yourself, a convenient set of prebuilt Loom-enabled JDK images is available from Shipilev's builds:
+This work targets Project Loom features and was developed and tested against very recent OpenJDK / Loom builds. 
+
+### Option 1: Dev Containers (Recommended for local development)
+
+The easiest way to get started is using the provided dev container configuration, which uses the same Shipilev Loom container image as our CI.
+
+#### Using with VS Code
+
+1. Install [Docker](https://www.docker.com/products/docker-desktop) and [VS Code](https://code.visualstudio.com/)
+2. Install the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) in VS Code
+3. Open this repository in VS Code
+4. When prompted, click "Reopen in Container" (or run the command "Dev Containers: Reopen in Container")
+
+#### Using with IntelliJ IDEA
+
+1. Install [Docker](https://www.docker.com/products/docker-desktop) and [IntelliJ IDEA](https://www.jetbrains.com/idea/)
+2. Open this repository in IntelliJ IDEA
+3. IDEA will detect the `.devcontainer/devcontainer.json` configuration
+4. Click "Create Dev Container and Mount Sources" when prompted (or go to **File > Remote Development > Dev Containers**)
+
+#### What the dev container provides
+
+The dev container will automatically:
+- Use the `shipilev/openjdk:loom` Docker image with a fresh Loom build
+- Install Maven and other dependencies
+- Configure the Java environment (JAVA_HOME set to `/opt/jdk`)
+- Forward port 8080 for the example-echo server
+
+No need to download or build JDK manually!
+
+### Option 2: Manual Loom JDK Setup
+
+If you don't want to use dev containers, you can manually set up a Loom JDK. A convenient set of prebuilt Loom-enabled JDK images is available from Shipilev's builds:
 
 - https://builds.shipilev.net/openjdk-jdk-loom/
 

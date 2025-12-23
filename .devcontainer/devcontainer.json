@@ -1,0 +1,42 @@
+{
+	"name": "Netty VirtualThread Scheduler (Loom)",
+	"image": "shipilev/openjdk:loom",
+	
+	// Install Maven and other dependencies
+	"onCreateCommand": ["sh", "-c", "apt-get update && apt-get install -y maven git"],
+	
+	// Display Java and Maven versions
+	"postCreateCommand": "java -version && mvn --version",
+
+	// Welcome message
+	"postStartCommand": "echo 'Dev container ready! Java and Maven are configured.'",
+
+	// Mount the workspace
+	"workspaceFolder": "/workspace",
+	"workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+
+	// Run as root to allow apt-get operations
+	"remoteUser": "root",
+
+	// Forward any ports that might be needed for the example-echo server
+	"forwardPorts": [8080],
+
+	// Container environment variables
+	"containerEnv": {
+		"MAVEN_OPTS": "-Xmx1024m",
+		"JAVA_HOME": "/opt/jdk"
+	},
+
+	// Editor-specific customizations (optional)
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"vscjava.vscode-java-pack",
+				"vscjava.vscode-maven"
+			],
+			"settings": {
+				"java.jdt.ls.java.home": "/opt/jdk"
+			}
+		}
+	}
+}
