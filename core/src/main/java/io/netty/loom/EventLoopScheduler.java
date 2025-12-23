@@ -1,17 +1,16 @@
 /*
- * Copyright © 2024 Francesco Nigro (nigro.fra@gmail.com)
+ * Copyright 2025 The Netty VirtualThread Scheduler Project
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * The Netty VirtualThread Scheduler Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software distributed under the
+ * License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
  */
 package io.netty.loom;
 
@@ -98,15 +97,34 @@ public class EventLoopScheduler {
 		eventLoopThread = vThreadFactory
 				.newThread(() -> FastThreadLocalThread.runWithFastThreadLocal(this::nettyEventLoop));
 		ioEventLoop = new ManualIoEventLoop(parent, eventLoopThread,
-				ioExecutor -> new AwakeAwareIoHandler(eventLoopIsRunning, ioHandlerFactory.newHandler(ioExecutor)));
+				ioExecutor -> new AwakeAwareIoHandler(eventLoopIsRunning, ioHandlerFactory.newHandler(ioExecutor))) {
+			@Override
+			public boolean canBlock() {
+				return runQueue.isEmpty();
+			}
+		};
 		carrierThread.start();
 	}
 
 	private static ThreadFactory newEventLoopSchedulerFactory(SharedRef sharedRef) {
-		var rawVTFactory = Thread.ofVirtual().attach(sharedRef).factory();
-		return runnable -> rawVTFactory.newThread(() -> ScopedValue
-				.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef))
-				.run(runnable));
+		// in the future we could create a SchedulerAssignment object a with modifiable
+		// SharedRef into
+		// and share it between the thread attachment and the SchedulingContext,
+		// enabling
+		// work-stealing to change it for both
+		var unstartedBuilder = Thread.ofVirtual();
+		// we're not enforcing a preferred carrier on purpose, despite we could - to
+		// prevent leaks to happen:
+		// once this scheduler is gone, but a virtual thread is still to complete, we
+		// would like to offload it
+		// to the default scheduler rather than trying to reuse this scheduler's carrier
+		// thread
+		return runnable -> unstartedBuilder.unstarted(() -> runWithContext(runnable, sharedRef), null, sharedRef);
+	}
+
+	private static void runWithContext(Runnable runnable, SharedRef sharedRef) {
+		ScopedValue.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef))
+				.run(runnable);
 	}
 
 	int externalContinuationsCount() {

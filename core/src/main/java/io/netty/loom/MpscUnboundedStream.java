@@ -1,21 +1,18 @@
 /*
- * Copyright © 2024 Francesco Nigro (nigro.fra@gmail.com)
+ * Copyright 2025 The Netty VirtualThread Scheduler Project
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * The Netty VirtualThread Scheduler Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software distributed under the
+ * License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
  */
 package io.netty.loom;
-
-import io.netty.util.internal.shaded.org.jctools.util.Pow2;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -88,7 +85,7 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 		if (initialCapacity < 2) {
 			throw new IllegalArgumentException("Initial capacity must be 2 or more");
 		}
-		int p2capacity = Pow2.roundToPowerOfTwo(initialCapacity);
+		int p2capacity = roundToPowerOfTwo(initialCapacity);
 		// leave lower bit of mask clear
 		long mask = (p2capacity - 1) << 1;
 		// need extra element to point at next array
@@ -99,6 +96,18 @@ public class MpscUnboundedStream<E> implements AutoCloseable {
 		producerMask = mask;
 		consumerMask = mask;
 		soProducerLimit(mask); // we know it's all empty to start with
+	}
+
+	private static int roundToPowerOfTwo(final int value) {
+		if (value > 1 << 30) {
+			throw new IllegalArgumentException(
+					"There is no larger power of 2 int for value:" + value + " since it exceeds 2^31.");
+		}
+		if (value < 0) {
+			throw new IllegalArgumentException("Given value:" + value + ". Expecting value >= 0.");
+		}
+		final int nextPow2 = 1 << (32 - Integer.numberOfLeadingZeros(value - 1));
+		return nextPow2;
 	}
 
 	private void soProducerLimit(long v) {

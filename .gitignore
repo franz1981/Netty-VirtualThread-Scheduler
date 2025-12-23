@@ -1,5 +1,14 @@
 /netty-virtualthread-parent.iml
+
+# Maven build artifacts
 target/
-.idea/
 *.iml
+.idea/
+
+# Eclipse project files
+.project
+.classpath
+.settings/
+
+# Mac
 .DS_Store

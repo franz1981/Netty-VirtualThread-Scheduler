@@ -1,23 +1,23 @@
 /*
- * Copyright © 2024 Francesco Nigro (nigro.fra@gmail.com)
+ * Copyright 2025 The Netty VirtualThread Scheduler Project
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * The Netty VirtualThread Scheduler Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at:
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software distributed under the
+ * License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
  */
 package io.netty.loom;
 
-import java.util.ArrayList;
+import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import io.netty.channel.IoEventLoop;
@@ -28,7 +28,8 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 
 	private static final int RESUMED_CONTINUATIONS_EXPECTED_COUNT = Integer
 			.getInteger("io.netty.loom.resumed.continuations", 1024);
-	private ArrayList<EventLoopScheduler> eventLoopSchedulers;
+	private Map<IoEventLoop, EventLoopScheduler> eventSchedulerMappings;
+	private List<EventLoopScheduler> schedulers;
 	private AtomicLong nextScheduler;
 	private ThreadFactory threadFactory;
 
@@ -43,6 +44,19 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 			throw new IllegalStateException(
 					"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler is required to use VirtualMultithreadIoEventLoopGroup");
 		}
+	}
+
+	/**
+	 * Return a {@link ThreadFactory} that creates virtual threads tied to the
+	 * specified {@link IoEventLoop}'s {@link EventLoopScheduler}. Returns
+	 * {@code null} if the provided event loop is not associated with this group.
+	 */
+	public ThreadFactory vThreadFactoryOf(IoEventLoop eventLoop) {
+		EventLoopScheduler scheduler = eventSchedulerMappings.get(eventLoop);
+		if (scheduler == null) {
+			return null;
+		}
+		return scheduler.virtualThreadFactory();
 	}
 
 	/**
@@ -74,15 +88,16 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 		}
 		// assign a random one
 		int schedulerIndex = (int) (nextScheduler.getAndIncrement() % executorCount());
-		return eventLoopSchedulers.get(schedulerIndex).virtualThreadFactory();
+		return schedulers.get(schedulerIndex).virtualThreadFactory();
 	}
 
 	@Override
 	protected IoEventLoop newChild(Executor executor, IoHandlerFactory ioHandlerFactory,
 			@SuppressWarnings("unused") Object... args) {
 		validateNettyAvailability();
-		if (eventLoopSchedulers == null) {
-			eventLoopSchedulers = new ArrayList<>(executorCount());
+		if (eventSchedulerMappings == null) {
+			eventSchedulerMappings = new IdentityHashMap<>(executorCount());
+			schedulers = new ArrayList<>(executorCount());
 			nextScheduler = new AtomicLong();
 		}
 		if (threadFactory == null) {
@@ -90,12 +105,17 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 		}
 		var customScheduler = new EventLoopScheduler(this, threadFactory, ioHandlerFactory,
 				RESUMED_CONTINUATIONS_EXPECTED_COUNT);
-		eventLoopSchedulers.add(customScheduler);
+		eventSchedulerMappings.put(customScheduler.ioEventLoop(), customScheduler);
+		schedulers.add(customScheduler);
 		return customScheduler.ioEventLoop();
 	}
 
 	@Override
 	public void close() {
-		shutdownGracefully();
+		try {
+			shutdownGracefully(0, 0, TimeUnit.SECONDS).get();
+		} catch (Throwable _) {
+
+		}
 	}
 }

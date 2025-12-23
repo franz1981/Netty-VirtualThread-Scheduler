@@ -8,39 +8,36 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  schedule:
+    # Run nightly at 2:00 AM UTC to detect breaking changes in Loom JDK
+    - cron: '0 2 * * *'
 
 jobs:
   test-with-loom:
     runs-on: ubuntu-latest
+    container:
+      image: shipilev/openjdk:loom
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     
-    - name: Download and setup Loom JDK
+    - name: Install Maven
       run: |
-        # Download the latest Loom build
-        wget -q https://builds.shipilev.net/openjdk-jdk-loom/openjdk-jdk-loom-linux-x86_64-server.tar.xz
-        
-        # Extract the archive
-        tar -xf openjdk-jdk-loom-linux-x86_64-server.tar.xz
-        
-        # Set JAVA_HOME for subsequent steps
-        echo "JAVA_HOME=$PWD/jdk" >> $GITHUB_ENV
-        echo "$PWD/jdk/bin" >> $GITHUB_PATH
+        apt-get update
+        apt-get install -y maven
     
     - name: Verify Java version
       run: |
         java -version
-        echo "JAVA_HOME=$JAVA_HOME"
     
     - name: Verify Java version in Maven
       run: |
         mvn --version
     
     - name: Cache Maven packages
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
-        path: ~/.m2
+        path: /github/home/.m2
         key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
         restore-keys: ${{ runner.os }}-m2
     
