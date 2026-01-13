@@ -17,8 +17,6 @@ EXPOSE 9090
 
 # Run the server
 CMD java ${JVM_ARGS} \
-    --enable-preview \
-    -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler \
     -DBINARY_PORT=${BINARY_PORT} \
     -DTHINK_TIME_MS=${THINK_TIME_MS} \
     -DUSER_COUNT=${USER_COUNT} \

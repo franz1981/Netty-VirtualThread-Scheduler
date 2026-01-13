@@ -88,13 +88,24 @@ echo ""
 
 jbang wrk@hyperfoil -c $CONNECTIONS -t 2 -d ${DURATION}s http://localhost:$HTTP_PORT/
 
-# Show container stats
-echo ""
-echo "======================================"
-echo "Container Resource Usage"
-echo "======================================"
-docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" \
-    $(docker compose -f docker/docker-compose.yml ps -q)
+# Get container PID for monitoring
+HTTP_CONTAINER_ID=$(docker compose -f docker/docker-compose.yml ps -q http-server-custom http-server-default 2>/dev/null | head -1)
+if [ -n "$HTTP_CONTAINER_ID" ]; then
+    HTTP_PID=$(docker inspect -f '{{.State.Pid}}' $HTTP_CONTAINER_ID 2>/dev/null)
+    if [ -n "$HTTP_PID" ] && [ "$HTTP_PID" != "0" ]; then
+        echo ""
+        echo "======================================"
+        echo "HTTP Server Resource Usage (from host)"
+        echo "======================================"
+        if command -v pidstat >/dev/null 2>&1; then
+            echo "PID: $HTTP_PID"
+            pidstat -p $HTTP_PID 1 3
+        else
+            echo "pidstat not available. Install sysstat package for detailed metrics."
+            ps -p $HTTP_PID -o pid,ppid,%cpu,%mem,vsz,rss,comm
+        fi
+    fi
+fi
 
 # Cleanup
 echo ""

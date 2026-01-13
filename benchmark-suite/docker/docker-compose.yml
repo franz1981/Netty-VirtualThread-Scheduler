@@ -20,6 +20,9 @@ services:
       dockerfile: docker/Dockerfile.http-server
     container_name: benchmark-http-server-custom
     network_mode: host
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
     environment:
       - HTTP_PORT=8080
       - BACKEND_HOST=localhost
@@ -37,6 +40,9 @@ services:
       dockerfile: docker/Dockerfile.http-server
     container_name: benchmark-http-server-default
     network_mode: host
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
     environment:
       - HTTP_PORT=8081
       - BACKEND_HOST=localhost

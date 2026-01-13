@@ -35,11 +35,9 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
-import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadFactory;
 
@@ -54,8 +52,7 @@ public class HttpServer {
 	private static final String DEFAULT_BACKEND_HOST = "localhost";
 	private static final int DEFAULT_BACKEND_PORT = 9090;
 	private static final String DEFAULT_SCHEDULER = "custom"; // or "default"
-
-	private static final AttributeKey<BinaryClient> BINARY_CLIENT_KEY = AttributeKey.valueOf("binaryClient");
+	private static final int INITIAL_BUFFER_CAPACITY = 4096;
 
 	public static void main(String[] args) throws Exception {
 		int port = getIntProperty("HTTP_PORT", DEFAULT_PORT);
@@ -94,75 +91,8 @@ public class HttpServer {
 						@Override
 						protected void initChannel(SocketChannel ch) {
 							ch.pipeline().addLast(new HttpServerCodec());
-							ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
-								@Override
-								public void channelRead(ChannelHandlerContext ctx, Object msg) {
-									if (msg instanceof HttpRequest) {
-										HttpRequest request = (HttpRequest) msg;
-
-										// Get or create the binary client for this connection
-										BinaryClient binaryClient = ctx.channel().attr(BINARY_CLIENT_KEY).get();
-										if (binaryClient == null) {
-											binaryClient = new BinaryClient(backendHost, backendPort);
-											ctx.channel().attr(BINARY_CLIENT_KEY).set(binaryClient);
-										}
-
-										BinaryClient finalBinaryClient = binaryClient;
-
-										// Offload to virtual thread
-										virtualThreadFactory.newThread(() -> {
-											try {
-												// Issue blocking request to binary server
-												byte[] binaryData = finalBinaryClient.fetchUserData();
-
-												// Parse binary data into User instances
-												List<User> users = parseBinaryData(binaryData);
-
-												// Serialize to JSON using Jackson
-												ByteBuf content = ctx.alloc().buffer();
-												try (ByteBufOutputStream out = new ByteBufOutputStream(content)) {
-													objectMapper.writeValue(out, users);
-												}
-
-												// Create and send HTTP response
-												var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
-														HttpResponseStatus.OK, content);
-												response.headers()
-														.set(HttpHeaderNames.CONTENT_TYPE,
-																HttpHeaderValues.APPLICATION_JSON)
-														.set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes())
-														.set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
-
-												ctx.writeAndFlush(response);
-											} catch (Exception e) {
-												e.printStackTrace();
-												sendErrorResponse(ctx, e);
-											}
-										}).start();
-
-										// Release the request immediately
-										ReferenceCountUtil.release(msg);
-									} else {
-										ReferenceCountUtil.release(msg);
-									}
-								}
-
-								@Override
-								public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-									// Close binary client when connection closes
-									BinaryClient binaryClient = ctx.channel().attr(BINARY_CLIENT_KEY).get();
-									if (binaryClient != null) {
-										binaryClient.close();
-									}
-									super.channelInactive(ctx);
-								}
-
-								@Override
-								public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-									cause.printStackTrace();
-									ctx.close();
-								}
-							});
+							ch.pipeline().addLast(new HttpRequestHandler(backendHost, backendPort, 
+									virtualThreadFactory, objectMapper));
 						}
 					});
 
@@ -175,23 +105,92 @@ public class HttpServer {
 		}
 	}
 
-	private static List<User> parseBinaryData(byte[] data) {
-		if (data.length < 4) {
-			return new ArrayList<>();
+	/**
+	 * Channel handler that processes HTTP requests using virtual threads.
+	 * Each handler instance is created per connection, so instance fields are connection-scoped.
+	 */
+	private static class HttpRequestHandler extends ChannelInboundHandlerAdapter {
+		private final String backendHost;
+		private final int backendPort;
+		private final ThreadFactory virtualThreadFactory;
+		private final ObjectMapper objectMapper;
+		
+		// Connection-scoped state
+		private BinaryClient binaryClient;
+		private int lastBufferSize = INITIAL_BUFFER_CAPACITY;
+
+		HttpRequestHandler(String backendHost, int backendPort, ThreadFactory virtualThreadFactory, 
+				ObjectMapper objectMapper) {
+			this.backendHost = backendHost;
+			this.backendPort = backendPort;
+			this.virtualThreadFactory = virtualThreadFactory;
+			this.objectMapper = objectMapper;
 		}
 
-		// Read count (big-endian)
-		int count = ((data[0] & 0xFF) << 24) | ((data[1] & 0xFF) << 16) | ((data[2] & 0xFF) << 8) | (data[3] & 0xFF);
+		@Override
+		public void channelRead(ChannelHandlerContext ctx, Object msg) {
+			if (msg instanceof HttpRequest) {
+				HttpRequest request = (HttpRequest) msg;
 
-		List<User> users = new ArrayList<>(count);
-		for (int i = 0; i < count && (4 + (i + 1) * 4) <= data.length; i++) {
-			int offset = 4 + i * 4;
-			int id = ((data[offset] & 0xFF) << 24) | ((data[offset + 1] & 0xFF) << 16)
-					| ((data[offset + 2] & 0xFF) << 8) | (data[offset + 3] & 0xFF);
-			users.add(new User(id));
+				// Create binary client on first request
+				if (binaryClient == null) {
+					binaryClient = new BinaryClient(backendHost, backendPort);
+				}
+
+				// Offload to virtual thread
+				virtualThreadFactory.newThread(() -> {
+					try {
+						// Issue blocking request to binary server
+						byte[] binaryData = binaryClient.fetchUserData();
+
+						// Parse binary data into User instances
+						List<User> users = BinaryProtocol.parseBinaryData(binaryData);
+
+						// Serialize to JSON using Jackson with cached buffer size
+						ByteBuf content = ctx.alloc().buffer(lastBufferSize);
+						try (ByteBufOutputStream out = new ByteBufOutputStream(content)) {
+							objectMapper.writeValue(out, users);
+						}
+						
+						// Update cached buffer size for next request
+						lastBufferSize = content.readableBytes();
+
+						// Create and send HTTP response
+						var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
+								HttpResponseStatus.OK, content);
+						response.headers()
+								.set(HttpHeaderNames.CONTENT_TYPE, HttpHeaderValues.APPLICATION_JSON)
+								.set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes())
+								.set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
+
+						ctx.writeAndFlush(response);
+					} catch (Exception e) {
+						e.printStackTrace();
+						sendErrorResponse(ctx, e);
+					}
+				}).start();
+
+				// Release the request immediately
+				ReferenceCountUtil.release(msg);
+			} else {
+				ReferenceCountUtil.release(msg);
+			}
 		}
 
-		return users;
+		@Override
+		public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+			// Close binary client when connection closes
+			if (binaryClient != null) {
+				binaryClient.close();
+			}
+			super.channelInactive(ctx);
+		}
+
+		@Override
+		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+			cause.printStackTrace();
+			ctx.close();
+		}
 	}
 
 	private static void sendErrorResponse(ChannelHandlerContext ctx, Exception e) {

@@ -50,7 +50,7 @@ public class BinaryServer {
 		System.out.println("User count: " + userCount);
 
 		// Pre-generate the response to make the server very light
-		byte[] cachedResponse = generateUserData(userCount);
+		byte[] cachedResponse = BinaryProtocol.generateUserData(userCount);
 
 		// Use single event loop for minimal overhead
 		try (var group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory())) {
@@ -98,30 +98,6 @@ public class BinaryServer {
 
 			ch.closeFuture().sync();
 		}
-	}
-
-	/**
-	 * Generate binary data representing N User instances.
-	 * Format: 4-byte count followed by N * 4-byte user IDs.
-	 */
-	private static byte[] generateUserData(int count) {
-		byte[] data = new byte[4 + count * 4]; // 4 bytes for count + 4 bytes per user
-		// Write count (big-endian)
-		data[0] = (byte) (count >>> 24);
-		data[1] = (byte) (count >>> 16);
-		data[2] = (byte) (count >>> 8);
-		data[3] = (byte) count;
-
-		// Write user IDs
-		for (int i = 0; i < count; i++) {
-			int offset = 4 + i * 4;
-			data[offset] = (byte) (i >>> 24);
-			data[offset + 1] = (byte) (i >>> 16);
-			data[offset + 2] = (byte) (i >>> 8);
-			data[offset + 3] = (byte) i;
-		}
-
-		return data;
 	}
 
 	private static int getIntProperty(String name, int defaultValue) {
