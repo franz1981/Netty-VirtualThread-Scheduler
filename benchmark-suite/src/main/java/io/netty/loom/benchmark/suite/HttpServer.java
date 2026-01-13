@@ -149,7 +149,7 @@ public class HttpServer {
 						// Serialize to JSON using Jackson with cached buffer size
 						ByteBuf content = ctx.alloc().buffer(lastBufferSize);
 						try (ByteBufOutputStream out = new ByteBufOutputStream(content)) {
-							objectMapper.writeValue(out, users);
+							objectMapper.writeValue((java.io.OutputStream) out, users);
 						}
 						
 						// Update cached buffer size for next request
