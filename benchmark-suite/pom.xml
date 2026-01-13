@@ -14,7 +14,7 @@
 
     <properties>
         <jackson.version>2.18.2</jackson.version>
-        <httpclient.version>5.4.1</httpclient.version>
+        <httpclient.version>5.4.3</httpclient.version>
     </properties>
 
     <dependencies>
