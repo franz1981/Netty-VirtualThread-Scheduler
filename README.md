@@ -108,13 +108,22 @@ This project uses Maven for build and dependency management.
 mvn clean install
 ```
 
-2. Run the benchmarks (optional):
+2. Run the JMH microbenchmarks (optional):
 
 ```sh
 cd benchmarks
 mvn clean install
 java -jar target/benchmarks.jar
 ```
+
+3. Run the comprehensive benchmark suite (recommended for scheduler comparison):
+
+```sh
+cd benchmark-suite/scripts
+./benchmark.sh
+```
+
+See the [benchmark-suite README](benchmark-suite/README.md) for detailed instructions on comparing the custom scheduler against the default scheduler.
 
 ## Prerequisites
 - Maven 3.6+
