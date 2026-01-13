@@ -7,15 +7,23 @@
 cd /path/to/Netty-VirtualThread-Scheduler
 mvn clean install -DskipTests
 
-# 2. Run a quick benchmark
+# 2. Run smoke test (5 seconds, validates suite works)
 cd benchmark-suite/scripts
+./smoke-test.sh
+
+# 3. Run a quick benchmark
 ./benchmark.sh
 
-# 3. Compare schedulers
+# 4. Compare schedulers
 ./compare.sh 60 20
 ```
 
 ## Common Commands
+
+### Run smoke test (fast validation)
+```bash
+./smoke-test.sh
+```
 
 ### Run with custom scheduler (default)
 ```bash

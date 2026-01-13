@@ -86,6 +86,21 @@ This creates two executable JARs:
 
 ## Running Locally
 
+### Smoke Test (Quick Validation)
+
+Run a quick 5-second smoke test to verify the suite works correctly:
+
+```bash
+cd benchmark-suite/scripts
+./smoke-test.sh
+```
+
+This script:
+- Tests both custom and default schedulers
+- Runs for 5 seconds each
+- Verifies throughput is produced
+- Suitable for CI/CD validation
+
 ### Quick Start
 
 Run a benchmark with default settings (custom scheduler):
