@@ -1,0 +1,18 @@
+# Maven build outputs
+target/
+dependency-reduced-pom.xml
+
+# Benchmark results
+scripts/results/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db

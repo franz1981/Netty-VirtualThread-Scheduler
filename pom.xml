@@ -13,6 +13,7 @@
         <module>core</module>
         <module>benchmarks</module>
         <module>example-echo</module>
+        <module>benchmark-suite</module>
     </modules>
 
     <properties>

@@ -1,0 +1,29 @@
+# Dockerfile for HTTP Server
+FROM shipilev/openjdk:loom
+
+WORKDIR /app
+
+# Copy the jar file
+COPY target/http-server.jar /app/http-server.jar
+
+# Environment variables for configuration
+ENV HTTP_PORT=8080
+ENV BACKEND_HOST=binary-server
+ENV BACKEND_PORT=9090
+ENV SCHEDULER=custom
+ENV EVENT_LOOPS=2
+ENV JVM_ARGS="-Xmx1g -Xms1g -XX:+UseParallelGC"
+
+# Expose HTTP port
+EXPOSE 8080
+
+# Run the server
+CMD java ${JVM_ARGS} \
+    --enable-preview \
+    -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler \
+    -DHTTP_PORT=${HTTP_PORT} \
+    -DBACKEND_HOST=${BACKEND_HOST} \
+    -DBACKEND_PORT=${BACKEND_PORT} \
+    -DSCHEDULER=${SCHEDULER} \
+    -DEVENT_LOOPS=${EVENT_LOOPS} \
+    -jar /app/http-server.jar

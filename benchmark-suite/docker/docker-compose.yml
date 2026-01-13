@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  binary-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.binary-server
+    container_name: benchmark-binary-server
+    network_mode: host
+    environment:
+      - BINARY_PORT=9090
+      - THINK_TIME_MS=0
+      - USER_COUNT=100
+    cpuset: "2"
+    restart: unless-stopped
+
+  http-server-custom:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.http-server
+    container_name: benchmark-http-server-custom
+    network_mode: host
+    environment:
+      - HTTP_PORT=8080
+      - BACKEND_HOST=localhost
+      - BACKEND_PORT=9090
+      - SCHEDULER=custom
+      - EVENT_LOOPS=2
+    cpuset: "0,1"
+    depends_on:
+      - binary-server
+    restart: unless-stopped
+
+  http-server-default:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.http-server
+    container_name: benchmark-http-server-default
+    network_mode: host
+    environment:
+      - HTTP_PORT=8081
+      - BACKEND_HOST=localhost
+      - BACKEND_PORT=9090
+      - SCHEDULER=default
+      - EVENT_LOOPS=2
+    cpuset: "0,1"
+    depends_on:
+      - binary-server
+    restart: unless-stopped
+    profiles:
+      - compare

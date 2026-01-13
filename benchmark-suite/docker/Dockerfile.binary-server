@@ -1,0 +1,25 @@
+# Dockerfile for Binary Server
+FROM shipilev/openjdk:loom
+
+WORKDIR /app
+
+# Copy the jar file
+COPY target/binary-server.jar /app/binary-server.jar
+
+# Environment variables for configuration
+ENV BINARY_PORT=9090
+ENV THINK_TIME_MS=0
+ENV USER_COUNT=100
+ENV JVM_ARGS="-Xmx512m -Xms512m -XX:+UseParallelGC"
+
+# Expose binary port
+EXPOSE 9090
+
+# Run the server
+CMD java ${JVM_ARGS} \
+    --enable-preview \
+    -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler \
+    -DBINARY_PORT=${BINARY_PORT} \
+    -DTHINK_TIME_MS=${THINK_TIME_MS} \
+    -DUSER_COUNT=${USER_COUNT} \
+    -jar /app/binary-server.jar
