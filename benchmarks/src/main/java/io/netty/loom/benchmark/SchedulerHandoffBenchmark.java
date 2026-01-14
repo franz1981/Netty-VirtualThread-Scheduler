@@ -69,8 +69,11 @@ public class SchedulerHandoffBenchmark {
 
 	Supplier<ThreadFactory> threadFactory;
 
+	record RequestData(byte[] request, byte[] response) {
+	}
+
 	// let's make
-	Queue<byte[]> requestQueue;
+	Queue<RequestData> requestData;
 
 	private static final CopyOnWriteArrayList<Histogram> histograms = new CopyOnWriteArrayList<>();
 
@@ -102,9 +105,9 @@ public class SchedulerHandoffBenchmark {
 			var sameFactory = Thread.ofVirtual().factory();
 			threadFactory = () -> sameFactory;
 		}
-		requestQueue = new MpscArrayQueue<>(Pow2.roundToPowerOfTwo(concurrency));
+		requestData = new MpscArrayQueue<>(Pow2.roundToPowerOfTwo(concurrency));
 		for (int i = 0; i < concurrency; i++) {
-			requestQueue.offer(new byte[requestBytes]);
+			requestData.offer(new RequestData(new byte[requestBytes], new byte[responseBytes]));
 		}
 	}
 
@@ -112,33 +115,27 @@ public class SchedulerHandoffBenchmark {
 	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
 			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
 			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3",
-			"-DelThreads=4"})
+			"-DelThreads=1"})
 	public void customScheduler(Blackhole bh) throws InterruptedException {
 		doRequest(bh);
 	}
 
 	@Benchmark
 	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
-			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false", "-DelThreads=4",
-			"-Djdk.virtualThreadScheduler.parallelism=4"})
-	public void defaultSchedulerFourFjThreads(Blackhole bh) throws InterruptedException {
-		doRequest(bh);
-	}
-
-	@Benchmark
-	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
-			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false", "-DelThreads=2",
-			"-Djdk.virtualThreadScheduler.parallelism=2"})
-	public void defaultSchedulerTwoFjThreads(Blackhole bh) throws InterruptedException {
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false", "-DelThreads=1",
+			"-Djdk.virtualThreadScheduler.parallelism=1"})
+	public void defaultScheduler(Blackhole bh) throws InterruptedException {
 		doRequest(bh);
 	}
 
 	// just burn a full core on this!
 	private void doRequest(Blackhole bh) {
-		byte[] request = spinWaitRequest();
+		var data = spinWaitRequest();
 		long startRequest = System.nanoTime();
 		// write some data into the request
-		Arrays.fill(request, (byte) 1);
+		Arrays.fill(data.request, (byte) 1);
+		byte[] request = data.request;
+		byte[] response = data.response;
 		// this is handing off this to the loom scheduler
 		var el = group.next();
 		el.execute(() -> {
@@ -149,7 +146,7 @@ public class SchedulerHandoffBenchmark {
 			}
 			// off-load the actual (blocking) processing to a virtual thread
 			threadFactory.get().newThread(() -> {
-				blockingProcess(bh, el, startRequest, request);
+				blockingProcess(bh, el, startRequest, data, response);
 			}).start();
 		});
 	}
@@ -157,7 +154,7 @@ public class SchedulerHandoffBenchmark {
 	// this is required to make sure NONE of the fine grain ops like writeByte won't
 	// be inlined
 	@CompilerControl(CompilerControl.Mode.DONT_INLINE)
-	private void blockingProcess(Blackhole bh, IoEventLoop el, long startRequest, byte[] request) {
+	private void blockingProcess(Blackhole bh, IoEventLoop el, long startRequest, RequestData data, byte[] response) {
 		try {
 			// simulate processing time:
 			// NOTE: if we're using sleep here, the built-in scheduler will use the FJ
@@ -165,15 +162,12 @@ public class SchedulerHandoffBenchmark {
 			// but the custom scheduler, nope, see
 			// https://github.com/openjdk/loom/blob/3d9e866f60bdebc55b59b9fd40a4898002c35e96/src/java.base/share/classes/java/lang/VirtualThread.java#L1629
 			TimeUnit.MICROSECONDS.sleep(serviceTimeUs);
-			// allocate a response
-			int responseBytes = this.responseBytes;
-			ByteBuf responseData = ByteBufAllocator.DEFAULT.buffer(responseBytes);
 			// write the response content
 			for (int i = 0; i < responseBytes; i++) {
-				responseData.writeByte(42);
+				response[i] = (byte) 42;
 			}
 			el.execute(() -> {
-				nonBlockingCompleteProcessing(bh, startRequest, request, responseData);
+				nonBlockingCompleteProcessing(bh, startRequest, data, response);
 			});
 		} catch (Throwable e) {
 			throw new RuntimeException(e);
@@ -183,26 +177,25 @@ public class SchedulerHandoffBenchmark {
 	// this is required to make sure NONE of the fine grain ops like writeByte won't
 	// be inlined
 	@CompilerControl(CompilerControl.Mode.DONT_INLINE)
-	private void nonBlockingCompleteProcessing(Blackhole bh, long startRequest, byte[] request, ByteBuf responseData) {
+	private void nonBlockingCompleteProcessing(Blackhole bh, long startRequest, RequestData data, byte[] response) {
 		// read the response
 		int toRead = this.responseBytes;
 		for (int i = 0; i < toRead; i++) {
-			bh.consume(responseData.getByte(i));
+			bh.consume(response[i]);
 		}
-		responseData.release();
 		// record RTT
 		long rttNs = System.nanoTime() - startRequest;
 		Histogram histogram = rttHistogram.get();
 		histogram.recordValue(rttNs);
 		// offer it just at the end
-		requestQueue.add(request);
+		requestData.add(data);
 	}
 
-	private byte[] spinWaitRequest() {
-		byte[] request = requestQueue.poll();
+	private RequestData spinWaitRequest() {
+		var request = requestData.poll();
 		while (request == null) {
 			Thread.onSpinWait();
-			request = requestQueue.poll();
+			request = requestData.poll();
 		}
 		return request;
 	}
