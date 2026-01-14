@@ -19,7 +19,10 @@ import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
+import io.netty.util.concurrent.FastThreadLocal;
+import org.HdrHistogram.Histogram;
 import org.jctools.queues.MpscBlockingConsumerArrayQueue;
 import org.jctools.util.Pow2;
 import org.openjdk.jmh.annotations.*;
@@ -37,9 +40,13 @@ import java.util.function.Supplier;
 @State(Scope.Benchmark)
 public class SchedulerHandoffBenchmark {
 
+	public enum IO {
+		EPOLL, NIO, IO_URING
+	}
+
 	// default is 1000 rps per user
-	@Param({"1"})
-	int serviceTimeMs;
+	@Param({"1000"})
+	int serviceTimeUs;
 
 	@Param({"512"})
 	int requestBytes;
@@ -51,22 +58,50 @@ public class SchedulerHandoffBenchmark {
 	@Param({"100"})
 	int concurrency;
 
+	@Param({"2"})
+	int eventLoopThreads;
+
+	@Param({"2"})
+	int fjParallelism;
+
+	@Param({"NIO", "EPOLL"})
+	IO io;
+
 	MultiThreadIoEventLoopGroup group;
 
 	Supplier<ThreadFactory> threadFactory;
 
 	BlockingQueue<byte[]> requestQueue;
 
+	private static final CopyOnWriteArrayList<Histogram> histograms = new CopyOnWriteArrayList<>();
+
+	private static final FastThreadLocal<Histogram> rttHistogram = new FastThreadLocal<>() {
+		@Override
+		public Histogram initialValue() {
+			var histo = new Histogram(3);
+			histograms.add(histo);
+			return histo;
+		}
+	};
+
 	@Setup
 	public void setup(BenchmarkParams params) throws ExecutionException, InterruptedException {
+		if (fjParallelism > 0) {
+			DefaultSchedulerUtils.setupDefaultScheduler(fjParallelism);
+		}
+		var ioFactory = switch (io) {
+			case NIO -> NioIoHandler.newFactory();
+			case IO_URING -> IoUringIoHandler.newFactory();
+			case EPOLL -> EpollIoHandler.newFactory();
+		};
 		if (params.getBenchmark().contains("custom")) {
-			var group = new VirtualMultithreadIoEventLoopGroup(Runtime.getRuntime().availableProcessors(),
-					EpollIoHandler.newFactory());
+			var group = new VirtualMultithreadIoEventLoopGroup(
+					eventLoopThreads > 0 ? eventLoopThreads : Runtime.getRuntime().availableProcessors(), ioFactory);
 			threadFactory = group::vThreadFactory;
 			this.group = group;
 		} else {
-			group = new MultiThreadIoEventLoopGroup(Runtime.getRuntime().availableProcessors(),
-					EpollIoHandler.newFactory());
+			group = new MultiThreadIoEventLoopGroup(
+					eventLoopThreads > 0 ? eventLoopThreads : Runtime.getRuntime().availableProcessors(), ioFactory);
 			var sameFactory = Thread.ofVirtual().factory();
 			threadFactory = () -> sameFactory;
 		}
@@ -93,16 +128,18 @@ public class SchedulerHandoffBenchmark {
 
 	private void doRequest(Blackhole bh) throws InterruptedException {
 		byte[] request = requestQueue.take();
+		long startRequest = System.nanoTime();
 		// write some data into the request
 		Arrays.fill(request, (byte) 1);
 		// this is handing off this to the loom scheduler
 		var el = group.next();
 		el.execute(() -> {
+			// This is running in a Netty event loop thread
 			// process the request by reading it
 			for (byte b : request) {
 				bh.consume(b);
 			}
-			// off-load the actual processing to a virtual thread
+			// off-load the actual (blocking) processing to a virtual thread
 			threadFactory.get().newThread(() -> {
 				try {
 					// simulate processing time:
@@ -110,8 +147,7 @@ public class SchedulerHandoffBenchmark {
 					// built-in one
 					// but the custom scheduler, nope, see
 					// https://github.com/openjdk/loom/blob/3d9e866f60bdebc55b59b9fd40a4898002c35e96/src/java.base/share/classes/java/lang/VirtualThread.java#L1629
-					el.schedule(() -> {
-					}, serviceTimeMs, TimeUnit.MILLISECONDS).get();
+					TimeUnit.MICROSECONDS.sleep(serviceTimeUs);
 					// allocate a response
 					int responseBytes = this.responseBytes;
 					ByteBuf responseData = ByteBufAllocator.DEFAULT.buffer(responseBytes);
@@ -126,6 +162,10 @@ public class SchedulerHandoffBenchmark {
 							bh.consume(responseData.getByte(i));
 						}
 						responseData.release();
+						// record RTT
+						long rttNs = System.nanoTime() - startRequest;
+						Histogram histogram = rttHistogram.get();
+						histogram.recordValue(rttNs);
 						// offer it just at the end
 						requestQueue.add(request);
 					});
@@ -143,5 +183,14 @@ public class SchedulerHandoffBenchmark {
 			requestQueue.take();
 		}
 		group.shutdownGracefully().get();
+		// print percentiles of RTT
+		Histogram combined = new Histogram(3);
+		histograms.forEach(combined::add);
+		histograms.clear();
+		// Print percentile distribution
+		System.out.printf("RTT (µs) - Avg: %.2f, P50: %.2f, P90: %.2f, P99: %.2f, Max: %.2f%n",
+				combined.getMean() / 1000.0, combined.getValueAtPercentile(50) / 1000.0,
+				combined.getValueAtPercentile(90) / 1000.0, combined.getValueAtPercentile(99) / 1000.0,
+				combined.getMaxValue() / 1000.0);
 	}
 }
