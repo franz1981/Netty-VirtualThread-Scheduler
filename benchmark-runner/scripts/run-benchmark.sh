@@ -325,7 +325,7 @@ start_profiler() {
     fi
 
     # Start profiler
-    "$asprof" start -e "$PROFILER_EVENT" -o flamegraph "$SERVER_PID"
+    "$asprof" start --threads -e "$PROFILER_EVENT" -o flamegraph "$SERVER_PID"
 
     log "Profiler attached"
 }
@@ -340,7 +340,7 @@ stop_profiler() {
     local asprof="$ASYNC_PROFILER_PATH/bin/asprof"
     local output_file="$OUTPUT_DIR/$PROFILER_OUTPUT"
 
-    "$asprof" stop -o flamegraph -f "$output_file" "$SERVER_PID"
+    "$asprof" stop --threads -o flamegraph -f "$output_file" "$SERVER_PID"
 
     log "Profiler output: $output_file"
 }
@@ -358,7 +358,8 @@ start_pidstat() {
 
     local output_file="$OUTPUT_DIR/$PIDSTAT_OUTPUT"
 
-    pidstat -p "$SERVER_PID" -t "$PIDSTAT_INTERVAL" > "$output_file" 2>&1 &
+    # add -t to see all threads
+    pidstat -p "$SERVER_PID" "$PIDSTAT_INTERVAL" > "$output_file" 2>&1 &
     PIDSTAT_PID=$!
 
     log "pidstat running (PID: $PIDSTAT_PID)"
