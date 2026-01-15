@@ -298,7 +298,7 @@ run_warmup() {
     local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_TASKSET")
 
     # Use wrk for warmup (no rate limiting)
-    $taskset_cmd jbang wrk@mukel/jbang-catalog \
+    $taskset_cmd jbang wrk@hyperfoil \
         -t "$LOAD_GEN_THREADS" \
         -c "$LOAD_GEN_CONNECTIONS" \
         -d "$WARMUP_DURATION" \
@@ -395,7 +395,7 @@ run_load_test() {
         # Use wrk2 with rate limiting
         log "Using wrk2 with rate: $LOAD_GEN_RATE req/s"
 
-        $taskset_cmd jbang wrk2@mukel/jbang-catalog \
+        $taskset_cmd jbang wrk2@hyperfoil \
             -t "$LOAD_GEN_THREADS" \
             -c "$LOAD_GEN_CONNECTIONS" \
             -d "${test_secs}s" \
@@ -405,7 +405,7 @@ run_load_test() {
         # Use wrk for max throughput
         log "Using wrk for max throughput"
 
-        $taskset_cmd jbang wrk@mukel/jbang-catalog \
+        $taskset_cmd jbang wrk@hyperfoil \
             -t "$LOAD_GEN_THREADS" \
             -c "$LOAD_GEN_CONNECTIONS" \
             -d "${test_secs}s" \
