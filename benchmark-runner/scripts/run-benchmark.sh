@@ -19,24 +19,26 @@ set -euo pipefail
 
 # Java configuration
 JAVA_HOME="${JAVA_HOME:-}"
-JAVA_OPTS="${JAVA_OPTS:-}"
+JAVA_OPTS="${JAVA_OPTS:--Xms1g -Xmx1g}"
 
 # Mock server configuration
 MOCK_PORT="${MOCK_PORT:-8080}"
 MOCK_THINK_TIME_MS="${MOCK_THINK_TIME_MS:-1}"
 MOCK_THREADS="${MOCK_THREADS:-1}"
-MOCK_TASKSET="${MOCK_TASKSET:-}"  # e.g., "0-1" for CPUs 0 and 1
+MOCK_TASKSET="${MOCK_TASKSET:-4,5}"  # CPUs for mock server
 
 # Handoff server configuration
 SERVER_PORT="${SERVER_PORT:-8081}"
 SERVER_THREADS="${SERVER_THREADS:-1}"
 SERVER_USE_CUSTOM_SCHEDULER="${SERVER_USE_CUSTOM_SCHEDULER:-false}"
 SERVER_IO="${SERVER_IO:-epoll}"
-SERVER_TASKSET="${SERVER_TASKSET:-}"  # e.g., "2-5" for CPUs 2-5
+SERVER_TASKSET="${SERVER_TASKSET:-2,3}"  # CPUs for handoff server
 SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
+SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-3}"  # jdk.pollerMode value (1, 2, or 3)
+SERVER_FJ_PARALLELISM="${SERVER_FJ_PARALLELISM:-}"  # ForkJoinPool parallelism (empty = JVM default)
 
 # Load generator configuration
-LOAD_GEN_TASKSET="${LOAD_GEN_TASKSET:-}"  # e.g., "6-7" for CPUs 6-7
+LOAD_GEN_TASKSET="${LOAD_GEN_TASKSET:-0,1}"  # CPUs for load generator
 LOAD_GEN_CONNECTIONS="${LOAD_GEN_CONNECTIONS:-100}"
 LOAD_GEN_THREADS="${LOAD_GEN_THREADS:-2}"
 LOAD_GEN_DURATION="${LOAD_GEN_DURATION:-30s}"
@@ -215,7 +217,7 @@ start_mock_server() {
     local taskset_cmd=$(build_taskset_cmd "$MOCK_TASKSET")
     local java_cmd="$JAVA_HOME/bin/java"
 
-    local cmd="$taskset_cmd $java_cmd -cp $RUNNER_JAR \
+    local cmd="$taskset_cmd $java_cmd $JAVA_OPTS -cp $RUNNER_JAR \
         io.netty.loom.benchmark.runner.MockHttpServer \
         --port $MOCK_PORT --think-time $MOCK_THINK_TIME_MS --threads $MOCK_THREADS --silent"
 
@@ -245,7 +247,10 @@ start_handoff_server() {
 
     if [[ "$SERVER_USE_CUSTOM_SCHEDULER" == "true" ]]; then
         jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"
-        jvm_args="$jvm_args -Djdk.pollerMode=3"
+        jvm_args="$jvm_args -Djdk.pollerMode=$SERVER_POLLER_MODE"
+        if [[ -n "$SERVER_FJ_PARALLELISM" ]]; then
+            jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=$SERVER_FJ_PARALLELISM"
+        fi
     fi
 
     # Add debug non-safepoints if profiling is enabled
@@ -259,7 +264,7 @@ start_handoff_server() {
         jvm_args="$jvm_args $SERVER_JVM_ARGS"
     fi
 
-    local cmd="$taskset_cmd $java_cmd $jvm_args -cp $RUNNER_JAR \
+    local cmd="$taskset_cmd $java_cmd $JAVA_OPTS $jvm_args -cp $RUNNER_JAR \
         io.netty.loom.benchmark.runner.HandoffHttpServer \
         --port $SERVER_PORT \
         --mock-url http://localhost:$MOCK_PORT/fruits \
@@ -431,6 +436,8 @@ print_config() {
     log "  Threads:        $SERVER_THREADS"
     log "  Custom Sched:   $SERVER_USE_CUSTOM_SCHEDULER"
     log "  I/O Type:       $SERVER_IO"
+    log "  Poller Mode:    $SERVER_POLLER_MODE"
+    log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
     log "  CPU Affinity:   ${SERVER_TASKSET:-<none>}"
     log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
     log ""
@@ -482,22 +489,24 @@ Mock Server:
   MOCK_PORT                 Mock server port (default: 8080)
   MOCK_THINK_TIME_MS        Response delay in ms (default: 1)
   MOCK_THREADS              Number of threads (default: 1)
-  MOCK_TASKSET              CPU affinity range (e.g., "0-1")
+  MOCK_TASKSET              CPU affinity range (default: "4,5")
 
 Handoff Server:
   SERVER_PORT               Server port (default: 8081)
   SERVER_THREADS            Number of event loop threads (default: 1)
   SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
   SERVER_IO                 I/O type: epoll or nio (default: epoll)
-  SERVER_TASKSET            CPU affinity range (e.g., "2-5")
+  SERVER_TASKSET            CPU affinity range (default: "2,3")
   SERVER_JVM_ARGS           Additional JVM arguments
+  SERVER_POLLER_MODE        jdk.pollerMode value: 1, 2, or 3 (default: 3)
+  SERVER_FJ_PARALLELISM     ForkJoinPool parallelism (empty = JVM default)
 
 Load Generator:
   LOAD_GEN_CONNECTIONS      Number of connections (default: 100)
   LOAD_GEN_THREADS          Number of threads (default: 2)
   LOAD_GEN_DURATION         Test duration (default: 30s)
   LOAD_GEN_RATE             Target rate for wrk2 (empty = use wrk)
-  LOAD_GEN_TASKSET          CPU affinity range (e.g., "6-7")
+  LOAD_GEN_TASKSET          CPU affinity range (default: "0,1")
 
 Timing:
   WARMUP_DURATION           Warmup duration (default: 10s)
