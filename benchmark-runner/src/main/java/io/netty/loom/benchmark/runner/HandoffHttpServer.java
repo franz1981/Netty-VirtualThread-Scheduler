@@ -43,15 +43,20 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
+import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
+import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
+import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.io.CloseMode;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.function.Supplier;
 
@@ -88,7 +93,6 @@ public class HandoffHttpServer {
 	private MultiThreadIoEventLoopGroup bossGroup;
 	private MultiThreadIoEventLoopGroup workerGroup;
 	private Channel serverChannel;
-	private HttpClient httpClient;
 	private Supplier<ThreadFactory> threadFactorySupplier;
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io) {
@@ -105,9 +109,6 @@ public class HandoffHttpServer {
 	}
 
 	public void start() throws InterruptedException {
-		// Create blocking HTTP client for calls to mock server
-		httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-
 		var ioHandlerFactory = switch (io) {
 			case NIO -> NioIoHandler.newFactory();
 			case EPOLL -> EpollIoHandler.newFactory();
@@ -129,7 +130,7 @@ public class HandoffHttpServer {
 			var defaultFactory = Thread.ofVirtual().factory();
 			threadFactorySupplier = () -> defaultFactory;
 		}
-
+		HttpGet httpGet = new HttpGet(mockUrl);
 		ServerBootstrap b = new ServerBootstrap();
 		b.group(bossGroup, workerGroup).channel(serverChannelClass)
 				.childHandler(new ChannelInitializer<SocketChannel>() {
@@ -138,7 +139,7 @@ public class HandoffHttpServer {
 						ChannelPipeline p = ch.pipeline();
 						p.addLast(new HttpServerCodec());
 						p.addLast(new HttpObjectAggregator(65536));
-						p.addLast(new HandoffHandler());
+						p.addLast(new HandoffHandler(httpGet));
 					}
 				});
 
@@ -173,6 +174,18 @@ public class HandoffHttpServer {
 
 	private class HandoffHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
+		private CompletableFuture<CloseableHttpClient> httpClient;
+		private final HttpGet httpGet;
+
+		HandoffHandler(HttpGet httpGet) {
+			this.httpGet = httpGet;
+			httpClient = new CompletableFuture<>();
+			threadFactorySupplier.get().newThread(() -> {
+				CloseableHttpClient client = HttpClientBuilder.create().setConnectionManagerShared(false).build();
+				httpClient.complete(client);
+			}).start();
+		}
+
 		@Override
 		protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) {
 			String uri = request.uri();
@@ -180,7 +193,7 @@ public class HandoffHttpServer {
 			IoEventLoop eventLoop = (IoEventLoop) ctx.channel().eventLoop();
 
 			if (uri.equals("/health")) {
-				sendResponse(ctx, HEALTH_RESPONSE.duplicate(), "text/plain", keepAlive);
+				sendResponse(ctx, HEALTH_RESPONSE.duplicate(), HttpHeaderValues.TEXT_PLAIN, keepAlive);
 				return;
 			}
 
@@ -196,48 +209,47 @@ public class HandoffHttpServer {
 			ByteBuf content = Unpooled.copiedBuffer("Not Found", CharsetUtil.UTF_8);
 			FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.NOT_FOUND,
 					content);
-			response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain");
+			response.headers().set(HttpHeaderNames.CONTENT_TYPE, HttpHeaderValues.TEXT_PLAIN);
 			response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
 			ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
 		}
 
 		private void doBlockingProcessing(ChannelHandlerContext ctx, IoEventLoop eventLoop, boolean keepAlive) {
 			try {
+				CloseableHttpClient client = httpClient.get();
 				// 1. Make blocking HTTP call to mock server
-				HttpRequest httpRequest = HttpRequest.newBuilder().uri(URI.create(mockUrl)).GET().build();
-
-				HttpResponse<InputStream> httpResponse = httpClient.send(httpRequest,
-						HttpResponse.BodyHandlers.ofInputStream());
-
-				// 2. Parse JSON into Fruit objects using Jackson
-				FruitsResponse fruitsResponse;
-				try (InputStream is = httpResponse.body()) {
-					fruitsResponse = OBJECT_MAPPER.readValue(is, FruitsResponse.class);
+				try (CloseableHttpResponse httpResponse = client.execute(httpGet)) {
+					HttpEntity entity = httpResponse.getEntity();
+					if (entity == null)
+						throw new IOException("No response entity");
+					try (InputStream is = entity.getContent()) {
+						// 2. Parse JSON into Fruit objects using Jackson
+						FruitsResponse fruitsResponse = OBJECT_MAPPER.readValue(is, FruitsResponse.class);
+						// 3. Re-encode to JSON bytes
+						byte[] responseBytes = OBJECT_MAPPER.writeValueAsBytes(fruitsResponse);
+						// 4. Post write back to event loop (non-blocking)
+						eventLoop.execute(() -> {
+							ByteBuf content = Unpooled.wrappedBuffer(responseBytes);
+							sendResponse(ctx, content, HttpHeaderValues.APPLICATION_JSON, keepAlive);
+						});
+					}
+					EntityUtils.consumeQuietly(entity);
 				}
-
-				// 3. Re-encode to JSON bytes
-				byte[] responseBytes = OBJECT_MAPPER.writeValueAsBytes(fruitsResponse);
-
-				// 4. Post write back to event loop (non-blocking)
-				eventLoop.execute(() -> {
-					ByteBuf content = Unpooled.wrappedBuffer(responseBytes);
-					sendResponse(ctx, content, "application/json", keepAlive);
-				});
-
-			} catch (IOException | InterruptedException e) {
+			} catch (IOException | InterruptedException | ExecutionException e) {
 				eventLoop.execute(() -> {
 					ByteBuf content = Unpooled.copiedBuffer("{\"error\":\"" + e.getMessage() + "\"}",
 							CharsetUtil.UTF_8);
 					FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
 							HttpResponseStatus.INTERNAL_SERVER_ERROR, content);
-					response.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json");
+					response.headers().set(HttpHeaderNames.CONTENT_TYPE, HttpHeaderValues.APPLICATION_JSON);
 					response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
 					ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
 				});
 			}
 		}
 
-		private void sendResponse(ChannelHandlerContext ctx, ByteBuf content, String contentType, boolean keepAlive) {
+		private void sendResponse(ChannelHandlerContext ctx, ByteBuf content, AsciiString contentType,
+				boolean keepAlive) {
 			FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK,
 					content);
 			response.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType);
@@ -255,6 +267,22 @@ public class HandoffHttpServer {
 		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
 			cause.printStackTrace();
 			ctx.close();
+		}
+
+		@Override
+		public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+			try {
+				threadFactorySupplier.get().newThread(() -> {
+					try {
+						CloseableHttpClient client = httpClient.get();
+						client.close();
+					} catch (Throwable ignore) {
+
+					}
+				});
+			} finally {
+				super.channelInactive(ctx);
+			}
 		}
 	}
 
