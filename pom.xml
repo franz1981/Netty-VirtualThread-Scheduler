@@ -12,6 +12,7 @@
     <modules>
         <module>core</module>
         <module>benchmarks</module>
+        <module>benchmark-runner</module>
         <module>example-echo</module>
     </modules>
 

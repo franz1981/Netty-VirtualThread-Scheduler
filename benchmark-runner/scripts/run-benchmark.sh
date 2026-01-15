@@ -1,0 +1,590 @@
+#!/usr/bin/env bash
+#
+# Benchmark Runner Script
+#
+# This script orchestrates the full benchmark workflow:
+# 1. Start mock HTTP server
+# 2. Start handoff HTTP server (with optional profiling)
+# 3. Run load generator (wrk/wrk2)
+# 4. Optionally collect pidstat and async-profiler data
+#
+# Copyright 2026 The Netty VirtualThread Scheduler Project
+# Licensed under Apache License 2.0
+
+set -euo pipefail
+
+# ============================================================================
+# Configuration with defaults
+# ============================================================================
+
+# Java configuration
+JAVA_HOME="${JAVA_HOME:-}"
+JAVA_OPTS="${JAVA_OPTS:-}"
+
+# Mock server configuration
+MOCK_PORT="${MOCK_PORT:-8080}"
+MOCK_THINK_TIME_MS="${MOCK_THINK_TIME_MS:-1}"
+MOCK_THREADS="${MOCK_THREADS:-1}"
+MOCK_TASKSET="${MOCK_TASKSET:-}"  # e.g., "0-1" for CPUs 0 and 1
+
+# Handoff server configuration
+SERVER_PORT="${SERVER_PORT:-8081}"
+SERVER_THREADS="${SERVER_THREADS:-1}"
+SERVER_USE_CUSTOM_SCHEDULER="${SERVER_USE_CUSTOM_SCHEDULER:-false}"
+SERVER_IO="${SERVER_IO:-epoll}"
+SERVER_TASKSET="${SERVER_TASKSET:-}"  # e.g., "2-5" for CPUs 2-5
+SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
+
+# Load generator configuration
+LOAD_GEN_TASKSET="${LOAD_GEN_TASKSET:-}"  # e.g., "6-7" for CPUs 6-7
+LOAD_GEN_CONNECTIONS="${LOAD_GEN_CONNECTIONS:-100}"
+LOAD_GEN_THREADS="${LOAD_GEN_THREADS:-2}"
+LOAD_GEN_DURATION="${LOAD_GEN_DURATION:-30s}"
+LOAD_GEN_RATE="${LOAD_GEN_RATE:-}"  # Empty = wrk (max throughput), set value = wrk2 (rate limited)
+LOAD_GEN_URL="${LOAD_GEN_URL:-http://localhost:8081/fruits}"
+
+# Timing configuration
+WARMUP_DURATION="${WARMUP_DURATION:-10s}"
+TOTAL_DURATION="${TOTAL_DURATION:-30s}"
+
+# Profiling configuration
+ENABLE_PROFILER="${ENABLE_PROFILER:-false}"
+PROFILER_EVENT="${PROFILER_EVENT:-cpu}"
+PROFILER_OUTPUT="${PROFILER_OUTPUT:-profile.html}"
+ASYNC_PROFILER_PATH="${ASYNC_PROFILER_PATH:-}"  # Path to async-profiler
+
+# pidstat configuration
+ENABLE_PIDSTAT="${ENABLE_PIDSTAT:-false}"
+PIDSTAT_INTERVAL="${PIDSTAT_INTERVAL:-1}"
+PIDSTAT_OUTPUT="${PIDSTAT_OUTPUT:-pidstat.log}"
+
+# Output directory
+OUTPUT_DIR="${OUTPUT_DIR:-./benchmark-results}"
+
+# ============================================================================
+# Computed paths
+# ============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+RUNNER_JAR="${PROJECT_ROOT}/benchmark-runner/target/benchmark-runner.jar"
+
+# ============================================================================
+# Helper functions
+# ============================================================================
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+error() {
+    log "ERROR: $*" >&2
+    exit 1
+}
+
+parse_duration_to_seconds() {
+    local duration="$1"
+    local value="${duration%[smhd]}"
+    local unit="${duration: -1}"
+
+    case "$unit" in
+        s) echo "$value" ;;
+        m) echo $((value * 60)) ;;
+        h) echo $((value * 3600)) ;;
+        d) echo $((value * 86400)) ;;
+        *) echo "$duration" ;;  # Assume seconds if no unit
+    esac
+}
+
+validate_config() {
+    local warmup_secs=$(parse_duration_to_seconds "$WARMUP_DURATION")
+    local total_secs=$(parse_duration_to_seconds "$TOTAL_DURATION")
+
+    if [[ $warmup_secs -ge $total_secs ]]; then
+        error "Warmup duration ($WARMUP_DURATION = ${warmup_secs}s) must be less than total duration ($TOTAL_DURATION = ${total_secs}s)"
+    fi
+
+    if [[ -z "$JAVA_HOME" ]]; then
+        error "JAVA_HOME must be set"
+    fi
+
+    if [[ ! -x "$JAVA_HOME/bin/java" ]]; then
+        error "Java executable not found at $JAVA_HOME/bin/java"
+    fi
+
+    if [[ "$ENABLE_PROFILER" == "true" && -z "$ASYNC_PROFILER_PATH" ]]; then
+        error "ASYNC_PROFILER_PATH must be set when ENABLE_PROFILER=true"
+    fi
+
+    log "Configuration validated"
+    log "  Warmup: $WARMUP_DURATION (${warmup_secs}s)"
+    log "  Total:  $TOTAL_DURATION (${total_secs}s)"
+    log "  Measurement window: $((total_secs - warmup_secs))s"
+}
+
+check_jbang() {
+    if ! command -v jbang &> /dev/null; then
+        log "jbang not found, installing..."
+        curl -Ls https://sh.jbang.dev | bash -s - app setup
+        export PATH="$HOME/.jbang/bin:$PATH"
+    fi
+    log "jbang version: $(jbang --version)"
+}
+
+wait_for_server() {
+    local url="$1"
+    local name="$2"
+    local max_attempts="${3:-30}"
+    local attempt=0
+
+    log "Waiting for $name at $url..."
+    while [[ $attempt -lt $max_attempts ]]; do
+        if curl -s -o /dev/null -w "%{http_code}" "$url" | grep -q "200"; then
+            log "$name is ready"
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+
+    error "$name failed to start within ${max_attempts}s"
+}
+
+build_taskset_cmd() {
+    local cpus="$1"
+    if [[ -n "$cpus" ]]; then
+        echo "taskset -c $cpus"
+    else
+        echo ""
+    fi
+}
+
+cleanup() {
+    log "Cleaning up..."
+
+    # Kill mock server
+    if [[ -n "${MOCK_PID:-}" ]]; then
+        log "Stopping mock server (PID: $MOCK_PID)"
+        kill "$MOCK_PID" 2>/dev/null || true
+        wait "$MOCK_PID" 2>/dev/null || true
+    fi
+
+    # Kill handoff server
+    if [[ -n "${SERVER_PID:-}" ]]; then
+        log "Stopping handoff server (PID: $SERVER_PID)"
+        kill "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+
+    # Kill pidstat
+    if [[ -n "${PIDSTAT_PID:-}" ]]; then
+        log "Stopping pidstat (PID: $PIDSTAT_PID)"
+        kill "$PIDSTAT_PID" 2>/dev/null || true
+    fi
+
+    log "Cleanup complete"
+}
+
+trap cleanup EXIT
+
+# ============================================================================
+# Build JARs if needed
+# ============================================================================
+
+build_jars() {
+    log "Building project JARs..."
+
+    cd "$PROJECT_ROOT"
+
+
+    if [[ ! -f "$RUNNER_JAR" ]]; then
+        log "Building benchmark-runner module..."
+        JAVA_HOME="$JAVA_HOME" mvn package -pl benchmark-runner -am -DskipTests -q
+    fi
+
+    log "JARs ready"
+}
+
+# ============================================================================
+# Start Mock Server
+# ============================================================================
+
+start_mock_server() {
+    log "Starting mock HTTP server..."
+
+    local taskset_cmd=$(build_taskset_cmd "$MOCK_TASKSET")
+    local java_cmd="$JAVA_HOME/bin/java"
+
+    local cmd="$taskset_cmd $java_cmd -cp $RUNNER_JAR \
+        io.netty.loom.benchmark.runner.MockHttpServer \
+        --port $MOCK_PORT --think-time $MOCK_THINK_TIME_MS --threads $MOCK_THREADS --silent"
+
+    log "Mock server command: $cmd"
+
+    $cmd &
+    MOCK_PID=$!
+
+    wait_for_server "http://localhost:$MOCK_PORT/health" "Mock server"
+}
+
+# ============================================================================
+# Start Handoff Server
+# ============================================================================
+
+start_handoff_server() {
+    log "Starting handoff HTTP server..."
+
+    local taskset_cmd=$(build_taskset_cmd "$SERVER_TASKSET")
+    local java_cmd="$JAVA_HOME/bin/java"
+
+    # Build JVM args
+    local jvm_args="--add-opens=java.base/java.lang=ALL-UNNAMED"
+    jvm_args="$jvm_args -XX:+UnlockExperimentalVMOptions"
+    jvm_args="$jvm_args -XX:-DoJVMTIVirtualThreadTransitions"
+    jvm_args="$jvm_args -Djdk.trackAllThreads=false"
+
+    if [[ "$SERVER_USE_CUSTOM_SCHEDULER" == "true" ]]; then
+        jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"
+        jvm_args="$jvm_args -Djdk.pollerMode=3"
+    fi
+
+    # Add debug non-safepoints if profiling is enabled
+    if [[ "$ENABLE_PROFILER" == "true" ]]; then
+        jvm_args="$jvm_args -XX:+UnlockDiagnosticVMOptions"
+        jvm_args="$jvm_args -XX:+DebugNonSafepoints"
+    fi
+
+    # Add custom JVM args
+    if [[ -n "$SERVER_JVM_ARGS" ]]; then
+        jvm_args="$jvm_args $SERVER_JVM_ARGS"
+    fi
+
+    local cmd="$taskset_cmd $java_cmd $jvm_args -cp $RUNNER_JAR \
+        io.netty.loom.benchmark.runner.HandoffHttpServer \
+        --port $SERVER_PORT \
+        --mock-url http://localhost:$MOCK_PORT/fruits \
+        --threads $SERVER_THREADS \
+        --use-custom-scheduler $SERVER_USE_CUSTOM_SCHEDULER \
+        --io $SERVER_IO \
+        --silent"
+
+    log "Handoff server command: $cmd"
+
+    $cmd &
+    SERVER_PID=$!
+
+    wait_for_server "http://localhost:$SERVER_PORT/health" "Handoff server"
+}
+
+# ============================================================================
+# Warmup Phase
+# ============================================================================
+
+run_warmup() {
+    local warmup_secs=$(parse_duration_to_seconds "$WARMUP_DURATION")
+
+    if [[ $warmup_secs -eq 0 ]]; then
+        log "Skipping warmup (duration is 0)"
+        return
+    fi
+
+    log "Running warmup for $WARMUP_DURATION..."
+
+    local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_TASKSET")
+
+    # Use wrk for warmup (no rate limiting)
+    $taskset_cmd jbang wrk@mukel/jbang-catalog \
+        -t "$LOAD_GEN_THREADS" \
+        -c "$LOAD_GEN_CONNECTIONS" \
+        -d "$WARMUP_DURATION" \
+        "$LOAD_GEN_URL" > /dev/null 2>&1 || true
+
+    log "Warmup complete"
+}
+
+# ============================================================================
+# Start Profiler
+# ============================================================================
+
+start_profiler() {
+    if [[ "$ENABLE_PROFILER" != "true" ]]; then
+        return
+    fi
+
+    log "Attaching async-profiler to handoff server (PID: $SERVER_PID)..."
+
+    local asprof="$ASYNC_PROFILER_PATH/bin/asprof"
+
+    if [[ ! -x "$asprof" ]]; then
+        error "async-profiler not found at $asprof"
+    fi
+
+    # Start profiler
+    "$asprof" start -e "$PROFILER_EVENT" -o flamegraph "$SERVER_PID"
+
+    log "Profiler attached"
+}
+
+stop_profiler() {
+    if [[ "$ENABLE_PROFILER" != "true" ]]; then
+        return
+    fi
+
+    log "Stopping async-profiler..."
+
+    local asprof="$ASYNC_PROFILER_PATH/bin/asprof"
+    local output_file="$OUTPUT_DIR/$PROFILER_OUTPUT"
+
+    "$asprof" stop -o flamegraph -f "$output_file" "$SERVER_PID"
+
+    log "Profiler output: $output_file"
+}
+
+# ============================================================================
+# Start pidstat
+# ============================================================================
+
+start_pidstat() {
+    if [[ "$ENABLE_PIDSTAT" != "true" ]]; then
+        return
+    fi
+
+    log "Starting pidstat for handoff server (PID: $SERVER_PID)..."
+
+    local output_file="$OUTPUT_DIR/$PIDSTAT_OUTPUT"
+
+    pidstat -p "$SERVER_PID" -t "$PIDSTAT_INTERVAL" > "$output_file" 2>&1 &
+    PIDSTAT_PID=$!
+
+    log "pidstat running (PID: $PIDSTAT_PID)"
+}
+
+stop_pidstat() {
+    if [[ "$ENABLE_PIDSTAT" != "true" ]]; then
+        return
+    fi
+
+    if [[ -n "${PIDSTAT_PID:-}" ]]; then
+        log "Stopping pidstat..."
+        kill "$PIDSTAT_PID" 2>/dev/null || true
+        wait "$PIDSTAT_PID" 2>/dev/null || true
+        log "pidstat output: $OUTPUT_DIR/$PIDSTAT_OUTPUT"
+    fi
+}
+
+# ============================================================================
+# Run Load Test
+# ============================================================================
+
+run_load_test() {
+    local warmup_secs=$(parse_duration_to_seconds "$WARMUP_DURATION")
+    local total_secs=$(parse_duration_to_seconds "$TOTAL_DURATION")
+    local test_secs=$((total_secs - warmup_secs))
+
+    log "Running load test for ${test_secs}s..."
+
+    local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_TASKSET")
+    local output_file="$OUTPUT_DIR/wrk-results.txt"
+
+    if [[ -n "$LOAD_GEN_RATE" ]]; then
+        # Use wrk2 with rate limiting
+        log "Using wrk2 with rate: $LOAD_GEN_RATE req/s"
+
+        $taskset_cmd jbang wrk2@mukel/jbang-catalog \
+            -t "$LOAD_GEN_THREADS" \
+            -c "$LOAD_GEN_CONNECTIONS" \
+            -d "${test_secs}s" \
+            -R "$LOAD_GEN_RATE" \
+            "$LOAD_GEN_URL" 2>&1 | tee "$output_file"
+    else
+        # Use wrk for max throughput
+        log "Using wrk for max throughput"
+
+        $taskset_cmd jbang wrk@mukel/jbang-catalog \
+            -t "$LOAD_GEN_THREADS" \
+            -c "$LOAD_GEN_CONNECTIONS" \
+            -d "${test_secs}s" \
+            "$LOAD_GEN_URL" 2>&1 | tee "$output_file"
+    fi
+
+    log "Load test complete"
+    log "Results saved to: $output_file"
+}
+
+# ============================================================================
+# Print Configuration Summary
+# ============================================================================
+
+print_config() {
+    log "=============================================="
+    log "Benchmark Configuration"
+    log "=============================================="
+    log ""
+    log "Mock Server:"
+    log "  Port:           $MOCK_PORT"
+    log "  Think Time:     ${MOCK_THINK_TIME_MS}ms"
+    log "  Threads:        $MOCK_THREADS"
+    log "  CPU Affinity:   ${MOCK_TASKSET:-<none>}"
+    log ""
+    log "Handoff Server:"
+    log "  Port:           $SERVER_PORT"
+    log "  Threads:        $SERVER_THREADS"
+    log "  Custom Sched:   $SERVER_USE_CUSTOM_SCHEDULER"
+    log "  I/O Type:       $SERVER_IO"
+    log "  CPU Affinity:   ${SERVER_TASKSET:-<none>}"
+    log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
+    log ""
+    log "Load Generator:"
+    log "  Connections:    $LOAD_GEN_CONNECTIONS"
+    log "  Threads:        $LOAD_GEN_THREADS"
+    log "  Rate:           ${LOAD_GEN_RATE:-<max throughput>}"
+    log "  CPU Affinity:   ${LOAD_GEN_TASKSET:-<none>}"
+    log ""
+    log "Timing:"
+    log "  Warmup:         $WARMUP_DURATION"
+    log "  Total:          $TOTAL_DURATION"
+    log ""
+    log "Profiling:"
+    log "  Enabled:        $ENABLE_PROFILER"
+    if [[ "$ENABLE_PROFILER" == "true" ]]; then
+        log "  Event:          $PROFILER_EVENT"
+        log "  Output:         $PROFILER_OUTPUT"
+    fi
+    log ""
+    log "pidstat:"
+    log "  Enabled:        $ENABLE_PIDSTAT"
+    if [[ "$ENABLE_PIDSTAT" == "true" ]]; then
+        log "  Interval:       ${PIDSTAT_INTERVAL}s"
+        log "  Output:         $PIDSTAT_OUTPUT"
+    fi
+    log ""
+    log "Output Directory: $OUTPUT_DIR"
+    log "=============================================="
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+main() {
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                cat << 'EOF'
+Benchmark Runner Script
+
+Usage: ./run-benchmark.sh [OPTIONS]
+
+Environment Variables (can also be set via command line options):
+
+Mock Server:
+  MOCK_PORT                 Mock server port (default: 8080)
+  MOCK_THINK_TIME_MS        Response delay in ms (default: 1)
+  MOCK_THREADS              Number of threads (default: 1)
+  MOCK_TASKSET              CPU affinity range (e.g., "0-1")
+
+Handoff Server:
+  SERVER_PORT               Server port (default: 8081)
+  SERVER_THREADS            Number of event loop threads (default: 1)
+  SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
+  SERVER_IO                 I/O type: epoll or nio (default: epoll)
+  SERVER_TASKSET            CPU affinity range (e.g., "2-5")
+  SERVER_JVM_ARGS           Additional JVM arguments
+
+Load Generator:
+  LOAD_GEN_CONNECTIONS      Number of connections (default: 100)
+  LOAD_GEN_THREADS          Number of threads (default: 2)
+  LOAD_GEN_DURATION         Test duration (default: 30s)
+  LOAD_GEN_RATE             Target rate for wrk2 (empty = use wrk)
+  LOAD_GEN_TASKSET          CPU affinity range (e.g., "6-7")
+
+Timing:
+  WARMUP_DURATION           Warmup duration (default: 10s)
+  TOTAL_DURATION            Total test duration (default: 30s)
+
+Profiling:
+  ENABLE_PROFILER           Enable async-profiler (default: false)
+  ASYNC_PROFILER_PATH       Path to async-profiler installation
+  PROFILER_EVENT            Profiler event type (default: cpu)
+  PROFILER_OUTPUT           Profiler output file (default: profile.html)
+
+pidstat:
+  ENABLE_PIDSTAT            Enable pidstat collection (default: false)
+  PIDSTAT_INTERVAL          Collection interval in seconds (default: 1)
+  PIDSTAT_OUTPUT            Output file (default: pidstat.log)
+
+General:
+  JAVA_HOME                 Path to Java installation (required)
+  OUTPUT_DIR                Output directory (default: ./benchmark-results)
+
+Examples:
+
+  # Basic run with custom scheduler
+  JAVA_HOME=/path/to/jdk SERVER_USE_CUSTOM_SCHEDULER=true ./run-benchmark.sh
+
+  # Run with CPU pinning and profiling
+  JAVA_HOME=/path/to/jdk \
+  MOCK_TASKSET="0" \
+  SERVER_TASKSET="1-2" \
+  LOAD_GEN_TASKSET="3" \
+  ENABLE_PROFILER=true \
+  ASYNC_PROFILER_PATH=/path/to/async-profiler \
+  ./run-benchmark.sh
+
+  # Rate-limited test with wrk2
+  JAVA_HOME=/path/to/jdk \
+  LOAD_GEN_RATE=10000 \
+  TOTAL_DURATION=60s \
+  WARMUP_DURATION=15s \
+  ./run-benchmark.sh
+
+EOF
+                exit 0
+                ;;
+            *)
+                error "Unknown option: $1"
+                ;;
+        esac
+        shift
+    done
+
+    # Validate configuration
+    validate_config
+
+    # Print configuration
+    print_config
+
+    # Create output directory
+    mkdir -p "$OUTPUT_DIR"
+
+    # Check jbang
+    check_jbang
+
+    # Build JARs
+    build_jars
+
+    # Start servers
+    start_mock_server
+    start_handoff_server
+
+    # Run warmup (no profiling/pidstat)
+    run_warmup
+
+    # Start monitoring after warmup
+    start_profiler
+    start_pidstat
+
+    # Run actual load test
+    run_load_test
+
+    # Stop monitoring
+    stop_profiler
+    stop_pidstat
+
+    log "Benchmark complete!"
+    log "Results in: $OUTPUT_DIR"
+}
+
+main "$@"
+
