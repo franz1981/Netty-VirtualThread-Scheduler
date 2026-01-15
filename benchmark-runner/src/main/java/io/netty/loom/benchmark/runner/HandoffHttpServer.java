@@ -89,7 +89,6 @@ public class HandoffHttpServer {
 	private final IO io;
 	private final boolean silent;
 
-	private MultiThreadIoEventLoopGroup bossGroup;
 	private MultiThreadIoEventLoopGroup workerGroup;
 	private Channel serverChannel;
 	private Supplier<ThreadFactory> threadFactorySupplier;
@@ -122,25 +121,22 @@ public class HandoffHttpServer {
 			var group = new VirtualMultithreadIoEventLoopGroup(threads, ioHandlerFactory);
 			threadFactorySupplier = group::vThreadFactory;
 			workerGroup = group;
-			bossGroup = new VirtualMultithreadIoEventLoopGroup(1, ioHandlerFactory);
 		} else {
 			workerGroup = new MultiThreadIoEventLoopGroup(threads, ioHandlerFactory);
-			bossGroup = new MultiThreadIoEventLoopGroup(1, ioHandlerFactory);
 			var defaultFactory = Thread.ofVirtual().factory();
 			threadFactorySupplier = () -> defaultFactory;
 		}
 		HttpGet httpGet = new HttpGet(mockUrl);
 		ServerBootstrap b = new ServerBootstrap();
-		b.group(bossGroup, workerGroup).channel(serverChannelClass)
-				.childHandler(new ChannelInitializer<SocketChannel>() {
-					@Override
-					protected void initChannel(SocketChannel ch) {
-						ChannelPipeline p = ch.pipeline();
-						p.addLast(new HttpServerCodec());
-						p.addLast(new HttpObjectAggregator(65536));
-						p.addLast(new HandoffHandler(httpGet));
-					}
-				});
+		b.group(workerGroup).channel(serverChannelClass).childHandler(new ChannelInitializer<SocketChannel>() {
+			@Override
+			protected void initChannel(SocketChannel ch) {
+				ChannelPipeline p = ch.pipeline();
+				p.addLast(new HttpServerCodec());
+				p.addLast(new HttpObjectAggregator(65536));
+				p.addLast(new HandoffHandler(httpGet));
+			}
+		});
 
 		serverChannel = b.bind(port).sync().channel();
 		if (!silent) {
@@ -155,9 +151,6 @@ public class HandoffHttpServer {
 	public void stop() {
 		if (serverChannel != null) {
 			serverChannel.close();
-		}
-		if (bossGroup != null) {
-			bossGroup.shutdownGracefully();
 		}
 		if (workerGroup != null) {
 			workerGroup.shutdownGracefully();

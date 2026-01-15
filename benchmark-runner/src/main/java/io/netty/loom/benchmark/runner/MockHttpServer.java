@@ -85,7 +85,6 @@ public class MockHttpServer {
 	private final long thinkTimeMs;
 	private final int threads;
 	private final boolean silent;
-	private EventLoopGroup bossGroup;
 	private EventLoopGroup workerGroup;
 	private Channel serverChannel;
 
@@ -101,11 +100,10 @@ public class MockHttpServer {
 	}
 
 	public void start() throws InterruptedException {
-		bossGroup = new NioEventLoopGroup(1);
 		workerGroup = new NioEventLoopGroup(threads);
 
 		ServerBootstrap b = new ServerBootstrap();
-		b.group(bossGroup, workerGroup).channel(NioServerSocketChannel.class)
+		b.group(workerGroup).channel(NioServerSocketChannel.class)
 				.childHandler(new ChannelInitializer<SocketChannel>() {
 					@Override
 					protected void initChannel(SocketChannel ch) {
@@ -126,9 +124,6 @@ public class MockHttpServer {
 	public void stop() {
 		if (serverChannel != null) {
 			serverChannel.close();
-		}
-		if (bossGroup != null) {
-			bossGroup.shutdownGracefully();
 		}
 		if (workerGroup != null) {
 			workerGroup.shutdownGracefully();
