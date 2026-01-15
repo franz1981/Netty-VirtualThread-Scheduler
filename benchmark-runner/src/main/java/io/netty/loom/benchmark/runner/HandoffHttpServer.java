@@ -49,14 +49,13 @@ import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
+import org.apache.hc.client5.http.impl.io.BasicHttpClientConnectionManager;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
-import org.apache.hc.core5.io.CloseMode;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.function.Supplier;
 
@@ -180,10 +179,17 @@ public class HandoffHttpServer {
 		HandoffHandler(HttpGet httpGet) {
 			this.httpGet = httpGet;
 			httpClient = new CompletableFuture<>();
+		}
+
+		@Override
+		public void channelActive(ChannelHandlerContext ctx) throws Exception {
 			threadFactorySupplier.get().newThread(() -> {
-				CloseableHttpClient client = HttpClientBuilder.create().setConnectionManagerShared(false).build();
+				BasicHttpClientConnectionManager cm = new BasicHttpClientConnectionManager();
+				CloseableHttpClient client = HttpClientBuilder.create().setConnectionManager(cm)
+						.setConnectionManagerShared(false).build();
 				httpClient.complete(client);
 			}).start();
+			super.channelActive(ctx);
 		}
 
 		@Override
@@ -235,7 +241,7 @@ public class HandoffHttpServer {
 					}
 					EntityUtils.consumeQuietly(entity);
 				}
-			} catch (IOException | InterruptedException | ExecutionException e) {
+			} catch (Throwable e) {
 				eventLoop.execute(() -> {
 					ByteBuf content = Unpooled.copiedBuffer("{\"error\":\"" + e.getMessage() + "\"}",
 							CharsetUtil.UTF_8);
