@@ -36,7 +36,7 @@ import java.util.concurrent.*;
 import java.util.function.Supplier;
 
 @BenchmarkMode(Mode.Throughput)
-@OutputTimeUnit(TimeUnit.MILLISECONDS)
+@OutputTimeUnit(TimeUnit.SECONDS)
 @Warmup(iterations = 10, time = 1)
 @Measurement(iterations = 10, time = 1)
 @State(Scope.Benchmark)
@@ -50,6 +50,9 @@ public class SchedulerHandoffBenchmark {
 	@Param({"100"})
 	int serviceTimeUs;
 
+	@Param({"200000"})
+	int rate;
+
 	@Param({"512"})
 	int requestBytes;
 
@@ -57,7 +60,7 @@ public class SchedulerHandoffBenchmark {
 	int responseBytes;
 
 	// the total throughput will be roughly concurrency * 1000 / serviceTimeMs
-	@Param({"100"})
+	@Param({"50"})
 	int concurrency;
 
 	private static final int EL_THREADS = Integer.getInteger("elThreads", -1);
@@ -86,8 +89,23 @@ public class SchedulerHandoffBenchmark {
 		}
 	};
 
+	private long fireTimePeriodNs;
+	private boolean allOutThroughput;
+	private long nextFireTime;
+
+	@Setup(Level.Trial)
+	public void resetHistograms() {
+		// TODO verify if the trial is the right level
+		histograms.forEach(Histogram::reset);
+	}
+
 	@Setup
 	public void setup(BenchmarkParams params) throws ExecutionException, InterruptedException {
+		if (rate < 0) {
+			allOutThroughput = true;
+		} else {
+			fireTimePeriodNs = (long) (1000_000_000d / rate);
+		}
 		if (EL_THREADS <= 0) {
 			throw new IllegalStateException("Please set the elThreads system property to a positive integer");
 		}
@@ -108,6 +126,13 @@ public class SchedulerHandoffBenchmark {
 		requestData = new MpscArrayQueue<>(Pow2.roundToPowerOfTwo(concurrency));
 		for (int i = 0; i < concurrency; i++) {
 			requestData.offer(new RequestData(new byte[requestBytes], new byte[responseBytes]));
+		}
+		nextFireTime = System.nanoTime();
+	}
+
+	private static void spinUntil(long targetTimeNs) {
+		while (System.nanoTime() < targetTimeNs) {
+			Thread.onSpinWait();
 		}
 	}
 
@@ -130,8 +155,15 @@ public class SchedulerHandoffBenchmark {
 
 	// just burn a full core on this!
 	private void doRequest(Blackhole bh) {
+		if (!allOutThroughput) {
+			spinUntil(nextFireTime);
+		}
 		var data = spinWaitRequest();
-		long startRequest = System.nanoTime();
+		// avoid coordinated omission!
+		long startRequest = allOutThroughput ? System.nanoTime() : nextFireTime;
+		if (!allOutThroughput) {
+			nextFireTime += fireTimePeriodNs;
+		}
 		// write some data into the request
 		Arrays.fill(data.request, (byte) 1);
 		byte[] request = data.request;
