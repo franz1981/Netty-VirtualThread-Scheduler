@@ -45,17 +45,22 @@ import io.netty.handler.codec.http.HttpVersion;
 import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
 import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
+import org.apache.hc.client5.http.ConnectionKeepAliveStrategy;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
 import org.apache.hc.client5.http.impl.io.BasicHttpClientConnectionManager;
 import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.HttpResponse;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.protocol.HttpContext;
+import org.apache.hc.core5.util.TimeValue;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.function.Supplier;
 
@@ -126,7 +131,6 @@ public class HandoffHttpServer {
 			var defaultFactory = Thread.ofVirtual().factory();
 			threadFactorySupplier = () -> defaultFactory;
 		}
-		HttpGet httpGet = new HttpGet(mockUrl);
 		ServerBootstrap b = new ServerBootstrap();
 		b.group(workerGroup).channel(serverChannelClass).childHandler(new ChannelInitializer<SocketChannel>() {
 			@Override
@@ -134,7 +138,7 @@ public class HandoffHttpServer {
 				ChannelPipeline p = ch.pipeline();
 				p.addLast(new HttpServerCodec());
 				p.addLast(new HttpObjectAggregator(65536));
-				p.addLast(new HandoffHandler(httpGet));
+				p.addLast(new HandoffHandler());
 			}
 		});
 
@@ -166,22 +170,20 @@ public class HandoffHttpServer {
 
 	private class HandoffHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
-		private CompletableFuture<CloseableHttpClient> httpClient;
-		private final HttpGet httpGet;
+		private final CloseableHttpClient httpClient;
+		private ExecutorService orderedExecutorService;
 
-		HandoffHandler(HttpGet httpGet) {
-			this.httpGet = httpGet;
-			httpClient = new CompletableFuture<>();
+		HandoffHandler() {
+			ConnectionKeepAliveStrategy keepAliveStrategy = (HttpResponse response,
+					HttpContext context) -> TimeValue.NEG_ONE_MILLISECOND;
+			BasicHttpClientConnectionManager cm = new BasicHttpClientConnectionManager();
+			httpClient = HttpClientBuilder.create().setConnectionManager(cm).setConnectionManagerShared(false)
+					.setKeepAliveStrategy(keepAliveStrategy).build();
 		}
 
 		@Override
 		public void channelActive(ChannelHandlerContext ctx) throws Exception {
-			threadFactorySupplier.get().newThread(() -> {
-				BasicHttpClientConnectionManager cm = new BasicHttpClientConnectionManager();
-				CloseableHttpClient client = HttpClientBuilder.create().setConnectionManager(cm)
-						.setConnectionManagerShared(false).build();
-				httpClient.complete(client);
-			}).start();
+			orderedExecutorService = Executors.newSingleThreadExecutor(threadFactorySupplier.get());
 			super.channelActive(ctx);
 		}
 
@@ -198,9 +200,9 @@ public class HandoffHttpServer {
 
 			if (uri.equals("/") || uri.startsWith("/fruits")) {
 				// Hand off to virtual thread for blocking processing
-				threadFactorySupplier.get().newThread(() -> {
+				orderedExecutorService.execute(() -> {
 					doBlockingProcessing(ctx, eventLoop, keepAlive);
-				}).start();
+				});
 				return;
 			}
 
@@ -215,9 +217,9 @@ public class HandoffHttpServer {
 
 		private void doBlockingProcessing(ChannelHandlerContext ctx, IoEventLoop eventLoop, boolean keepAlive) {
 			try {
-				CloseableHttpClient client = httpClient.get();
 				// 1. Make blocking HTTP call to mock server
-				try (CloseableHttpResponse httpResponse = client.execute(httpGet)) {
+				HttpGet httpGet = new HttpGet(mockUrl);
+				try (CloseableHttpResponse httpResponse = httpClient.execute(httpGet)) {
 					HttpEntity entity = httpResponse.getEntity();
 					if (entity == null)
 						throw new IOException("No response entity");
@@ -264,19 +266,18 @@ public class HandoffHttpServer {
 
 		@Override
 		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-			cause.printStackTrace();
 			ctx.close();
 		}
 
 		@Override
 		public void channelInactive(ChannelHandlerContext ctx) throws Exception {
 			try {
-				threadFactorySupplier.get().newThread(() -> {
+				orderedExecutorService.execute(() -> {
 					try {
-						CloseableHttpClient client = httpClient.get();
-						client.close();
-					} catch (Throwable ignore) {
-
+						httpClient.close();
+					} catch (IOException e) {
+					} finally {
+						orderedExecutorService.shutdown();
 					}
 				});
 			} finally {
