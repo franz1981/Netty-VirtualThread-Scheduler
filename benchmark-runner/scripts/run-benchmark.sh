@@ -60,6 +60,10 @@ ENABLE_PIDSTAT="${ENABLE_PIDSTAT:-false}"
 PIDSTAT_INTERVAL="${PIDSTAT_INTERVAL:-1}"
 PIDSTAT_OUTPUT="${PIDSTAT_OUTPUT:-pidstat.log}"
 
+# perf stat configuration
+ENABLE_PERF_STAT="${ENABLE_PERF_STAT:-false}"
+PERF_STAT_OUTPUT="${PERF_STAT_OUTPUT:-perf-stat.txt}"
+
 # Output directory
 OUTPUT_DIR="${OUTPUT_DIR:-./benchmark-results}"
 
@@ -182,6 +186,12 @@ cleanup() {
     if [[ -n "${PIDSTAT_PID:-}" ]]; then
         log "Stopping pidstat (PID: $PIDSTAT_PID)"
         kill "$PIDSTAT_PID" 2>/dev/null || true
+    fi
+
+    # Kill perf stat (should already be done, but clean up just in case)
+    if [[ -n "${PERF_STAT_PID:-}" ]]; then
+        log "Stopping perf stat (PID: $PERF_STAT_PID)"
+        kill "$PERF_STAT_PID" 2>/dev/null || true
     fi
 
     log "Cleanup complete"
@@ -380,6 +390,30 @@ stop_pidstat() {
 }
 
 # ============================================================================
+# Start perf stat
+# ============================================================================
+
+start_perf_stat() {
+    if [[ "$ENABLE_PERF_STAT" != "true" ]]; then
+        return
+    fi
+
+    log "Starting perf stat for handoff server (PID: $SERVER_PID)..."
+
+    local warmup_secs=$(parse_duration_to_seconds "$WARMUP_DURATION")
+    local total_secs=$(parse_duration_to_seconds "$TOTAL_DURATION")
+    local profiling_secs=$((total_secs - warmup_secs))
+    local output_file="$OUTPUT_DIR/$PERF_STAT_OUTPUT"
+
+    perf stat -p "$SERVER_PID" -o "$output_file" sleep "$profiling_secs" &
+    PERF_STAT_PID=$!
+
+    log "perf stat running (PID: $PERF_STAT_PID) for ${profiling_secs}s"
+}
+
+# Note: perf stat stops automatically after the sleep duration, no explicit stop needed
+
+# ============================================================================
 # Run Load Test
 # ============================================================================
 
@@ -468,6 +502,12 @@ print_config() {
         log "  Output:         $PIDSTAT_OUTPUT"
     fi
     log ""
+    log "perf stat:"
+    log "  Enabled:        $ENABLE_PERF_STAT"
+    if [[ "$ENABLE_PERF_STAT" == "true" ]]; then
+        log "  Output:         $PERF_STAT_OUTPUT"
+    fi
+    log ""
     log "Output Directory: $OUTPUT_DIR"
     log "=============================================="
 }
@@ -525,6 +565,10 @@ pidstat:
   ENABLE_PIDSTAT            Enable pidstat collection (default: false)
   PIDSTAT_INTERVAL          Collection interval in seconds (default: 1)
   PIDSTAT_OUTPUT            Output file (default: pidstat.log)
+
+perf stat:
+  ENABLE_PERF_STAT          Enable perf stat collection (default: false)
+  PERF_STAT_OUTPUT          Output file (default: perf-stat.txt)
 
 General:
   JAVA_HOME                 Path to Java installation (required)
@@ -586,6 +630,7 @@ EOF
     # Start monitoring after warmup
     start_profiler
     start_pidstat
+    start_perf_stat
 
     # Run actual load test
     run_load_test
