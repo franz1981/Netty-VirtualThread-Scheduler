@@ -248,9 +248,10 @@ start_handoff_server() {
     if [[ "$SERVER_USE_CUSTOM_SCHEDULER" == "true" ]]; then
         jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"
         jvm_args="$jvm_args -Djdk.pollerMode=$SERVER_POLLER_MODE"
-        if [[ -n "$SERVER_FJ_PARALLELISM" ]]; then
-            jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=$SERVER_FJ_PARALLELISM"
-        fi
+    fi
+
+    if [[ -n "$SERVER_FJ_PARALLELISM" ]]; then
+        jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=1"
     fi
 
     # Add debug non-safepoints if profiling is enabled
@@ -494,7 +495,7 @@ Mock Server:
 
 Handoff Server:
   SERVER_PORT               Server port (default: 8081)
-  SERVER_THREADS            Number of event loop threads (default: 1)
+  SERVER_THREADS            Number of event loop threads (default: 2)
   SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
   SERVER_IO                 I/O type: epoll or nio (default: epoll)
   SERVER_TASKSET            CPU affinity range (default: "2,3")
