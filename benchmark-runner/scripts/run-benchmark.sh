@@ -29,7 +29,7 @@ MOCK_TASKSET="${MOCK_TASKSET:-4,5}"  # CPUs for mock server
 
 # Handoff server configuration
 SERVER_PORT="${SERVER_PORT:-8081}"
-SERVER_THREADS="${SERVER_THREADS:-1}"
+SERVER_THREADS="${SERVER_THREADS:-2}"
 SERVER_USE_CUSTOM_SCHEDULER="${SERVER_USE_CUSTOM_SCHEDULER:-false}"
 SERVER_IO="${SERVER_IO:-epoll}"
 SERVER_TASKSET="${SERVER_TASKSET:-2,3}"  # CPUs for handoff server
@@ -402,6 +402,7 @@ run_load_test() {
             -c "$LOAD_GEN_CONNECTIONS" \
             -d "${test_secs}s" \
             -R "$LOAD_GEN_RATE" \
+            --latency \
             "$LOAD_GEN_URL" 2>&1 | tee "$output_file"
     else
         # Use wrk for max throughput
