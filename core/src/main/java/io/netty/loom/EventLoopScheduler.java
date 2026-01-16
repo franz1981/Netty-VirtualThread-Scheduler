@@ -149,15 +149,21 @@ public class EventLoopScheduler {
 		boolean canBlock = false;
 		while (!ioEventLoop.isShuttingDown()) {
 			canBlock = runIO(canBlock);
-			Thread.yield();
+			if (!runQueue.isEmpty()) {
+				Thread.yield();
+			}
 			// try running leftover write tasks before checking for I/O tasks
 			canBlock &= ioEventLoop.runNonBlockingTasks(RUNNING_YIELD_US) == 0;
-			Thread.yield();
+			if (!runQueue.isEmpty()) {
+				Thread.yield();
+			}
 		}
 		// we are shutting down, it shouldn't take long so let's spin a bit :P
 		while (!ioEventLoop.isTerminated()) {
 			ioEventLoop.runNow();
-			Thread.yield();
+			if (!runQueue.isEmpty()) {
+				Thread.yield();
+			}
 		}
 	}
 
@@ -284,7 +290,9 @@ public class EventLoopScheduler {
 			// continuations
 			// whilst is just woken up for I/O
 			assert eventLoopContinuatioToRun == null;
-			Thread.yield();
+			if (!runQueue.isEmpty()) {
+				Thread.yield();
+			}
 		}
 		return true;
 	}

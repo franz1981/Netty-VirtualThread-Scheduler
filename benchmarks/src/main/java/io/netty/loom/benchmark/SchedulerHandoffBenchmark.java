@@ -1,0 +1,281 @@
+/*
+ * Copyright 2026 The Netty VirtualThread Scheduler Project
+ *
+ * The Netty VirtualThread Scheduler Project licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance with the
+ * License. You may obtain a copy of the License at:
+ *
+ *   https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the
+ * License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+package io.netty.loom.benchmark;
+
+import io.netty.channel.IoEventLoop;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.epoll.EpollIoHandler;
+import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.uring.IoUringIoHandler;
+import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
+import io.netty.util.concurrent.FastThreadLocal;
+import org.HdrHistogram.Histogram;
+import org.jctools.queues.MpscArrayQueue;
+import org.jctools.util.Pow2;
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.BenchmarkParams;
+import org.openjdk.jmh.infra.Blackhole;
+
+import java.util.Arrays;
+import java.util.Queue;
+import java.util.concurrent.*;
+import java.util.function.Supplier;
+
+@BenchmarkMode(Mode.Throughput)
+@OutputTimeUnit(TimeUnit.SECONDS)
+@Warmup(iterations = 10, time = 1)
+@Measurement(iterations = 10, time = 1)
+@State(Scope.Benchmark)
+public class SchedulerHandoffBenchmark {
+
+	public enum IO {
+		EPOLL, NIO, IO_URING
+	}
+
+	// default is 1000 rps per user
+	@Param({"100"})
+	int serviceTimeUs;
+
+	@Param({"200000"})
+	int rate;
+
+	@Param({"512"})
+	int requestBytes;
+
+	@Param({"1024"})
+	int responseBytes;
+
+	// the total throughput will be roughly concurrency * 1000 / serviceTimeMs
+	@Param({"50"})
+	int concurrency;
+
+	private static final int EL_THREADS = Integer.getInteger("elThreads", -1);
+
+	@Param({"EPOLL"})
+	IO io;
+
+	MultiThreadIoEventLoopGroup group;
+
+	Supplier<ThreadFactory> threadFactory;
+
+	record RequestData(byte[] request, byte[] response) {
+	}
+
+	// let's make
+	Queue<RequestData> requestData;
+
+	private static final CopyOnWriteArrayList<Histogram> histograms = new CopyOnWriteArrayList<>();
+
+	private static final FastThreadLocal<Histogram> rttHistogram = new FastThreadLocal<>() {
+		@Override
+		public Histogram initialValue() {
+			var histo = new Histogram(3);
+			histograms.add(histo);
+			return histo;
+		}
+	};
+
+	private long fireTimePeriodNs;
+	private boolean allOutThroughput;
+	private long nextFireTime;
+
+	@Setup(Level.Trial)
+	public void resetHistograms() {
+		// TODO verify if the trial is the right level
+		histograms.forEach(Histogram::reset);
+	}
+
+	@Setup
+	public void setup(BenchmarkParams params) throws ExecutionException, InterruptedException {
+		if (rate < 0) {
+			allOutThroughput = true;
+		} else {
+			fireTimePeriodNs = (long) (1000_000_000d / rate);
+		}
+		if (EL_THREADS <= 0) {
+			throw new IllegalStateException("Please set the elThreads system property to a positive integer");
+		}
+		var ioFactory = switch (io) {
+			case NIO -> NioIoHandler.newFactory();
+			case IO_URING -> IoUringIoHandler.newFactory();
+			case EPOLL -> EpollIoHandler.newFactory();
+		};
+		if (params.getBenchmark().contains("custom")) {
+			var group = new VirtualMultithreadIoEventLoopGroup(EL_THREADS, ioFactory);
+			threadFactory = group::vThreadFactory;
+			this.group = group;
+		} else {
+			group = new MultiThreadIoEventLoopGroup(EL_THREADS, ioFactory);
+			var sameFactory = Thread.ofVirtual().factory();
+			threadFactory = () -> sameFactory;
+		}
+		if (concurrency > 0) {
+			requestData = new MpscArrayQueue<>(Pow2.roundToPowerOfTwo(concurrency));
+			for (int i = 0; i < concurrency; i++) {
+				requestData.offer(new RequestData(new byte[requestBytes], new byte[responseBytes]));
+			}
+		} else {
+			requestData = null;
+		}
+		nextFireTime = System.nanoTime();
+	}
+
+	private static void spinUntil(long targetTimeNs) {
+		while (System.nanoTime() < targetTimeNs) {
+			Thread.onSpinWait();
+		}
+	}
+
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3",
+			"-DelThreads=1"})
+	public void customScheduler(Blackhole bh) throws InterruptedException {
+		doRequest(bh);
+	}
+
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3",
+			"-DelThreads=2"})
+	public void customSchedulerTwoEL(Blackhole bh) throws InterruptedException {
+		doRequest(bh);
+	}
+
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false", "-DelThreads=1",
+			"-Djdk.virtualThreadScheduler.parallelism=1"})
+	public void defaultScheduler(Blackhole bh) throws InterruptedException {
+		doRequest(bh);
+	}
+
+	// just burn a full core on this!
+	private void doRequest(Blackhole bh) {
+		if (!allOutThroughput) {
+			spinUntil(nextFireTime);
+		}
+		var data = spinWaitRequest();
+		// avoid coordinated omission!
+		long startRequest = allOutThroughput ? System.nanoTime() : nextFireTime;
+		if (!allOutThroughput) {
+			nextFireTime += fireTimePeriodNs;
+		}
+		// write some data into the request
+		byte[] request = data == null ? new byte[requestBytes] : data.request;
+		byte[] response = data == null ? null : data.response;
+
+		Arrays.fill(request, (byte) 1);
+
+		// this is handing off this to the loom scheduler
+		var el = group.next();
+		el.execute(() -> {
+			// This is running in a Netty event loop thread
+			// process the request by reading it
+			for (byte b : request) {
+				bh.consume(b);
+			}
+			// off-load the actual (blocking) processing to a virtual thread
+			threadFactory.get().newThread(() -> {
+				blockingProcess(bh, el, startRequest, data, response);
+			}).start();
+		});
+	}
+
+	// this is required to make sure NONE of the fine grain ops like writeByte won't
+	// be inlined
+	@CompilerControl(CompilerControl.Mode.DONT_INLINE)
+	private void blockingProcess(Blackhole bh, IoEventLoop el, long startRequest, RequestData data, byte[] response) {
+		try {
+			// simulate processing time:
+			// NOTE: if we're using sleep here, the built-in scheduler will use the FJ
+			// built-in one
+			// but the custom scheduler, nope, see
+			// https://github.com/openjdk/loom/blob/3d9e866f60bdebc55b59b9fd40a4898002c35e96/src/java.base/share/classes/java/lang/VirtualThread.java#L1629
+			if (serviceTimeUs > 0) {
+				TimeUnit.MICROSECONDS.sleep(serviceTimeUs);
+			}
+			// write the response content
+			if (response == null) {
+				response = new byte[responseBytes];
+			}
+			for (int i = 0; i < responseBytes; i++) {
+				response[i] = (byte) 42;
+			}
+			byte[] responseCreated = response;
+			el.execute(() -> {
+				nonBlockingCompleteProcessing(bh, startRequest, data, responseCreated);
+			});
+		} catch (Throwable e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	// this is required to make sure NONE of the fine grain ops like writeByte won't
+	// be inlined
+	@CompilerControl(CompilerControl.Mode.DONT_INLINE)
+	private void nonBlockingCompleteProcessing(Blackhole bh, long startRequest, RequestData data, byte[] response) {
+		// read the response
+		int toRead = this.responseBytes;
+		for (int i = 0; i < toRead; i++) {
+			bh.consume(response[i]);
+		}
+		// record RTT
+		long rttNs = System.nanoTime() - startRequest;
+		Histogram histogram = rttHistogram.get();
+		histogram.recordValue(rttNs);
+		// offer it just at the end
+		if (data != null) {
+			requestData.add(data);
+		}
+	}
+
+	private RequestData spinWaitRequest() {
+		Queue<RequestData> requestData = this.requestData;
+		if (requestData == null) {
+			return null;
+		}
+		var request = requestData.poll();
+		while (request == null) {
+			Thread.onSpinWait();
+			request = requestData.poll();
+		}
+		return request;
+	}
+
+	@TearDown
+	public void shutdown() throws ExecutionException, InterruptedException {
+		// wait for all tasks to complete
+		if (concurrency > 0) {
+			for (int i = 0; i < concurrency; i++) {
+				spinWaitRequest();
+			}
+		} else {
+			// TODO enqueue for each EL a request waiting to complete?
+		}
+		group.shutdownGracefully().get();
+		// print percentiles of RTT
+		Histogram combined = new Histogram(3);
+		histograms.forEach(combined::add);
+		histograms.clear();
+		// Print percentile distribution
+		System.out.printf("RTT (µs) - Avg: %.2f, P50: %.2f, P90: %.2f, P99: %.2f, Max: %.2f%n",
+				combined.getMean() / 1000.0, combined.getValueAtPercentile(50) / 1000.0,
+				combined.getValueAtPercentile(90) / 1000.0, combined.getValueAtPercentile(99) / 1000.0,
+				combined.getMaxValue() / 1000.0);
+	}
+}
