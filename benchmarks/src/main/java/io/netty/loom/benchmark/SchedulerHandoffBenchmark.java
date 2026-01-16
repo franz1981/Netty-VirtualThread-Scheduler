@@ -14,8 +14,6 @@
  */
 package io.netty.loom.benchmark;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.IoEventLoop;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.epoll.EpollIoHandler;
@@ -123,9 +121,13 @@ public class SchedulerHandoffBenchmark {
 			var sameFactory = Thread.ofVirtual().factory();
 			threadFactory = () -> sameFactory;
 		}
-		requestData = new MpscArrayQueue<>(Pow2.roundToPowerOfTwo(concurrency));
-		for (int i = 0; i < concurrency; i++) {
-			requestData.offer(new RequestData(new byte[requestBytes], new byte[responseBytes]));
+		if (concurrency > 0) {
+			requestData = new MpscArrayQueue<>(Pow2.roundToPowerOfTwo(concurrency));
+			for (int i = 0; i < concurrency; i++) {
+				requestData.offer(new RequestData(new byte[requestBytes], new byte[responseBytes]));
+			}
+		} else {
+			requestData = null;
 		}
 		nextFireTime = System.nanoTime();
 	}
@@ -142,6 +144,15 @@ public class SchedulerHandoffBenchmark {
 			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3",
 			"-DelThreads=1"})
 	public void customScheduler(Blackhole bh) throws InterruptedException {
+		doRequest(bh);
+	}
+
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
+			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3",
+			"-DelThreads=2"})
+	public void customSchedulerTwoEL(Blackhole bh) throws InterruptedException {
 		doRequest(bh);
 	}
 
@@ -165,9 +176,11 @@ public class SchedulerHandoffBenchmark {
 			nextFireTime += fireTimePeriodNs;
 		}
 		// write some data into the request
-		Arrays.fill(data.request, (byte) 1);
-		byte[] request = data.request;
-		byte[] response = data.response;
+		byte[] request = data == null ? new byte[requestBytes] : data.request;
+		byte[] response = data == null ? null : data.response;
+
+		Arrays.fill(request, (byte) 1);
+
 		// this is handing off this to the loom scheduler
 		var el = group.next();
 		el.execute(() -> {
@@ -193,13 +206,19 @@ public class SchedulerHandoffBenchmark {
 			// built-in one
 			// but the custom scheduler, nope, see
 			// https://github.com/openjdk/loom/blob/3d9e866f60bdebc55b59b9fd40a4898002c35e96/src/java.base/share/classes/java/lang/VirtualThread.java#L1629
-			TimeUnit.MICROSECONDS.sleep(serviceTimeUs);
+			if (serviceTimeUs > 0) {
+				TimeUnit.MICROSECONDS.sleep(serviceTimeUs);
+			}
 			// write the response content
+			if (response == null) {
+				response = new byte[responseBytes];
+			}
 			for (int i = 0; i < responseBytes; i++) {
 				response[i] = (byte) 42;
 			}
+			byte[] responseCreated = response;
 			el.execute(() -> {
-				nonBlockingCompleteProcessing(bh, startRequest, data, response);
+				nonBlockingCompleteProcessing(bh, startRequest, data, responseCreated);
 			});
 		} catch (Throwable e) {
 			throw new RuntimeException(e);
@@ -220,10 +239,16 @@ public class SchedulerHandoffBenchmark {
 		Histogram histogram = rttHistogram.get();
 		histogram.recordValue(rttNs);
 		// offer it just at the end
-		requestData.add(data);
+		if (data != null) {
+			requestData.add(data);
+		}
 	}
 
 	private RequestData spinWaitRequest() {
+		Queue<RequestData> requestData = this.requestData;
+		if (requestData == null) {
+			return null;
+		}
 		var request = requestData.poll();
 		while (request == null) {
 			Thread.onSpinWait();
@@ -235,8 +260,12 @@ public class SchedulerHandoffBenchmark {
 	@TearDown
 	public void shutdown() throws ExecutionException, InterruptedException {
 		// wait for all tasks to complete
-		for (int i = 0; i < concurrency; i++) {
-			spinWaitRequest();
+		if (concurrency > 0) {
+			for (int i = 0; i < concurrency; i++) {
+				spinWaitRequest();
+			}
+		} else {
+			// TODO enqueue for each EL a request waiting to complete?
 		}
 		group.shutdownGracefully().get();
 		// print percentiles of RTT
