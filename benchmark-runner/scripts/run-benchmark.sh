@@ -128,6 +128,20 @@ validate_config() {
     log "  Measurement window: $((total_secs - warmup_secs))s"
 }
 
+check_curl() {
+    # Check if curl is present
+    if ! command -v curl &> /dev/null; then
+        echo "curl not found, installing..."
+
+        # Added DEBIAN_FRONTEND=noninteractive to prevent it from hanging on prompts
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update && apt-get install -y curl
+    fi
+
+    # Verify and log the version (using head to just get the first line)
+    echo "curl version: $(curl --version | head -n 1)"
+}
+
 check_jbang() {
     if ! command -v jbang &> /dev/null; then
         log "jbang not found, installing..."
@@ -613,6 +627,9 @@ EOF
 
     # Create output directory
     mkdir -p "$OUTPUT_DIR"
+
+    # Check curl
+    check_curl
 
     # Check jbang
     check_jbang
