@@ -121,9 +121,33 @@ java -jar target/benchmarks.jar
 - To use the `VirtualMultithreadIoEventLoopGroup` set the JVM property to install the Netty scheduler:
   -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler
 
+## Release Process
+
+This project uses [JReleaser](https://jreleaser.org/) to automate the release process. See [RELEASE.md](RELEASE.md) for detailed instructions on setting up and triggering releases.
+
+### Quick Start
+
+1. Configure GitHub secrets (see [RELEASE.md](RELEASE.md))
+2. Go to [Actions](../../actions) → Release workflow
+3. Click "Run workflow" and enter the release version
+4. The workflow will handle everything automatically
+
+### What Gets Released
+
+- **Maven Central**: Only `netty-virtualthread-core` artifact
+- **GitHub**: Full release with changelog
+- **Post-Release**: All modules automatically bumped to next SNAPSHOT version
+
+For detailed prerequisites and troubleshooting, see [RELEASE.md](RELEASE.md).
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
 ## References
 - Project Loom (OpenJDK): https://openjdk.org/projects/loom/
 - Netty Project: https://netty.io/
+- JReleaser: https://jreleaser.org/
 
 ## License
 

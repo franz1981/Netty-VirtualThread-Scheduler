@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download and setup Loom JDK
+        run: |
+          # Download the latest Loom build
+          wget -q https://builds.shipilev.net/openjdk-jdk-loom/openjdk-jdk-loom-linux-x86_64-server.tar.xz
+
+          # Extract the archive
+          tar -xf openjdk-jdk-loom-linux-x86_64-server.tar.xz
+
+          # Set JAVA_HOME for subsequent steps
+          echo "JAVA_HOME=$PWD/jdk" >> $GITHUB_ENV
+          echo "$PWD/jdk/bin" >> $GITHUB_PATH
+
+      - name: Verify Java version
+        run: |
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Set up Git configuration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Set release version
+        run: |
+          mvn versions:set -DnewVersion=${{ github.event.inputs.version }} -DgenerateBackupPoms=false
+          git add .
+          git commit -m "Release version ${{ github.event.inputs.version }}"
+
+      - name: Build and verify
+        run: mvn -B clean verify -P '!dev,release' -DskipTests
+
+      - name: Set up GPG
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | base64 --decode | gpg --batch --import
+          echo "GPG key imported successfully"
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Stage to Maven Central
+        run: |
+          mvn -B deploy -P '!dev,release' -DskipTests -DaltDeploymentRepository=local::file:./target/staging-deploy
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Run JReleaser
+        run: |
+          mvn -B jreleaser:full-release -P release
+        env:
+          JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JRELEASER_NEXUS2_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          JRELEASER_NEXUS2_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          JRELEASER_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
+          JRELEASER_GPG_SECRET_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Bump to next SNAPSHOT version
+        run: |
+          # Calculate next version
+          VERSION="${{ github.event.inputs.version }}"
+          IFS='.' read -ra PARTS <<< "$VERSION"
+          MAJOR=${PARTS[0]}
+          MINOR=${PARTS[1]}
+          PATCH=${PARTS[2]}
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-SNAPSHOT"
+
+          echo "Bumping version to ${NEXT_VERSION}"
+
+          # Update all pom.xml files to SNAPSHOT
+          mvn versions:set -DnewVersion=${NEXT_VERSION} -DgenerateBackupPoms=false
+
+          # Commit and push the version change
+          git add pom.xml */pom.xml
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Prepare for next development iteration: ${NEXT_VERSION}"
+            git push origin HEAD:master
+          fi
+
+      - name: JReleaser output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jreleaser-logs
+          path: |
+            target/jreleaser/trace.log
+            target/jreleaser/output.properties

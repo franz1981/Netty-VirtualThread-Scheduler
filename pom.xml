@@ -9,6 +9,32 @@
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
+    <name>Netty VirtualThread Scheduler</name>
+    <description>Integration between Java Virtual Threads (Project Loom) and Netty's event loop</description>
+    <url>https://github.com/franz1981/Netty-VirtualThread-Scheduler</url>
+    <inceptionYear>2024</inceptionYear>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>franz1981</id>
+            <name>Francesco Nigro</name>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/franz1981/Netty-VirtualThread-Scheduler.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/franz1981/Netty-VirtualThread-Scheduler.git</developerConnection>
+        <url>https://github.com/franz1981/Netty-VirtualThread-Scheduler</url>
+    </scm>
+
     <modules>
         <module>core</module>
         <module>benchmarks</module>
@@ -22,6 +48,7 @@
         <junit.version>6.0.2</junit.version>
         <jmh.version>1.37</jmh.version>
         <java.version>27</java.version>
+        <jreleaser-maven-plugin.version>1.15.0</jreleaser-maven-plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -65,22 +92,6 @@
                 <configuration>
                     <java>
                         <eclipse/>
-                        <licenseHeader>
-                            <content>/*
- * Copyright $YEAR The Netty VirtualThread Scheduler Project
- *
- * The Netty VirtualThread Scheduler Project licenses this file to you under the Apache License,
- * version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at:
- *
- *   https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the
- * License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
- * either express or implied. See the License for the specific language governing permissions
- * and limitations under the License.
- */</content>
-                        </licenseHeader>
                     </java>
                 </configuration>
 
@@ -99,7 +110,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.14.1</version>
+                    <version>3.11.0</version>
                     <configuration>
                         <source>${java.version}</source>
                         <target>${java.version}</target>
@@ -155,6 +166,67 @@
                                 <goals><goal>apply</goal></goals>
                             </execution>
                         </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.6.3</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                                <configuration>
+                                    <attach>true</attach>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>--loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.jreleaser</groupId>
+                        <artifactId>jreleaser-maven-plugin</artifactId>
+                        <version>${jreleaser-maven-plugin.version}</version>
                     </plugin>
                 </plugins>
             </build>
