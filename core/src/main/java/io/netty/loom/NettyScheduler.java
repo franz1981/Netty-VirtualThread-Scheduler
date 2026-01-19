@@ -44,7 +44,7 @@ import io.netty.loom.EventLoopScheduler.SharedRef;
 
 public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
-	private static volatile NettyScheduler INSTANCE;
+	static volatile NettyScheduler INSTANCE;
 
 	private final Thread.VirtualThreadScheduler jdkBuildinScheduler;
 
