@@ -111,7 +111,8 @@ public class HandoffHttpServer {
 		this(port, mockUrl, threads, useCustomScheduler, io, silent, false);
 	}
 
-	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent, boolean noTimeout) {
+	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
+			boolean noTimeout) {
 		this.port = port;
 		this.mockUrl = mockUrl;
 		this.threads = threads;
@@ -195,9 +196,8 @@ public class HandoffHttpServer {
 					HttpContext context) -> TimeValue.NEG_ONE_MILLISECOND;
 			BasicHttpClientConnectionManager cm = new BasicHttpClientConnectionManager();
 			RequestConfig requestConfig = noTimeout ? NO_TIMEOUT_HTTP_REQUEST_CONFIG : RequestConfig.DEFAULT;
-			httpClient = HttpClientBuilder.create().setConnectionManager(cm)
-					.setDefaultRequestConfig(requestConfig).setConnectionManagerShared(false)
-					.setKeepAliveStrategy(keepAliveStrategy).build();
+			httpClient = HttpClientBuilder.create().setConnectionManager(cm).setDefaultRequestConfig(requestConfig)
+					.setConnectionManagerShared(false).setKeepAliveStrategy(keepAliveStrategy).build();
 		}
 
 		@Override
@@ -331,7 +331,8 @@ public class HandoffHttpServer {
 			}
 		}
 
-		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout);
+		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, useCustomScheduler, io, silent,
+				noTimeout);
 		server.start();
 
 		// Shutdown hook
