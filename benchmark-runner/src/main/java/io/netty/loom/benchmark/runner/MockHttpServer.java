@@ -21,6 +21,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -103,7 +104,7 @@ public class MockHttpServer {
 		workerGroup = new NioEventLoopGroup(threads);
 
 		ServerBootstrap b = new ServerBootstrap();
-		b.group(workerGroup).channel(NioServerSocketChannel.class)
+		b.group(workerGroup).channel(NioServerSocketChannel.class).childOption(ChannelOption.TCP_NODELAY, true)
 				.childHandler(new ChannelInitializer<SocketChannel>() {
 					@Override
 					protected void initChannel(SocketChannel ch) {

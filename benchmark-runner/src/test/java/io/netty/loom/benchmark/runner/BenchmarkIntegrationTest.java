@@ -53,14 +53,16 @@ class BenchmarkIntegrationTest {
 
 	static Stream<Arguments> serverConfigurations() {
 		return Stream.of(
-				// IO type, use custom scheduler, description
-				Arguments.of(HandoffHttpServer.IO.NIO, false, "NIO with default scheduler"),
-				Arguments.of(HandoffHttpServer.IO.NIO, true, "NIO with custom scheduler"),
-				Arguments.of(HandoffHttpServer.IO.EPOLL, false, "EPOLL with default scheduler"),
-				Arguments.of(HandoffHttpServer.IO.EPOLL, true, "EPOLL with custom scheduler"));
+				// IO type, use custom scheduler, use reactive, description
+				Arguments.of(HandoffHttpServer.IO.NIO, false, false, "NIO with default scheduler"),
+				Arguments.of(HandoffHttpServer.IO.NIO, true, false, "NIO with custom scheduler"),
+				Arguments.of(HandoffHttpServer.IO.NIO, false, true, "NIO with reactive handler"),
+				Arguments.of(HandoffHttpServer.IO.EPOLL, false, false, "EPOLL with default scheduler"),
+				Arguments.of(HandoffHttpServer.IO.EPOLL, true, false, "EPOLL with custom scheduler"),
+				Arguments.of(HandoffHttpServer.IO.EPOLL, false, true, "EPOLL with reactive handler"));
 	}
 
-	void startServers(HandoffHttpServer.IO ioType, boolean useCustomScheduler) throws Exception {
+	void startServers(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive) throws Exception {
 		// Use unique ports for each test to avoid conflicts
 		mockPort = PORT_COUNTER.getAndIncrement();
 		handoffPort = PORT_COUNTER.getAndIncrement();
@@ -80,7 +82,7 @@ class BenchmarkIntegrationTest {
 
 		// Start handoff server with specified configuration
 		handoffServer = new HandoffHttpServer(handoffPort, "http://localhost:" + mockPort + "/fruits", 1,
-				useCustomScheduler, ioType);
+				useCustomScheduler, ioType, true, false, useReactive);
 		handoffServer.start();
 
 		// Wait for handoff server to be ready
@@ -105,64 +107,64 @@ class BenchmarkIntegrationTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void mockServerHealthEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, String description)
-			throws Exception {
-		startServers(ioType, useCustomScheduler);
+	void mockServerHealthEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
+			String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 		given().port(mockPort).when().get("/health").then().statusCode(200).body(equalTo("OK"));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void mockServerFruitsEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, String description)
-			throws Exception {
-		startServers(ioType, useCustomScheduler);
+	void mockServerFruitsEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
+			String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 		given().port(mockPort).when().get("/fruits").then().statusCode(200).contentType(ContentType.JSON)
 				.body("fruits", hasSize(10)).body("fruits[0].name", equalTo("Apple"))
 				.body("fruits[0].color", equalTo("Red")).body("fruits[0].price", equalTo(1.20f));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServerHealthEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, String description)
-			throws Exception {
-		startServers(ioType, useCustomScheduler);
+	void handoffServerHealthEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
+			String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 		given().port(handoffPort).when().get("/health").then().statusCode(200).body(equalTo("OK"));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServerFruitsEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, String description)
-			throws Exception {
-		startServers(ioType, useCustomScheduler);
+	void handoffServerFruitsEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
+			String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 		given().port(handoffPort).when().get("/fruits").then().statusCode(200).contentType(ContentType.JSON)
 				.body("fruits", hasSize(10)).body("fruits[0].name", equalTo("Apple"))
 				.body("fruits[0].color", equalTo("Red"));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServerRootEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, String description)
-			throws Exception {
-		startServers(ioType, useCustomScheduler);
+	void handoffServerRootEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
+			String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 		given().port(handoffPort).when().get("/").then().statusCode(200).contentType(ContentType.JSON).body("fruits",
 				hasSize(10));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServer404ForUnknownPath(HandoffHttpServer.IO ioType, boolean useCustomScheduler, String description)
-			throws Exception {
-		startServers(ioType, useCustomScheduler);
+	void handoffServer404ForUnknownPath(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
+			String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 		given().port(handoffPort).when().get("/unknown").then().statusCode(404);
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServerReturnsAllFruits(HandoffHttpServer.IO ioType, boolean useCustomScheduler, String description)
-			throws Exception {
-		startServers(ioType, useCustomScheduler);
+	void handoffServerReturnsAllFruits(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
+			String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 
 		List<String> fruitNames = given().port(handoffPort).when().get("/fruits").then().statusCode(200).extract()
 				.jsonPath().getList("fruits.name", String.class);
@@ -173,11 +175,11 @@ class BenchmarkIntegrationTest {
 		assertTrue(fruitNames.contains("Kiwi"));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
 	void handoffServerHandlesMultipleRequests(HandoffHttpServer.IO ioType, boolean useCustomScheduler,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler);
+			boolean useReactive, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 
 		// Send multiple requests to verify server handles concurrent load
 		for (int i = 0; i < 10; i++) {
@@ -185,11 +187,11 @@ class BenchmarkIntegrationTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void verifyEndToEndJsonParsing(HandoffHttpServer.IO ioType, boolean useCustomScheduler, String description)
-			throws Exception {
-		startServers(ioType, useCustomScheduler);
+	void verifyEndToEndJsonParsing(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
+			String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive);
 
 		// This test verifies the complete flow:
 		// 1. HandoffHttpServer receives request

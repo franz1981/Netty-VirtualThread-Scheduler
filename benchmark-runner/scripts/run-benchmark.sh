@@ -37,6 +37,7 @@ SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
 SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-3}"  # jdk.pollerMode value (1, 2, or 3)
 SERVER_FJ_PARALLELISM="${SERVER_FJ_PARALLELISM:-}"  # ForkJoinPool parallelism (empty = JVM default)
 SERVER_NO_TIMEOUT="${SERVER_NO_TIMEOUT:-false}"  # Disable HTTP client timeout
+SERVER_REACTIVE="${SERVER_REACTIVE:-false}"  # Use reactive handler with Project Reactor
 
 # Load generator configuration
 LOAD_GEN_TASKSET="${LOAD_GEN_TASKSET:-0,1}"  # CPUs for load generator
@@ -284,6 +285,7 @@ start_handoff_server() {
         --use-custom-scheduler $SERVER_USE_CUSTOM_SCHEDULER \
         --io $SERVER_IO \
         --no-timeout $SERVER_NO_TIMEOUT \
+        --reactive $SERVER_REACTIVE \
         --silent"
 
     log "Handoff server command: $cmd"
@@ -473,6 +475,7 @@ print_config() {
     log "Handoff Server:"
     log "  Port:           $SERVER_PORT"
     log "  Threads:        $SERVER_THREADS"
+    log "  Reactive:       $SERVER_REACTIVE"
     log "  Custom Sched:   $SERVER_USE_CUSTOM_SCHEDULER"
     log "  I/O Type:       $SERVER_IO"
     log "  No Timeout:     $SERVER_NO_TIMEOUT"
@@ -540,8 +543,9 @@ Mock Server:
 Handoff Server:
   SERVER_PORT               Server port (default: 8081)
   SERVER_THREADS            Number of event loop threads (default: 2)
+  SERVER_REACTIVE           Use reactive handler with Reactor (default: false)
   SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
-  SERVER_IO                 I/O type: epoll or nio (default: epoll)
+  SERVER_IO                 I/O type: epoll, nio, or io_uring (default: epoll)
   SERVER_NO_TIMEOUT         Disable HTTP client timeout (default: false)
   SERVER_TASKSET            CPU affinity range (default: "2,3")
   SERVER_JVM_ARGS           Additional JVM arguments
@@ -597,6 +601,12 @@ Examples:
   LOAD_GEN_RATE=10000 \
   TOTAL_DURATION=60s \
   WARMUP_DURATION=15s \
+  ./run-benchmark.sh
+
+  # Reactive handler test
+  JAVA_HOME=/path/to/jdk \
+  SERVER_REACTIVE=true \
+  SERVER_THREADS=2 \
   ./run-benchmark.sh
 
 EOF
