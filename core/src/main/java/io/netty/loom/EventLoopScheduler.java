@@ -115,7 +115,7 @@ public class EventLoopScheduler {
 		var unstartedBuilder = Thread.ofVirtual();
 		NettyScheduler scheduler = NettyScheduler.INSTANCE;
 		return runnable -> {
-			var vTask = scheduler.newThread(unstartedBuilder, () -> runWithContext(runnable, sharedRef));
+			var vTask = scheduler.newThread(unstartedBuilder, null, () -> runWithContext(runnable, sharedRef));
 			vTask.attach(sharedRef);
 			return vTask.thread();
 		};
