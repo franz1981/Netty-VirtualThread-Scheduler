@@ -32,6 +32,8 @@ import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ServerSocketChannel;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.uring.IoUringIoHandler;
+import io.netty.channel.uring.IoUringServerSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
@@ -47,6 +49,7 @@ import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
 import org.apache.hc.client5.http.ConnectionKeepAliveStrategy;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
@@ -56,6 +59,7 @@ import org.apache.hc.core5.http.HttpResponse;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.protocol.HttpContext;
 import org.apache.hc.core5.util.TimeValue;
+import org.apache.hc.core5.util.Timeout;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -80,7 +84,7 @@ import java.util.function.Supplier;
 public class HandoffHttpServer {
 
 	public enum IO {
-		EPOLL, NIO
+		EPOLL, NIO, IO_URING
 	}
 
 	private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -93,33 +97,41 @@ public class HandoffHttpServer {
 	private final boolean useCustomScheduler;
 	private final IO io;
 	private final boolean silent;
+	private final boolean noTimeout;
 
 	private MultiThreadIoEventLoopGroup workerGroup;
 	private Channel serverChannel;
 	private Supplier<ThreadFactory> threadFactorySupplier;
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io) {
-		this(port, mockUrl, threads, useCustomScheduler, io, false);
+		this(port, mockUrl, threads, useCustomScheduler, io, false, false);
 	}
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent) {
+		this(port, mockUrl, threads, useCustomScheduler, io, silent, false);
+	}
+
+	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent, boolean noTimeout) {
 		this.port = port;
 		this.mockUrl = mockUrl;
 		this.threads = threads;
 		this.useCustomScheduler = useCustomScheduler;
 		this.io = io;
 		this.silent = silent;
+		this.noTimeout = noTimeout;
 	}
 
 	public void start() throws InterruptedException {
 		var ioHandlerFactory = switch (io) {
 			case NIO -> NioIoHandler.newFactory();
 			case EPOLL -> EpollIoHandler.newFactory();
+			case IO_URING -> IoUringIoHandler.newFactory();
 		};
 
 		Class<? extends ServerSocketChannel> serverChannelClass = switch (io) {
 			case NIO -> NioServerSocketChannel.class;
 			case EPOLL -> EpollServerSocketChannel.class;
+			case IO_URING -> IoUringServerSocketChannel.class;
 		};
 
 		if (useCustomScheduler) {
@@ -149,6 +161,7 @@ public class HandoffHttpServer {
 			System.out.printf("  Threads: %d%n", threads);
 			System.out.printf("  Custom Scheduler: %s%n", useCustomScheduler);
 			System.out.printf("  I/O: %s%n", io);
+			System.out.printf("  No Timeout: %s%n", noTimeout);
 		}
 	}
 
@@ -168,6 +181,10 @@ public class HandoffHttpServer {
 		serverChannel.closeFuture().sync();
 	}
 
+	private static final RequestConfig NO_TIMEOUT_HTTP_REQUEST_CONFIG = RequestConfig.custom()
+			.setResponseTimeout(Timeout.DISABLED) // infinite block
+			.build();
+
 	private class HandoffHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
 		private final CloseableHttpClient httpClient;
@@ -177,7 +194,9 @@ public class HandoffHttpServer {
 			ConnectionKeepAliveStrategy keepAliveStrategy = (HttpResponse response,
 					HttpContext context) -> TimeValue.NEG_ONE_MILLISECOND;
 			BasicHttpClientConnectionManager cm = new BasicHttpClientConnectionManager();
-			httpClient = HttpClientBuilder.create().setConnectionManager(cm).setConnectionManagerShared(false)
+			RequestConfig requestConfig = noTimeout ? NO_TIMEOUT_HTTP_REQUEST_CONFIG : RequestConfig.DEFAULT;
+			httpClient = HttpClientBuilder.create().setConnectionManager(cm)
+					.setDefaultRequestConfig(requestConfig).setConnectionManagerShared(false)
 					.setKeepAliveStrategy(keepAliveStrategy).build();
 		}
 
@@ -294,6 +313,7 @@ public class HandoffHttpServer {
 		boolean useCustomScheduler = false;
 		IO io = IO.EPOLL;
 		boolean silent = false;
+		boolean noTimeout = false;
 
 		for (int i = 0; i < args.length; i++) {
 			switch (args[i]) {
@@ -303,6 +323,7 @@ public class HandoffHttpServer {
 				case "--use-custom-scheduler" -> useCustomScheduler = Boolean.parseBoolean(args[++i]);
 				case "--io" -> io = IO.valueOf(args[++i].toUpperCase());
 				case "--silent" -> silent = true;
+				case "--no-timeout" -> noTimeout = Boolean.parseBoolean(args[++i]);
 				case "--help" -> {
 					printUsage();
 					return;
@@ -310,7 +331,7 @@ public class HandoffHttpServer {
 			}
 		}
 
-		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, useCustomScheduler, io, silent);
+		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout);
 		server.start();
 
 		// Shutdown hook
@@ -329,6 +350,7 @@ public class HandoffHttpServer {
 				  --threads <n>              Number of event loop threads (default: 1)
 				  --use-custom-scheduler     Use custom Netty scheduler (default: false)
 				  --io <epoll|nio>           I/O type (default: epoll)
+				  --no-timeout <true|false>  Disable HTTP client timeout (default: false)
 				  --silent                   Suppress output messages
 				  --help                     Show this help
 				""");
