@@ -18,14 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelPipeline;
-import io.netty.channel.IoEventLoop;
-import io.netty.channel.MultiThreadIoEventLoopGroup;
-import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.*;
 import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.nio.NioIoHandler;
@@ -98,21 +91,27 @@ public class HandoffHttpServer {
 	private final IO io;
 	private final boolean silent;
 	private final boolean noTimeout;
+	private final boolean useReactive;
 
 	private MultiThreadIoEventLoopGroup workerGroup;
 	private Channel serverChannel;
 	private Supplier<ThreadFactory> threadFactorySupplier;
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io) {
-		this(port, mockUrl, threads, useCustomScheduler, io, false, false);
+		this(port, mockUrl, threads, useCustomScheduler, io, false, false, false);
 	}
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent) {
-		this(port, mockUrl, threads, useCustomScheduler, io, silent, false);
+		this(port, mockUrl, threads, useCustomScheduler, io, silent, false, false);
 	}
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
 			boolean noTimeout) {
+		this(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout, false);
+	}
+
+	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
+			boolean noTimeout, boolean useReactive) {
 		this.port = port;
 		this.mockUrl = mockUrl;
 		this.threads = threads;
@@ -120,6 +119,7 @@ public class HandoffHttpServer {
 		this.io = io;
 		this.silent = silent;
 		this.noTimeout = noTimeout;
+		this.useReactive = useReactive;
 	}
 
 	public void start() throws InterruptedException {
@@ -135,6 +135,12 @@ public class HandoffHttpServer {
 			case IO_URING -> IoUringServerSocketChannel.class;
 		};
 
+		Class<? extends io.netty.channel.socket.SocketChannel> clientChannelClass = switch (io) {
+			case NIO -> io.netty.channel.socket.nio.NioSocketChannel.class;
+			case EPOLL -> io.netty.channel.epoll.EpollSocketChannel.class;
+			case IO_URING -> io.netty.channel.uring.IoUringSocketChannel.class;
+		};
+
 		if (useCustomScheduler) {
 			var group = new VirtualMultithreadIoEventLoopGroup(threads, ioHandlerFactory);
 			threadFactorySupplier = group::vThreadFactory;
@@ -145,22 +151,30 @@ public class HandoffHttpServer {
 			threadFactorySupplier = () -> defaultFactory;
 		}
 		ServerBootstrap b = new ServerBootstrap();
-		b.group(workerGroup).channel(serverChannelClass).childHandler(new ChannelInitializer<SocketChannel>() {
-			@Override
-			protected void initChannel(SocketChannel ch) {
-				ChannelPipeline p = ch.pipeline();
-				p.addLast(new HttpServerCodec());
-				p.addLast(new HttpObjectAggregator(65536));
-				p.addLast(new HandoffHandler());
-			}
-		});
+		b.group(workerGroup).channel(serverChannelClass).childOption(ChannelOption.TCP_NODELAY, true)
+				.childHandler(new ChannelInitializer<SocketChannel>() {
+					@Override
+					protected void initChannel(SocketChannel ch) {
+						ChannelPipeline p = ch.pipeline();
+						p.addLast(new HttpServerCodec());
+						p.addLast(new HttpObjectAggregator(65536));
+						if (useReactive) {
+							p.addLast(new ReactiveHandoffHandler(mockUrl, noTimeout, clientChannelClass));
+						} else {
+							p.addLast(new HandoffHandler());
+						}
+					}
+				});
 
 		serverChannel = b.bind(port).sync().channel();
 		if (!silent) {
 			System.out.printf("Handoff HTTP Server started on port %d%n", port);
+			System.out.printf("  Mode: %s%n", useReactive ? "Reactive (Project Reactor)" : "Virtual Thread");
 			System.out.printf("  Mock URL: %s%n", mockUrl);
 			System.out.printf("  Threads: %d%n", threads);
-			System.out.printf("  Custom Scheduler: %s%n", useCustomScheduler);
+			if (!useReactive) {
+				System.out.printf("  Custom Scheduler: %s%n", useCustomScheduler);
+			}
 			System.out.printf("  I/O: %s%n", io);
 			System.out.printf("  No Timeout: %s%n", noTimeout);
 		}
@@ -314,6 +328,7 @@ public class HandoffHttpServer {
 		IO io = IO.EPOLL;
 		boolean silent = false;
 		boolean noTimeout = false;
+		boolean useReactive = false;
 
 		for (int i = 0; i < args.length; i++) {
 			switch (args[i]) {
@@ -324,6 +339,7 @@ public class HandoffHttpServer {
 				case "--io" -> io = IO.valueOf(args[++i].toUpperCase());
 				case "--silent" -> silent = true;
 				case "--no-timeout" -> noTimeout = Boolean.parseBoolean(args[++i]);
+				case "--reactive" -> useReactive = Boolean.parseBoolean(args[++i]);
 				case "--help" -> {
 					printUsage();
 					return;
@@ -332,7 +348,7 @@ public class HandoffHttpServer {
 		}
 
 		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, useCustomScheduler, io, silent,
-				noTimeout);
+				noTimeout, useReactive);
 		server.start();
 
 		// Shutdown hook
@@ -342,18 +358,24 @@ public class HandoffHttpServer {
 	}
 
 	private static void printUsage() {
-		System.out.println("""
-				Usage: java -cp benchmark-runner.jar io.netty.loom.benchmark.runner.HandoffHttpServer [options]
+		System.out.println(
+				"""
+						Usage: java -cp benchmark-runner.jar io.netty.loom.benchmark.runner.HandoffHttpServer [options]
 
-				Options:
-				  --port <port>              HTTP port (default: 8081)
-				  --mock-url <url>           Mock server URL (default: http://localhost:8080/fruits)
-				  --threads <n>              Number of event loop threads (default: 1)
-				  --use-custom-scheduler     Use custom Netty scheduler (default: false)
-				  --io <epoll|nio>           I/O type (default: epoll)
-				  --no-timeout <true|false>  Disable HTTP client timeout (default: false)
-				  --silent                   Suppress output messages
-				  --help                     Show this help
-				""");
+						Options:
+						  --port <port>                  HTTP port (default: 8081)
+						  --mock-url <url>               Mock server URL (default: http://localhost:8080/fruits)
+						  --threads <n>                  Number of event loop threads (default: 1)
+						  --use-custom-scheduler <bool>  Use custom Netty scheduler (default: false, ignored if --reactive is true)
+						  --io <epoll|nio|io_uring>      I/O type (default: epoll)
+						  --no-timeout <true|false>      Disable HTTP client timeout (default: false)
+						  --reactive <true|false>        Use reactive handler with Reactor (default: false)
+						  --silent                       Suppress output messages
+						  --help                         Show this help
+
+						Modes:
+						  Virtual Thread (default): Uses virtual threads with blocking Apache HttpClient
+						  Reactive (--reactive true): Uses Project Reactor with non-blocking Reactor Netty HTTP client
+						""");
 	}
 }
