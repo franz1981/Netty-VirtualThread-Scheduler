@@ -36,6 +36,7 @@ SERVER_TASKSET="${SERVER_TASKSET:-2,3}"  # CPUs for handoff server
 SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
 SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-3}"  # jdk.pollerMode value (1, 2, or 3)
 SERVER_FJ_PARALLELISM="${SERVER_FJ_PARALLELISM:-}"  # ForkJoinPool parallelism (empty = JVM default)
+SERVER_NO_TIMEOUT="${SERVER_NO_TIMEOUT:-false}"  # Disable HTTP client timeout
 
 # Load generator configuration
 LOAD_GEN_TASKSET="${LOAD_GEN_TASKSET:-0,1}"  # CPUs for load generator
@@ -282,6 +283,7 @@ start_handoff_server() {
         --threads $SERVER_THREADS \
         --use-custom-scheduler $SERVER_USE_CUSTOM_SCHEDULER \
         --io $SERVER_IO \
+        --no-timeout $SERVER_NO_TIMEOUT \
         --silent"
 
     log "Handoff server command: $cmd"
@@ -473,6 +475,7 @@ print_config() {
     log "  Threads:        $SERVER_THREADS"
     log "  Custom Sched:   $SERVER_USE_CUSTOM_SCHEDULER"
     log "  I/O Type:       $SERVER_IO"
+    log "  No Timeout:     $SERVER_NO_TIMEOUT"
     log "  Poller Mode:    $SERVER_POLLER_MODE"
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
     log "  CPU Affinity:   ${SERVER_TASKSET:-<none>}"
@@ -539,6 +542,7 @@ Handoff Server:
   SERVER_THREADS            Number of event loop threads (default: 2)
   SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
   SERVER_IO                 I/O type: epoll or nio (default: epoll)
+  SERVER_NO_TIMEOUT         Disable HTTP client timeout (default: false)
   SERVER_TASKSET            CPU affinity range (default: "2,3")
   SERVER_JVM_ARGS           Additional JVM arguments
   SERVER_POLLER_MODE        jdk.pollerMode value: 1, 2, or 3 (default: 3)

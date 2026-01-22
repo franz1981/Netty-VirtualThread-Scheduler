@@ -82,19 +82,19 @@ public class MockHttpServer {
 			.unreleasableBuffer(Unpooled.copiedBuffer("OK", CharsetUtil.UTF_8));
 
 	private final int port;
-	private final long thinkTimeMs;
+	private final long thinkTimeNs;
 	private final int threads;
 	private final boolean silent;
 	private EventLoopGroup workerGroup;
 	private Channel serverChannel;
 
-	public MockHttpServer(int port, long thinkTimeMs, int threads) {
+	public MockHttpServer(int port, double thinkTimeMs, int threads) {
 		this(port, thinkTimeMs, threads, false);
 	}
 
-	public MockHttpServer(int port, long thinkTimeMs, int threads, boolean silent) {
+	public MockHttpServer(int port, double thinkTimeMs, int threads, boolean silent) {
 		this.port = port;
-		this.thinkTimeMs = thinkTimeMs;
+		this.thinkTimeNs = (long) (thinkTimeMs * 1_000_000);
 		this.threads = threads;
 		this.silent = silent;
 	}
@@ -110,14 +110,14 @@ public class MockHttpServer {
 						ChannelPipeline p = ch.pipeline();
 						p.addLast(new HttpServerCodec());
 						p.addLast(new HttpObjectAggregator(65536));
-						p.addLast(new HttpHandler(thinkTimeMs));
+						p.addLast(new HttpHandler(thinkTimeNs));
 					}
 				});
 
 		serverChannel = b.bind(port).sync().channel();
 		if (!silent) {
-			System.out.printf("Mock HTTP Server started on port %d with %dms think time using %d thread(s)%n", port,
-					thinkTimeMs, threads);
+			System.out.printf("Mock HTTP Server started on port %d with %dns think time using %d thread(s)%n", port,
+					thinkTimeNs, threads);
 		}
 	}
 
@@ -134,10 +134,10 @@ public class MockHttpServer {
 	}
 
 	private static class HttpHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
-		private final long thinkTimeMs;
+		private final long thinkTimeNs;
 
 		HttpHandler(long thinkTimeMs) {
-			this.thinkTimeMs = thinkTimeMs;
+			this.thinkTimeNs = thinkTimeMs;
 		}
 
 		@Override
@@ -151,11 +151,11 @@ public class MockHttpServer {
 			}
 
 			if (uri.equals("/fruits") || uri.equals("/")) {
-				if (thinkTimeMs > 0) {
+				if (thinkTimeNs > 0) {
 					// Schedule response after think time delay
 					ctx.executor().schedule(
 							() -> sendResponse(ctx, CACHED_RESPONSE.duplicate(), "application/json", keepAlive),
-							thinkTimeMs, TimeUnit.MILLISECONDS);
+							thinkTimeNs, TimeUnit.NANOSECONDS);
 				} else {
 					sendResponse(ctx, CACHED_RESPONSE.duplicate(), "application/json", keepAlive);
 				}
@@ -194,14 +194,14 @@ public class MockHttpServer {
 
 	public static void main(String[] args) throws InterruptedException {
 		int port = 8080;
-		long thinkTimeMs = 100;
+		double thinkTimeMs = 100;
 		int threads = 1;
 		boolean silent = false;
 
 		for (int i = 0; i < args.length; i++) {
 			switch (args[i]) {
 				case "--port" -> port = Integer.parseInt(args[++i]);
-				case "--think-time" -> thinkTimeMs = Long.parseLong(args[++i]);
+				case "--think-time" -> thinkTimeMs = Double.parseDouble(args[++i]);
 				case "--threads" -> threads = Integer.parseInt(args[++i]);
 				case "--silent" -> silent = true;
 				default -> {
@@ -209,7 +209,7 @@ public class MockHttpServer {
 					if (i == 0)
 						port = Integer.parseInt(args[i]);
 					else if (i == 1)
-						thinkTimeMs = Long.parseLong(args[i]);
+						thinkTimeMs = Double.parseDouble(args[i]);
 					else if (i == 2)
 						threads = Integer.parseInt(args[i]);
 				}
