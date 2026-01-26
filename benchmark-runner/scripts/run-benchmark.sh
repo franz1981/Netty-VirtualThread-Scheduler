@@ -263,7 +263,7 @@ start_handoff_server() {
     fi
 
     if [[ -n "$SERVER_FJ_PARALLELISM" ]]; then
-        jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=1"
+        jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=$SERVER_FJ_PARALLELISM"
     fi
 
     # Add debug non-safepoints if profiling is enabled
