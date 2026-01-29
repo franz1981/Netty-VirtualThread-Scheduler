@@ -25,8 +25,12 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.epoll.Epoll;
+import io.netty.channel.epoll.EpollEventLoopGroup;
+import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.socket.ServerSocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -102,10 +106,17 @@ public class MockHttpServer {
 	}
 
 	public void start() throws InterruptedException {
-		workerGroup = new NioEventLoopGroup(threads);
+		Class<? extends ServerSocketChannel> serverChannelClass;
+		if (Epoll.isAvailable()) {
+			workerGroup = new EpollEventLoopGroup(threads);
+			serverChannelClass = EpollServerSocketChannel.class;
+		} else {
+			workerGroup = new NioEventLoopGroup(threads);
+			serverChannelClass = NioServerSocketChannel.class;
+		}
 
 		ServerBootstrap b = new ServerBootstrap();
-		b.group(workerGroup).channel(NioServerSocketChannel.class).childOption(ChannelOption.TCP_NODELAY, true)
+		b.group(workerGroup).channel(serverChannelClass).childOption(ChannelOption.TCP_NODELAY, true)
 				.childHandler(new ChannelInitializer<SocketChannel>() {
 					@Override
 					protected void initChannel(SocketChannel ch) {
