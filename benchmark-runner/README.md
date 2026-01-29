@@ -99,11 +99,17 @@ All configuration is via environment variables:
 Profiling starts 5 seconds into the steady-state phase and runs for a fixed 10 seconds.
 
 ### pidstat
+When enabled, pidstat always records three files: handoff server, mock server, and load generator.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENABLE_PIDSTAT` | false | Enable pidstat collection |
+| `ENABLE_PIDSTAT` | true | Enable pidstat collection |
 | `PIDSTAT_INTERVAL` | 1 | Collection interval (seconds) |
 | `PIDSTAT_OUTPUT` | pidstat.log | Output filename |
+| `PIDSTAT_MOCK_OUTPUT` | pidstat-mock.log | Mock server output filename |
+| `PIDSTAT_LOAD_GEN_OUTPUT` | pidstat-loadgen.log | Load generator output filename |
+| `PIDSTAT_HANDOFF_DETAILED` | true | Include per-thread detail for handoff server |
+| `PIDSTAT_HANDOFF_COLUMNS` | 200 | Handoff server pidstat column width |
 
 ### perf stat
 | Variable | Default | Description |
@@ -187,7 +193,10 @@ Results are saved to `./benchmark-results/` (configurable via `OUTPUT_DIR`):
 
 - `wrk-results.txt` - Load generator output with throughput/latency
 - `profile.html` - Flamegraph (if profiling enabled)
-- `pidstat.log` - Thread-level CPU usage (if pidstat enabled)
+- `pidstat.log` - Handoff server thread-level CPU usage (if pidstat enabled)
+- `pidstat.log` includes per-thread command lines when `PIDSTAT_HANDOFF_DETAILED=true`; adjust `PIDSTAT_HANDOFF_COLUMNS` if names are truncated.
+- `pidstat-mock.log` - Mock server thread-level CPU usage (if pidstat enabled)
+- `pidstat-loadgen.log` - Load generator CPU usage (if pidstat enabled)
 
 ## Architecture
 

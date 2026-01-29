@@ -61,9 +61,13 @@ PROFILER_OUTPUT="${PROFILER_OUTPUT:-profile.html}"
 ASYNC_PROFILER_PATH="${ASYNC_PROFILER_PATH:-}"  # Path to async-profiler
 
 # pidstat configuration
-ENABLE_PIDSTAT="${ENABLE_PIDSTAT:-false}"
+ENABLE_PIDSTAT="${ENABLE_PIDSTAT:-true}"
 PIDSTAT_INTERVAL="${PIDSTAT_INTERVAL:-1}"
 PIDSTAT_OUTPUT="${PIDSTAT_OUTPUT:-pidstat.log}"
+PIDSTAT_MOCK_OUTPUT="${PIDSTAT_MOCK_OUTPUT:-pidstat-mock.log}"
+PIDSTAT_LOAD_GEN_OUTPUT="${PIDSTAT_LOAD_GEN_OUTPUT:-pidstat-loadgen.log}"
+PIDSTAT_HANDOFF_DETAILED="${PIDSTAT_HANDOFF_DETAILED:-true}"
+PIDSTAT_HANDOFF_COLUMNS="${PIDSTAT_HANDOFF_COLUMNS:-200}"
 
 # perf stat configuration
 ENABLE_PERF_STAT="${ENABLE_PERF_STAT:-false}"
@@ -196,6 +200,14 @@ cleanup() {
     if [[ -n "${PIDSTAT_PID:-}" ]]; then
         log "Stopping pidstat (PID: $PIDSTAT_PID)"
         kill "$PIDSTAT_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${PIDSTAT_MOCK_PID:-}" ]]; then
+        log "Stopping pidstat for mock server (PID: $PIDSTAT_MOCK_PID)"
+        kill "$PIDSTAT_MOCK_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${PIDSTAT_LOAD_GEN_PID:-}" ]]; then
+        log "Stopping pidstat for load generator (PID: $PIDSTAT_LOAD_GEN_PID)"
+        kill "$PIDSTAT_LOAD_GEN_PID" 2>/dev/null || true
     fi
 
     # Kill perf stat (should already be done, but clean up just in case)
@@ -385,12 +397,25 @@ start_pidstat() {
     log "Starting pidstat for handoff server (PID: $SERVER_PID)..."
 
     local output_file="$OUTPUT_DIR/$PIDSTAT_OUTPUT"
+    local pidstat_args=()
 
-    # add -t to see all threads
-    pidstat -p "$SERVER_PID" "$PIDSTAT_INTERVAL" > "$output_file" 2>&1 &
+    if [[ "$PIDSTAT_HANDOFF_DETAILED" == "true" ]]; then
+        pidstat_args+=("-t" "-l")
+    fi
+
+    COLUMNS="$PIDSTAT_HANDOFF_COLUMNS" pidstat "${pidstat_args[@]}" -p "$SERVER_PID" "$PIDSTAT_INTERVAL" > "$output_file" 2>&1 &
     PIDSTAT_PID=$!
 
     log "pidstat running (PID: $PIDSTAT_PID)"
+
+    log "Starting pidstat for mock server (PID: $MOCK_PID)..."
+
+    local mock_output_file="$OUTPUT_DIR/$PIDSTAT_MOCK_OUTPUT"
+
+    pidstat -p "$MOCK_PID" "$PIDSTAT_INTERVAL" > "$mock_output_file" 2>&1 &
+    PIDSTAT_MOCK_PID=$!
+
+    log "pidstat running for mock server (PID: $PIDSTAT_MOCK_PID)"
 }
 
 stop_pidstat() {
@@ -403,6 +428,20 @@ stop_pidstat() {
         kill "$PIDSTAT_PID" 2>/dev/null || true
         wait "$PIDSTAT_PID" 2>/dev/null || true
         log "pidstat output: $OUTPUT_DIR/$PIDSTAT_OUTPUT"
+    fi
+
+    if [[ -n "${PIDSTAT_MOCK_PID:-}" ]]; then
+        log "Stopping pidstat for mock server..."
+        kill "$PIDSTAT_MOCK_PID" 2>/dev/null || true
+        wait "$PIDSTAT_MOCK_PID" 2>/dev/null || true
+        log "pidstat output: $OUTPUT_DIR/$PIDSTAT_MOCK_OUTPUT"
+    fi
+
+    if [[ -n "${PIDSTAT_LOAD_GEN_PID:-}" ]]; then
+        log "Stopping pidstat for load generator..."
+        kill "$PIDSTAT_LOAD_GEN_PID" 2>/dev/null || true
+        wait "$PIDSTAT_LOAD_GEN_PID" 2>/dev/null || true
+        log "pidstat output: $OUTPUT_DIR/$PIDSTAT_LOAD_GEN_OUTPUT"
     fi
 }
 
@@ -453,7 +492,7 @@ run_load_test() {
             -d "${test_secs}s" \
             -R "$LOAD_GEN_RATE" \
             --latency \
-            "$LOAD_GEN_URL" 2>&1 | tee "$output_file"
+            "$LOAD_GEN_URL" > >(tee "$output_file") 2>&1 &
     else
         # Use wrk for max throughput
         log "Using wrk for max throughput"
@@ -462,8 +501,20 @@ run_load_test() {
             -t "$LOAD_GEN_THREADS" \
             -c "$LOAD_GEN_CONNECTIONS" \
             -d "${test_secs}s" \
-            "$LOAD_GEN_URL" 2>&1 | tee "$output_file"
+            "$LOAD_GEN_URL" > >(tee "$output_file") 2>&1 &
     fi
+
+    LOAD_GEN_PID=$!
+
+    if [[ "$ENABLE_PIDSTAT" == "true" ]]; then
+        log "Starting pidstat for load generator (PID: $LOAD_GEN_PID)..."
+        local load_gen_output_file="$OUTPUT_DIR/$PIDSTAT_LOAD_GEN_OUTPUT"
+        pidstat -p "$LOAD_GEN_PID" "$PIDSTAT_INTERVAL" > "$load_gen_output_file" 2>&1 &
+        PIDSTAT_LOAD_GEN_PID=$!
+        log "pidstat running for load generator (PID: $PIDSTAT_LOAD_GEN_PID)"
+    fi
+
+    wait "$LOAD_GEN_PID"
 
     log "Load test complete"
     log "Results saved to: $output_file"
@@ -524,6 +575,10 @@ print_config() {
     if [[ "$ENABLE_PIDSTAT" == "true" ]]; then
         log "  Interval:       ${PIDSTAT_INTERVAL}s"
         log "  Output:         $PIDSTAT_OUTPUT"
+        log "  Mock Output:    $PIDSTAT_MOCK_OUTPUT"
+        log "  Load Gen Output: $PIDSTAT_LOAD_GEN_OUTPUT"
+        log "  Handoff Detailed: $PIDSTAT_HANDOFF_DETAILED"
+        log "  Handoff Columns: $PIDSTAT_HANDOFF_COLUMNS"
     fi
     log ""
     log "perf stat:"
@@ -589,9 +644,13 @@ Profiling:
   Note: profiling starts after 5s and runs for 10s.
 
 pidstat:
-  ENABLE_PIDSTAT            Enable pidstat collection (default: false)
+  ENABLE_PIDSTAT            Enable pidstat collection (default: true)
   PIDSTAT_INTERVAL          Collection interval in seconds (default: 1)
   PIDSTAT_OUTPUT            Output file (default: pidstat.log)
+  PIDSTAT_MOCK_OUTPUT       Mock server output file (default: pidstat-mock.log)
+  PIDSTAT_LOAD_GEN_OUTPUT   Load generator output file (default: pidstat-loadgen.log)
+  PIDSTAT_HANDOFF_DETAILED  Include per-thread detail for handoff server (default: true)
+  PIDSTAT_HANDOFF_COLUMNS   Handoff server pidstat column width (default: 200)
 
 perf stat:
   ENABLE_PERF_STAT          Enable perf stat collection (default: false)
