@@ -56,18 +56,22 @@ All configuration is via environment variables:
 |----------|---------|-------------|
 | `MOCK_PORT` | 8080 | Mock server port |
 | `MOCK_THINK_TIME_MS` | 1 | Simulated processing delay (ms) |
-| `MOCK_THREADS` | 1 | Number of Netty threads |
-| `MOCK_TASKSET` | | CPU affinity (e.g., "0-1") |
+| `MOCK_THREADS` | auto | Number of Netty threads (empty = available processors) |
+| `MOCK_TASKSET` | 4,5 | CPU affinity (e.g., "0-1") |
 
 ### Handoff Server
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SERVER_PORT` | 8081 | Server port |
-| `SERVER_THREADS` | 1 | Number of event loop threads |
+| `SERVER_THREADS` | 2 | Number of event loop threads |
+| `SERVER_REACTIVE` | false | Use reactive handler with Reactor |
 | `SERVER_USE_CUSTOM_SCHEDULER` | false | Use custom Netty scheduler |
-| `SERVER_IO` | epoll | I/O type: epoll or nio |
-| `SERVER_TASKSET` | | CPU affinity (e.g., "2-5") |
+| `SERVER_IO` | epoll | I/O type: epoll, nio, or io_uring |
+| `SERVER_NO_TIMEOUT` | false | Disable HTTP client timeout |
+| `SERVER_TASKSET` | 2,3 | CPU affinity (e.g., "2-5") |
 | `SERVER_JVM_ARGS` | | Additional JVM arguments |
+| `SERVER_POLLER_MODE` | 3 | jdk.pollerMode value: 1, 2, or 3 |
+| `SERVER_FJ_PARALLELISM` | | ForkJoinPool parallelism (empty = JVM default) |
 
 ### Load Generator
 | Variable | Default | Description |
@@ -75,7 +79,8 @@ All configuration is via environment variables:
 | `LOAD_GEN_CONNECTIONS` | 100 | Number of connections |
 | `LOAD_GEN_THREADS` | 2 | Number of threads |
 | `LOAD_GEN_RATE` | | Target rate (empty = max throughput with wrk) |
-| `LOAD_GEN_TASKSET` | | CPU affinity (e.g., "6-7") |
+| `LOAD_GEN_TASKSET` | 0,1 | CPU affinity (e.g., "6-7") |
+| `LOAD_GEN_URL` | http://localhost:8081/fruits | Target URL |
 
 ### Timing
 | Variable | Default | Description |
@@ -97,6 +102,19 @@ All configuration is via environment variables:
 | `ENABLE_PIDSTAT` | false | Enable pidstat collection |
 | `PIDSTAT_INTERVAL` | 1 | Collection interval (seconds) |
 | `PIDSTAT_OUTPUT` | pidstat.log | Output filename |
+
+### perf stat
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_PERF_STAT` | false | Enable perf stat collection |
+| `PERF_STAT_OUTPUT` | perf-stat.txt | Output filename |
+
+### General
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JAVA_HOME` | | Path to Java installation (required) |
+| `JAVA_OPTS` | -Xms1g -Xmx1g | JVM options |
+| `OUTPUT_DIR` | ./benchmark-results | Output directory |
 
 ## Example Runs
 
@@ -188,7 +206,7 @@ Results are saved to `./benchmark-results/` (configurable via `OUTPUT_DIR`):
 ```bash
 java -cp benchmark-runner/target/benchmark-runner.jar \
   io.netty.loom.benchmark.runner.MockHttpServer \
-  8080 1 1  # port, thinkTimeMs, threads
+  8080 1    # port, thinkTimeMs (threads defaults to available processors)
 ```
 
 ### Handoff Server (with custom scheduler)
@@ -226,4 +244,3 @@ java \
   --use-custom-scheduler false \
   --io epoll
 ```
-
