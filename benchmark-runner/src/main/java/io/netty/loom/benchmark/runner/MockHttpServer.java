@@ -56,7 +56,8 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  * <li>port - HTTP port (default: 8080)</li>
  * <li>thinkTimeMs - delay before response in ms (default: 100)</li>
- * <li>threads - number of event loop threads (default: available processors)</li>
+ * <li>threads - number of event loop threads (default: available
+ * processors)</li>
  * </ul>
  */
 public class MockHttpServer {

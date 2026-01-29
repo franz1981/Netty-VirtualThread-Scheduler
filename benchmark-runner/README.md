@@ -57,7 +57,7 @@ All configuration is via environment variables:
 | `MOCK_PORT` | 8080 | Mock server port |
 | `MOCK_THINK_TIME_MS` | 1 | Simulated processing delay (ms) |
 | `MOCK_THREADS` | auto | Number of Netty threads (empty = available processors) |
-| `MOCK_TASKSET` | 4,5 | CPU affinity (e.g., "0-1") |
+| `MOCK_TASKSET` | 4,5,6,7 | CPU affinity (e.g., "0-1") |
 
 ### Handoff Server
 | Variable | Default | Description |
