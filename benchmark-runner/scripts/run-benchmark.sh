@@ -50,6 +50,9 @@ LOAD_GEN_URL="${LOAD_GEN_URL:-http://localhost:8081/fruits}"
 # Timing configuration
 WARMUP_DURATION="${WARMUP_DURATION:-10s}"
 TOTAL_DURATION="${TOTAL_DURATION:-30s}"
+MIN_STEADY_STATE_SECONDS=20
+PROFILING_DELAY_SECONDS=5
+PROFILING_DURATION_SECONDS=10
 
 # Profiling configuration
 ENABLE_PROFILER="${ENABLE_PROFILER:-false}"
@@ -107,9 +110,13 @@ parse_duration_to_seconds() {
 validate_config() {
     local warmup_secs=$(parse_duration_to_seconds "$WARMUP_DURATION")
     local total_secs=$(parse_duration_to_seconds "$TOTAL_DURATION")
+    local steady_state_secs=$((total_secs - warmup_secs))
 
     if [[ $warmup_secs -ge $total_secs ]]; then
         error "Warmup duration ($WARMUP_DURATION = ${warmup_secs}s) must be less than total duration ($TOTAL_DURATION = ${total_secs}s)"
+    fi
+    if [[ $steady_state_secs -lt $MIN_STEADY_STATE_SECONDS ]]; then
+        error "Steady-state duration (${steady_state_secs}s) must be at least ${MIN_STEADY_STATE_SECONDS}s (got WARMUP_DURATION=$WARMUP_DURATION, TOTAL_DURATION=$TOTAL_DURATION)"
     fi
 
     if [[ -z "$JAVA_HOME" ]]; then
@@ -127,7 +134,8 @@ validate_config() {
     log "Configuration validated"
     log "  Warmup: $WARMUP_DURATION (${warmup_secs}s)"
     log "  Total:  $TOTAL_DURATION (${total_secs}s)"
-    log "  Measurement window: $((total_secs - warmup_secs))s"
+    log "  Measurement window: ${steady_state_secs}s"
+    log "  Profiling: delay ${PROFILING_DELAY_SECONDS}s, duration ${PROFILING_DURATION_SECONDS}s"
 }
 
 check_jbang() {
@@ -336,18 +344,23 @@ start_profiler() {
         return
     fi
 
-    log "Attaching async-profiler to handoff server (PID: $SERVER_PID)..."
+    log "Scheduling async-profiler for handoff server (PID: $SERVER_PID)..."
 
     local asprof="$ASYNC_PROFILER_PATH/bin/asprof"
+    local output_file="$OUTPUT_DIR/$PROFILER_OUTPUT"
 
     if [[ ! -x "$asprof" ]]; then
         error "async-profiler not found at $asprof"
     fi
 
-    # Start profiler
-    "$asprof" start --threads -e "$PROFILER_EVENT" -o flamegraph "$SERVER_PID"
+    (
+        sleep "$PROFILING_DELAY_SECONDS"
+        "$asprof" --threads -e "$PROFILER_EVENT" -o flamegraph -d "$PROFILING_DURATION_SECONDS" -f "$output_file" "$SERVER_PID"
+    ) &
+    PROFILER_PID=$!
 
-    log "Profiler attached"
+    log "Async-profiler scheduled after ${PROFILING_DELAY_SECONDS}s for ${PROFILING_DURATION_SECONDS}s"
+    log "Profiler output: $output_file"
 }
 
 stop_profiler() {
@@ -355,14 +368,9 @@ stop_profiler() {
         return
     fi
 
-    log "Stopping async-profiler..."
-
-    local asprof="$ASYNC_PROFILER_PATH/bin/asprof"
-    local output_file="$OUTPUT_DIR/$PROFILER_OUTPUT"
-
-    "$asprof" stop --threads -o flamegraph -f "$output_file" "$SERVER_PID"
-
-    log "Profiler output: $output_file"
+    if [[ -n "${PROFILER_PID:-}" ]]; then
+        wait "$PROFILER_PID" 2>/dev/null || true
+    fi
 }
 
 # ============================================================================
@@ -409,15 +417,14 @@ start_perf_stat() {
 
     log "Starting perf stat for handoff server (PID: $SERVER_PID)..."
 
-    local warmup_secs=$(parse_duration_to_seconds "$WARMUP_DURATION")
-    local total_secs=$(parse_duration_to_seconds "$TOTAL_DURATION")
-    local profiling_secs=$((total_secs - warmup_secs))
     local output_file="$OUTPUT_DIR/$PERF_STAT_OUTPUT"
+    local profiling_delay_ms=$((PROFILING_DELAY_SECONDS * 1000))
+    local profiling_duration_ms=$((PROFILING_DURATION_SECONDS * 1000))
 
-    perf stat -p "$SERVER_PID" -o "$output_file" sleep "$profiling_secs" &
+    perf stat -p "$SERVER_PID" -o "$output_file" -D "$profiling_delay_ms" --timeout "$profiling_duration_ms" &
     PERF_STAT_PID=$!
 
-    log "perf stat running (PID: $PERF_STAT_PID) for ${profiling_secs}s"
+    log "perf stat running (PID: $PERF_STAT_PID) after ${PROFILING_DELAY_SECONDS}s for ${PROFILING_DURATION_SECONDS}s"
 }
 
 # Note: perf stat stops automatically after the sleep duration, no explicit stop needed
@@ -467,6 +474,10 @@ run_load_test() {
 # ============================================================================
 
 print_config() {
+    local warmup_secs=$(parse_duration_to_seconds "$WARMUP_DURATION")
+    local total_secs=$(parse_duration_to_seconds "$TOTAL_DURATION")
+    local steady_state_secs=$((total_secs - warmup_secs))
+
     log "=============================================="
     log "Benchmark Configuration"
     log "=============================================="
@@ -498,6 +509,8 @@ print_config() {
     log "Timing:"
     log "  Warmup:         $WARMUP_DURATION"
     log "  Total:          $TOTAL_DURATION"
+    log "  Steady State:   ${steady_state_secs}s (min ${MIN_STEADY_STATE_SECONDS}s)"
+    log "  Profiling:      delay ${PROFILING_DELAY_SECONDS}s, duration ${PROFILING_DURATION_SECONDS}s"
     log ""
     log "Profiling:"
     log "  Enabled:        $ENABLE_PROFILER"
@@ -566,13 +579,14 @@ Load Generator:
 
 Timing:
   WARMUP_DURATION           Warmup duration (default: 10s)
-  TOTAL_DURATION            Total test duration (default: 30s)
+  TOTAL_DURATION            Total test duration (default: 30s, must keep steady state >= 20s)
 
 Profiling:
   ENABLE_PROFILER           Enable async-profiler (default: false)
   ASYNC_PROFILER_PATH       Path to async-profiler installation
   PROFILER_EVENT            Profiler event type (default: cpu)
   PROFILER_OUTPUT           Profiler output file (default: profile.html)
+  Note: profiling starts after 5s and runs for 10s.
 
 pidstat:
   ENABLE_PIDSTAT            Enable pidstat collection (default: false)
