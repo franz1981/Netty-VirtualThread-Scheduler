@@ -67,7 +67,6 @@ PIDSTAT_OUTPUT="${PIDSTAT_OUTPUT:-pidstat.log}"
 PIDSTAT_MOCK_OUTPUT="${PIDSTAT_MOCK_OUTPUT:-pidstat-mock.log}"
 PIDSTAT_LOAD_GEN_OUTPUT="${PIDSTAT_LOAD_GEN_OUTPUT:-pidstat-loadgen.log}"
 PIDSTAT_HANDOFF_DETAILED="${PIDSTAT_HANDOFF_DETAILED:-true}"
-PIDSTAT_HANDOFF_COLUMNS="${PIDSTAT_HANDOFF_COLUMNS:-200}"
 
 # perf stat configuration
 ENABLE_PERF_STAT="${ENABLE_PERF_STAT:-false}"
@@ -75,6 +74,7 @@ PERF_STAT_OUTPUT="${PERF_STAT_OUTPUT:-perf-stat.txt}"
 
 # Output directory
 OUTPUT_DIR="${OUTPUT_DIR:-./benchmark-results}"
+CONFIG_OUTPUT="${CONFIG_OUTPUT:-benchmark-config.txt}"
 
 # ============================================================================
 # Computed paths
@@ -403,7 +403,7 @@ start_pidstat() {
         pidstat_args+=("-t" "-l")
     fi
 
-    COLUMNS="$PIDSTAT_HANDOFF_COLUMNS" pidstat "${pidstat_args[@]}" -p "$SERVER_PID" "$PIDSTAT_INTERVAL" > "$output_file" 2>&1 &
+    pidstat "${pidstat_args[@]}" -p "$SERVER_PID" "$PIDSTAT_INTERVAL" > "$output_file" 2>&1 &
     PIDSTAT_PID=$!
 
     log "pidstat running (PID: $PIDSTAT_PID)"
@@ -578,7 +578,6 @@ print_config() {
         log "  Mock Output:    $PIDSTAT_MOCK_OUTPUT"
         log "  Load Gen Output: $PIDSTAT_LOAD_GEN_OUTPUT"
         log "  Handoff Detailed: $PIDSTAT_HANDOFF_DETAILED"
-        log "  Handoff Columns: $PIDSTAT_HANDOFF_COLUMNS"
     fi
     log ""
     log "perf stat:"
@@ -650,7 +649,6 @@ pidstat:
   PIDSTAT_MOCK_OUTPUT       Mock server output file (default: pidstat-mock.log)
   PIDSTAT_LOAD_GEN_OUTPUT   Load generator output file (default: pidstat-loadgen.log)
   PIDSTAT_HANDOFF_DETAILED  Include per-thread detail for handoff server (default: true)
-  PIDSTAT_HANDOFF_COLUMNS   Handoff server pidstat column width (default: 200)
 
 perf stat:
   ENABLE_PERF_STAT          Enable perf stat collection (default: false)
@@ -659,6 +657,7 @@ perf stat:
 General:
   JAVA_HOME                 Path to Java installation (required)
   OUTPUT_DIR                Output directory (default: ./benchmark-results)
+  CONFIG_OUTPUT             Configuration output filename (default: benchmark-config.txt)
 
 Examples:
 
@@ -700,11 +699,11 @@ EOF
     # Validate configuration
     validate_config
 
-    # Print configuration
-    print_config
-
     # Create output directory
     mkdir -p "$OUTPUT_DIR"
+
+    # Print configuration
+    print_config | tee "$OUTPUT_DIR/$CONFIG_OUTPUT"
 
     # Check jbang
     check_jbang
