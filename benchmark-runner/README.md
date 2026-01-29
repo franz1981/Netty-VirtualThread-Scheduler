@@ -109,7 +109,6 @@ When enabled, pidstat always records three files: handoff server, mock server, a
 | `PIDSTAT_MOCK_OUTPUT` | pidstat-mock.log | Mock server output filename |
 | `PIDSTAT_LOAD_GEN_OUTPUT` | pidstat-loadgen.log | Load generator output filename |
 | `PIDSTAT_HANDOFF_DETAILED` | true | Include per-thread detail for handoff server |
-| `PIDSTAT_HANDOFF_COLUMNS` | 200 | Handoff server pidstat column width |
 
 ### perf stat
 | Variable | Default | Description |
@@ -125,6 +124,7 @@ perf stat starts 5 seconds into the steady-state phase and runs for a fixed 10 s
 | `JAVA_HOME` | | Path to Java installation (required) |
 | `JAVA_OPTS` | -Xms1g -Xmx1g | JVM options |
 | `OUTPUT_DIR` | ./benchmark-results | Output directory |
+| `CONFIG_OUTPUT` | benchmark-config.txt | Configuration output filename |
 
 ## Example Runs
 
@@ -194,9 +194,10 @@ Results are saved to `./benchmark-results/` (configurable via `OUTPUT_DIR`):
 - `wrk-results.txt` - Load generator output with throughput/latency
 - `profile.html` - Flamegraph (if profiling enabled)
 - `pidstat.log` - Handoff server thread-level CPU usage (if pidstat enabled)
-- `pidstat.log` includes per-thread command lines when `PIDSTAT_HANDOFF_DETAILED=true`; adjust `PIDSTAT_HANDOFF_COLUMNS` if names are truncated.
+- `pidstat.log` includes per-thread command lines when `PIDSTAT_HANDOFF_DETAILED=true`. Note: Linux thread names are limited (comm is 15 chars), so very long JVM thread names may still appear truncated.
 - `pidstat-mock.log` - Mock server thread-level CPU usage (if pidstat enabled)
 - `pidstat-loadgen.log` - Load generator CPU usage (if pidstat enabled)
+- `benchmark-config.txt` - Captured configuration summary for the run
 
 ## Architecture
 
