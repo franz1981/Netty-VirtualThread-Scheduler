@@ -56,7 +56,7 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  * <li>port - HTTP port (default: 8080)</li>
  * <li>thinkTimeMs - delay before response in ms (default: 100)</li>
- * <li>threads - number of event loop threads (default: 1)</li>
+ * <li>threads - number of event loop threads (default: available processors)</li>
  * </ul>
  */
 public class MockHttpServer {
@@ -96,7 +96,7 @@ public class MockHttpServer {
 	public MockHttpServer(int port, double thinkTimeMs, int threads, boolean silent) {
 		this.port = port;
 		this.thinkTimeNs = (long) (thinkTimeMs * 1_000_000);
-		this.threads = threads;
+		this.threads = threads > 0 ? threads : Runtime.getRuntime().availableProcessors();
 		this.silent = silent;
 	}
 
@@ -196,7 +196,7 @@ public class MockHttpServer {
 	public static void main(String[] args) throws InterruptedException {
 		int port = 8080;
 		double thinkTimeMs = 100;
-		int threads = 1;
+		Integer threads = null;
 		boolean silent = false;
 
 		for (int i = 0; i < args.length; i++) {
@@ -217,7 +217,8 @@ public class MockHttpServer {
 			}
 		}
 
-		MockHttpServer server = new MockHttpServer(port, thinkTimeMs, threads, silent);
+		int resolvedThreads = threads != null ? threads : Runtime.getRuntime().availableProcessors();
+		MockHttpServer server = new MockHttpServer(port, thinkTimeMs, resolvedThreads, silent);
 		server.start();
 
 		// Add shutdown hook for graceful shutdown

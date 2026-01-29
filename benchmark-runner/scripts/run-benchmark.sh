@@ -24,7 +24,7 @@ JAVA_OPTS="${JAVA_OPTS:--Xms1g -Xmx1g}"
 # Mock server configuration
 MOCK_PORT="${MOCK_PORT:-8080}"
 MOCK_THINK_TIME_MS="${MOCK_THINK_TIME_MS:-1}"
-MOCK_THREADS="${MOCK_THREADS:-1}"
+MOCK_THREADS="${MOCK_THREADS:-}"
 MOCK_TASKSET="${MOCK_TASKSET:-4,5}"  # CPUs for mock server
 
 # Handoff server configuration
@@ -229,9 +229,14 @@ start_mock_server() {
     local taskset_cmd=$(build_taskset_cmd "$MOCK_TASKSET")
     local java_cmd="$JAVA_HOME/bin/java"
 
+    local mock_threads_arg=""
+    if [[ -n "$MOCK_THREADS" ]]; then
+        mock_threads_arg="--threads $MOCK_THREADS"
+    fi
+
     local cmd="$taskset_cmd $java_cmd $JAVA_OPTS -cp $RUNNER_JAR \
         io.netty.loom.benchmark.runner.MockHttpServer \
-        --port $MOCK_PORT --think-time $MOCK_THINK_TIME_MS --threads $MOCK_THREADS --silent"
+        --port $MOCK_PORT --think-time $MOCK_THINK_TIME_MS $mock_threads_arg --silent"
 
     log "Mock server command: $cmd"
 
@@ -469,7 +474,7 @@ print_config() {
     log "Mock Server:"
     log "  Port:           $MOCK_PORT"
     log "  Think Time:     ${MOCK_THINK_TIME_MS}ms"
-    log "  Threads:        $MOCK_THREADS"
+    log "  Threads:        ${MOCK_THREADS:-<auto>}"
     log "  CPU Affinity:   ${MOCK_TASKSET:-<none>}"
     log ""
     log "Handoff Server:"
@@ -537,7 +542,7 @@ Environment Variables (can also be set via command line options):
 Mock Server:
   MOCK_PORT                 Mock server port (default: 8080)
   MOCK_THINK_TIME_MS        Response delay in ms (default: 1)
-  MOCK_THREADS              Number of threads (default: 1)
+  MOCK_THREADS              Number of threads (default: auto = available processors)
   MOCK_TASKSET              CPU affinity range (default: "4,5")
 
 Handoff Server:
@@ -658,4 +663,3 @@ EOF
 }
 
 main "$@"
-
