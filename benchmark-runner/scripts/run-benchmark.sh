@@ -25,7 +25,7 @@ JAVA_OPTS="${JAVA_OPTS:--Xms1g -Xmx1g}"
 MOCK_PORT="${MOCK_PORT:-8080}"
 MOCK_THINK_TIME_MS="${MOCK_THINK_TIME_MS:-1}"
 MOCK_THREADS="${MOCK_THREADS:-}"
-MOCK_TASKSET="${MOCK_TASKSET:-4,5}"  # CPUs for mock server
+MOCK_TASKSET="${MOCK_TASKSET:-4,5,6,7}"  # CPUs for mock server
 
 # Handoff server configuration
 SERVER_PORT="${SERVER_PORT:-8081}"
@@ -543,7 +543,7 @@ Mock Server:
   MOCK_PORT                 Mock server port (default: 8080)
   MOCK_THINK_TIME_MS        Response delay in ms (default: 1)
   MOCK_THREADS              Number of threads (default: auto = available processors)
-  MOCK_TASKSET              CPU affinity range (default: "4,5")
+  MOCK_TASKSET              CPU affinity range (default: "4,5,6,7")
 
 Handoff Server:
   SERVER_PORT               Server port (default: 8081)
