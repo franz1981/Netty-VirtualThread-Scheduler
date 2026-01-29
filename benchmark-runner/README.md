@@ -86,7 +86,7 @@ All configuration is via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WARMUP_DURATION` | 10s | Warmup duration (no profiling) |
-| `TOTAL_DURATION` | 30s | Total test duration |
+| `TOTAL_DURATION` | 30s | Total test duration (steady-state must be >= 20s) |
 
 ### Profiling
 | Variable | Default | Description |
@@ -95,6 +95,8 @@ All configuration is via environment variables:
 | `ASYNC_PROFILER_PATH` | | Path to async-profiler installation |
 | `PROFILER_EVENT` | cpu | Profiler event type |
 | `PROFILER_OUTPUT` | profile.html | Output filename |
+
+Profiling starts 5 seconds into the steady-state phase and runs for a fixed 10 seconds.
 
 ### pidstat
 | Variable | Default | Description |
@@ -108,6 +110,8 @@ All configuration is via environment variables:
 |----------|---------|-------------|
 | `ENABLE_PERF_STAT` | false | Enable perf stat collection |
 | `PERF_STAT_OUTPUT` | perf-stat.txt | Output filename |
+
+perf stat starts 5 seconds into the steady-state phase and runs for a fixed 10 seconds.
 
 ### General
 | Variable | Default | Description |
