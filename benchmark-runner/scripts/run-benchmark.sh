@@ -24,8 +24,8 @@ JAVA_OPTS="${JAVA_OPTS:--Xms1g -Xmx1g}"
 # Mock server configuration
 MOCK_PORT="${MOCK_PORT:-8080}"
 MOCK_THINK_TIME_MS="${MOCK_THINK_TIME_MS:-1}"
-MOCK_THREADS="${MOCK_THREADS:-}"
-MOCK_TASKSET="${MOCK_TASKSET:-4,5,6,7}"  # CPUs for mock server
+MOCK_THREADS="${MOCK_THREADS:-1}"
+MOCK_TASKSET="${MOCK_TASKSET:-4,5}"  # CPUs for mock server
 
 # Handoff server configuration
 SERVER_PORT="${SERVER_PORT:-8081}"
