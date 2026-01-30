@@ -22,6 +22,11 @@ import java.util.concurrent.locks.LockSupport;
 import io.netty.channel.IoEventLoopGroup;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
+import io.netty.loom.jfr.NettyRunIoEvent;
+import io.netty.loom.jfr.NettyRunNonBlockingTasksEvent;
+import io.netty.loom.jfr.VirtualThreadTaskRunsEvent;
+import io.netty.loom.jfr.VirtualThreadTaskRunEvent;
+import io.netty.loom.jfr.VirtualThreadTaskSubmitEvent;
 import io.netty.util.concurrent.FastThreadLocalThread;
 
 public class EventLoopScheduler {
@@ -51,16 +56,29 @@ public class EventLoopScheduler {
 	 * Read sub-poller(s) sadly won't work as expected with this, because are not
 	 * created using the event loop scheduler factory.
 	 */
-	public record SchedulingContext(long vThreadId, SharedRef scheduler) {
+	public static final class SchedulingContext {
+
+		long vThreadId;
+		final boolean isPoller;
+		final SharedRef schedulerRef;
+
+		SchedulingContext(long vThreadId, SharedRef schedulerRef, boolean isPoller) {
+			this.vThreadId = vThreadId;
+			this.schedulerRef = schedulerRef;
+			this.isPoller = isPoller;
+		}
+
+		SchedulingContext(SharedRef schedulerRef) {
+			this(-1, schedulerRef, false);
+		}
 
 		/**
 		 * Get the assigned scheduler for the current thread, or null if this thread is
 		 * not assigned to any scheduler.
 		 */
-		@Override
 		public SharedRef scheduler() {
 			// TODO consider returning EMPTY_SCHEDULER_REF instead of null
-			return (Thread.currentThread().threadId() == vThreadId) ? scheduler : null;
+			return (Thread.currentThread().threadId() == vThreadId) ? schedulerRef : null;
 		}
 	}
 
@@ -76,13 +94,13 @@ public class EventLoopScheduler {
 			.toNanos(Integer.getInteger("io.netty.loom.idle.yield.us", 1));
 	// This is required to allow sub-pollers to run on the correct scheduler
 	private static final ScopedValue<SchedulingContext> CURRENT_SCHEDULER = ScopedValue.newInstance();
-	private static final SchedulingContext EMPTY_SCHEDULER_CONTEXT = new SchedulingContext(-1, null);
-	private final MpscUnboundedStream<Runnable> runQueue;
+	private static final SchedulingContext EMPTY_SCHEDULER_CONTEXT = new SchedulingContext(-1, null, false);
+	private final MpscUnboundedStream<Thread.VirtualThreadTask> runQueue;
 	private final ManualIoEventLoop ioEventLoop;
 	private final Thread eventLoopThread;
 	private final Thread carrierThread;
 	private volatile Thread parkedCarrierThread;
-	private volatile Runnable eventLoopContinuatioToRun;
+	private volatile Thread.VirtualThreadTask eventLoopContinuatioToRun;
 	private final ThreadFactory vThreadFactory;
 	private final AtomicBoolean eventLoopIsRunning;
 	private final SharedRef sharedRef;
@@ -115,15 +133,16 @@ public class EventLoopScheduler {
 		var unstartedBuilder = Thread.ofVirtual();
 		NettyScheduler scheduler = NettyScheduler.INSTANCE;
 		return runnable -> {
-			var vTask = scheduler.newThread(unstartedBuilder, null, () -> runWithContext(runnable, sharedRef));
-			vTask.attach(sharedRef);
+			var schedulingContext = new SchedulingContext(sharedRef);
+			var vTask = scheduler.newThread(unstartedBuilder, null, () -> runWithContext(runnable, schedulingContext));
+			schedulingContext.vThreadId = vTask.thread().threadId();
+			vTask.attach(schedulingContext);
 			return vTask.thread();
 		};
 	}
 
-	private static void runWithContext(Runnable runnable, SharedRef sharedRef) {
-		ScopedValue.where(CURRENT_SCHEDULER, new SchedulingContext(Thread.currentThread().threadId(), sharedRef))
-				.run(runnable);
+	private static void runWithContext(Runnable runnable, SchedulingContext schedulingContext) {
+		ScopedValue.where(CURRENT_SCHEDULER, schedulingContext).run(runnable);
 	}
 
 	int externalContinuationsCount() {
@@ -152,7 +171,7 @@ public class EventLoopScheduler {
 				Thread.yield();
 			}
 			// try running leftover write tasks before checking for I/O tasks
-			canBlock &= ioEventLoop.runNonBlockingTasks(RUNNING_YIELD_US) == 0;
+			canBlock &= runNonBlockingTasks(RUNNING_YIELD_US) == 0;
 			if (!runQueue.isEmpty()) {
 				Thread.yield();
 			}
@@ -167,22 +186,42 @@ public class EventLoopScheduler {
 	}
 
 	private boolean runIO(boolean canBlock) {
+		NettyRunIoEvent event = beginRunIoEvent();
+		int ioEventsHandled;
+		boolean ranBlocking = false;
 		if (canBlock) {
 			// try to go to sleep waiting for I/O tasks
 			eventLoopIsRunning.set(false);
 			// StoreLoad barrier: see
 			// https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/
 			if (canBlock()) {
+				ranBlocking = true;
 				try {
-					return ioEventLoop.run(MAX_WAIT_TASKS_NS, RUNNING_YIELD_US) == 0;
+					ioEventsHandled = ioEventLoop.run(MAX_WAIT_TASKS_NS, RUNNING_YIELD_US);
 				} finally {
 					eventLoopIsRunning.set(true);
 				}
 			} else {
 				eventLoopIsRunning.set(true);
+				ioEventsHandled = ioEventLoop.runNow(RUNNING_YIELD_US);
 			}
+		} else {
+			ioEventsHandled = ioEventLoop.runNow(RUNNING_YIELD_US);
 		}
-		return ioEventLoop.runNow(RUNNING_YIELD_US) == 0;
+		if (event != null) {
+			commitRunIoEvent(event, ranBlocking, ioEventsHandled);
+		}
+		return ioEventsHandled == 0;
+	}
+
+	private int runNonBlockingTasks(long deadlineNs) {
+		NettyRunNonBlockingTasksEvent event = beginRunNonBlockingTasksEvent();
+		if (event == null) {
+			return ioEventLoop.runNonBlockingTasks(deadlineNs);
+		}
+		int tasksHandled = ioEventLoop.runNonBlockingTasks(deadlineNs);
+		commitRunNonBlockingTasksEvent(event, tasksHandled);
+		return tasksHandled;
 	}
 
 	private boolean runEventLoopContinuation() {
@@ -190,7 +229,7 @@ public class EventLoopScheduler {
 		var eventLoopContinuation = this.eventLoopContinuatioToRun;
 		if (eventLoopContinuation != null) {
 			this.eventLoopContinuatioToRun = null;
-			eventLoopContinuation.run();
+			runContinuation(eventLoopContinuation, -1);
 			return true;
 		}
 		return false;
@@ -235,20 +274,26 @@ public class EventLoopScheduler {
 	}
 
 	private int runExternalContinuations(long deadlineNs) {
+		VirtualThreadTaskRunsEvent event = beginVirtualThreadTaskRunsEvent();
 		final long startDrainingNs = System.nanoTime();
+		int queueDepthBefore = event != null ? runQueue.size() : 0;
 		var ready = this.runQueue;
 		int runContinuations = 0;
 		for (;;) {
-			var continuation = ready.poll();
-			if (continuation == null) {
+			var task = ready.poll();
+			if (task == null) {
 				break;
 			}
-			continuation.run();
 			runContinuations++;
+			runContinuation(task, runContinuations);
 			long elapsedNs = System.nanoTime() - startDrainingNs;
 			if (elapsedNs >= deadlineNs) {
-				return runContinuations;
+				break;
 			}
+		}
+		if (event != null) {
+			int queueDepthAfter = runQueue.size();
+			commitVirtualThreadTaskRunsEvent(event, runContinuations, queueDepthBefore, queueDepthAfter);
 		}
 		return runContinuations;
 	}
@@ -266,13 +311,18 @@ public class EventLoopScheduler {
 	}
 
 	public boolean execute(Thread.VirtualThreadTask task) {
+		var currentThread = Thread.currentThread();
+		var context = (SchedulingContext) task.attachment();
+		boolean submitEventEnabled = VirtualThreadTaskSubmitEvent.isEventEnabled();
 		boolean eventLoopTask = rescheduleEventLoop(task);
 		if (!eventLoopTask) {
 			if (!runQueue.offer(task)) {
 				return false;
 			}
 		}
-		var currentThread = Thread.currentThread();
+		if (submitEventEnabled) {
+			commitVirtualThreadTaskSubmitEvent(task, currentThread, context.isPoller);
+		}
 		if (currentThread != eventLoopThread) {
 			// currentThread == carrierThread iff
 			// - event loop start
@@ -294,6 +344,101 @@ public class EventLoopScheduler {
 			}
 		}
 		return true;
+	}
+
+	private void runContinuation(Thread.VirtualThreadTask task, int tasksExecutedInDrain) {
+		VirtualThreadTaskRunEvent event = beginVirtualThreadTaskRunEvent();
+		if (event == null) {
+			task.run();
+			return;
+		}
+		var context = (SchedulingContext) task.attachment();
+		boolean isPoller = context.isPoller;
+		task.run();
+		commitVirtualThreadTaskRunEvent(event, task, isPoller, tasksExecutedInDrain);
+	}
+
+	private NettyRunIoEvent beginRunIoEvent() {
+		if (!NettyRunIoEvent.isEventEnabled()) {
+			return null;
+		}
+		var event = new NettyRunIoEvent();
+		event.begin();
+		return event;
+	}
+
+	private void commitRunIoEvent(NettyRunIoEvent event, boolean ranBlocking, int ioEventsHandled) {
+		event.end();
+		event.eventLoopThread = Thread.currentThread();
+		event.carrierThread = carrierThread;
+		event.canBlock = ranBlocking;
+		event.ioEventsHandled = ioEventsHandled;
+		event.commit();
+	}
+
+	private NettyRunNonBlockingTasksEvent beginRunNonBlockingTasksEvent() {
+		if (!NettyRunNonBlockingTasksEvent.isEventEnabled()) {
+			return null;
+		}
+		var event = new NettyRunNonBlockingTasksEvent();
+		event.begin();
+		return event;
+	}
+
+	private void commitRunNonBlockingTasksEvent(NettyRunNonBlockingTasksEvent event, int tasksHandled) {
+		event.end();
+		event.eventLoopThread = Thread.currentThread();
+		event.carrierThread = carrierThread;
+		event.tasksHandled = tasksHandled;
+		event.commit();
+	}
+
+	private VirtualThreadTaskRunsEvent beginVirtualThreadTaskRunsEvent() {
+		if (!VirtualThreadTaskRunsEvent.isEventEnabled()) {
+			return null;
+		}
+		var event = new VirtualThreadTaskRunsEvent();
+		event.begin();
+		return event;
+	}
+
+	private void commitVirtualThreadTaskRunsEvent(VirtualThreadTaskRunsEvent event, int tasksExecuted,
+			int queueDepthBefore, int queueDepthAfter) {
+		event.end();
+		event.carrierThread = carrierThread;
+		event.tasksExecuted = tasksExecuted;
+		event.queueDepthBefore = queueDepthBefore;
+		event.queueDepthAfter = queueDepthAfter;
+		event.commit();
+	}
+
+	private void commitVirtualThreadTaskSubmitEvent(Thread.VirtualThreadTask task, Thread submitterThread,
+			boolean isPoller) {
+		var event = new VirtualThreadTaskSubmitEvent();
+		event.virtualThread = task.thread();
+		event.submitterThread = submitterThread;
+		event.carrierThread = carrierThread;
+		event.isPoller = isPoller;
+		event.commit();
+	}
+
+	private VirtualThreadTaskRunEvent beginVirtualThreadTaskRunEvent() {
+		if (!VirtualThreadTaskRunEvent.isEventEnabled()) {
+			return null;
+		}
+		var event = new VirtualThreadTaskRunEvent();
+		event.begin();
+		return event;
+	}
+
+	private void commitVirtualThreadTaskRunEvent(VirtualThreadTaskRunEvent event, Thread.VirtualThreadTask task,
+			boolean isPoller, int tasksExecutedInDrain) {
+		event.end();
+		event.virtualThread = task.thread();
+		event.carrierThread = carrierThread;
+		event.tasksExecutedInDrain = tasksExecutedInDrain;
+		event.isPoller = isPoller;
+		event.commit();
 	}
 
 	/**

@@ -99,6 +99,17 @@ mvn clean install
 
 - If you need the virtual thread to inherit the scheduler when forking tasks via StructuredTaskScope, pass the group's `vThreadFactory()` to the scope's `withThreadFactory(...)`.
 
+## JFR events
+Netty Loom publishes custom Java Flight Recorder events (disabled by default) for scheduler activity:
+
+- `io.netty.loom.NettyRunIo`
+- `io.netty.loom.NettyRunNonBlockingTasks`
+- `io.netty.loom.VirtualThreadTaskRuns`
+- `io.netty.loom.VirtualThreadTaskRun`
+- `io.netty.loom.VirtualThreadTaskSubmit`
+
+The benchmark runner can enable these events selectively via `ENABLE_JFR=true` and `JFR_EVENTS=...`. See `benchmark-runner/README.md` for details.
+
 ## Build and Run
 This project uses Maven for build and dependency management.
 

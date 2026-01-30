@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration version="2.0" name="Netty Loom" description="Netty Loom JFR settings" provider="Netty Loom">
+  <event name="io.netty.loom.NettyRunIo">
+    <setting name="enabled">true</setting>
+  </event>
+  <event name="io.netty.loom.NettyRunNonBlockingTasks">
+    <setting name="enabled">true</setting>
+  </event>
+  <event name="io.netty.loom.VirtualThreadTaskRuns">
+    <setting name="enabled">true</setting>
+  </event>
+  <event name="io.netty.loom.VirtualThreadTaskRun">
+    <setting name="enabled">true</setting>
+  </event>
+  <event name="io.netty.loom.VirtualThreadTaskSubmit">
+    <setting name="enabled">true</setting>
+  </event>
+</configuration>
