@@ -14,8 +14,6 @@
  */
 package io.netty.loom;
 
-import io.netty.loom.EventLoopScheduler.SchedulingContext;
-
 /**
  * Global Netty scheduler proxy for virtual threads.
  *
@@ -81,7 +79,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
 	@Override
 	public void onStart(Thread.VirtualThreadTask virtualThreadTask) {
-		if (virtualThreadTask.attachment() instanceof SchedulingContext context) {
+		if (virtualThreadTask.attachment() instanceof EventLoopScheduler.SchedulingContext context) {
 			var eventLoop = context.schedulerRef.get();
 			if (eventLoop != null && eventLoop.execute(virtualThreadTask)) {
 				return;
@@ -104,8 +102,8 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 					if (schedulerRef != null) {
 						var scheduler = schedulerRef.get();
 						if (scheduler != null && virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
-							virtualThreadTask.attach(
-									new SchedulingContext(virtualThreadTask.thread().threadId(), schedulerRef, true));
+							virtualThreadTask.attach(new EventLoopScheduler.SchedulingContext(
+									virtualThreadTask.thread().threadId(), schedulerRef, true));
 							if (scheduler.execute(virtualThreadTask)) {
 								return;
 							}
@@ -120,7 +118,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
 	@Override
 	public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
-		if (virtualThreadTask.attachment() instanceof SchedulingContext context) {
+		if (virtualThreadTask.attachment() instanceof EventLoopScheduler.SchedulingContext context) {
 			var eventLoop = context.schedulerRef.get();
 			if (eventLoop != null && eventLoop.execute(virtualThreadTask)) {
 				return;

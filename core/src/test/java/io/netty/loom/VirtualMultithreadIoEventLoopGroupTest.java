@@ -45,6 +45,7 @@ import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.channel.uring.IoUringServerSocketChannel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.netty.bootstrap.ServerBootstrap;
@@ -107,21 +108,28 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	private static Stream<Transport> transportsForNetworking() {
-		return Stream.of(Transport.values()).filter(t -> !t.isLocal() && t.isAvailable());
+	private static Stream<EventLoopSchedulerType> schedulerTypes() {
+		return Stream.of(EventLoopSchedulerType.values());
 	}
 
-	private static Stream<Transport> transportsAllowLocal() {
-		return Stream.of(Transport.values()).filter(Transport::isAvailable);
+	private static Stream<Arguments> transportsForNetworking() {
+		return Stream.of(Transport.values()).filter(t -> !t.isLocal() && t.isAvailable())
+				.flatMap(transport -> schedulerTypes().map(schedulerType -> Arguments.of(transport, schedulerType)));
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	private static Stream<Arguments> transportsAllowLocal() {
+		return Stream.of(Transport.values()).filter(Transport::isAvailable)
+				.flatMap(transport -> schedulerTypes().map(schedulerType -> Arguments.of(transport, schedulerType)));
+	}
+
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsForNetworking")
-	void processHttpRequestWithVirtualThreadOnManualNettyEventLoop(Transport transport) throws InterruptedException {
+	void processHttpRequestWithVirtualThreadOnManualNettyEventLoop(Transport transport,
+			EventLoopSchedulerType schedulerType) throws InterruptedException {
 		assumeTrue(transport.isAvailable());
 		// avoid LOCAL for real networking tests
 		assumeTrue(!transport.isLocal());
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType)) {
 			// create a simple http request server
 			InetSocketAddress inetAddress = new InetSocketAddress(8080);
 			CountDownLatch sendResponse = new CountDownLatch(1);
@@ -175,23 +183,24 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void virtualEventExecutorGroupCorrectlySetEventExecutor(Transport transport)
+	void virtualEventExecutorGroupCorrectlySetEventExecutor(Transport transport, EventLoopSchedulerType schedulerType)
 			throws ExecutionException, InterruptedException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType)) {
 			var ioEventLoop = group.next();
 			assertInstanceOf(EventExecutor.class, ioEventLoop);
 			assertTrue(group.submit(() -> ThreadExecutorMap.currentExecutor() == ioEventLoop).get());
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsForNetworking")
-	void busyYieldMakeEveryoneToProgress(Transport transport) throws InterruptedException {
+	void busyYieldMakeEveryoneToProgress(Transport transport, EventLoopSchedulerType schedulerType)
+			throws InterruptedException {
 		assumeTrue(transport.isAvailable());
 		assumeTrue(!transport.isLocal());
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType)) {
 			// create a simple http request server
 			InetSocketAddress inetAddress = new InetSocketAddress(8080);
 			CountDownLatch sendResponse = new CountDownLatch(1);
@@ -278,9 +287,10 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void saveWakeupsOnVirtualThreads(Transport transport) throws InterruptedException, ExecutionException {
+	void saveWakeupsOnVirtualThreads(Transport transport, EventLoopSchedulerType schedulerType)
+			throws InterruptedException, ExecutionException {
 		assumeTrue(transport.isAvailable());
 		assumeTrue(!transport.isLocal());
 		var wakeupCounter = new AtomicInteger();
@@ -326,7 +336,7 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 				}
 			};
 		};
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, counterHandlerFactory)) {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, counterHandlerFactory, schedulerType)) {
 			// create a simple http request server
 			InetSocketAddress inetAddress = new InetSocketAddress(8080);
 			var innerVThreadCreationFromVThread = new CompletableFuture<Integer>();
@@ -383,11 +393,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void schedulerIsNotInheritedWithThreadOfVirtual(Transport transport)
+	void schedulerIsNotInheritedWithThreadOfVirtual(Transport transport, EventLoopSchedulerType schedulerType)
 			throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType)) {
 			final var expectedScheduler = group
 					.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
 			assertNotNull(expectedScheduler);
@@ -404,11 +414,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void schedulerIsInheritedByForkedVTFromTheRightFactory(Transport transport)
+	void schedulerIsInheritedByForkedVTFromTheRightFactory(Transport transport, EventLoopSchedulerType schedulerType)
 			throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType)) {
 			final var expectedEventLoopScheduler = group
 					.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler().get()).get();
 			assertNotNull(expectedEventLoopScheduler);
@@ -428,10 +438,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void schedulerIsNotInheritedByForkedVT(Transport transport) throws InterruptedException, ExecutionException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+	void schedulerIsNotInheritedByForkedVT(Transport transport, EventLoopSchedulerType schedulerType)
+			throws InterruptedException, ExecutionException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType)) {
 			final var vThreadFactory = group.submit(group::vThreadFactory).get();
 			var schedulerRef = new CompletableFuture<EventLoopScheduler.SharedRef>();
 			vThreadFactory.newThread(() -> {
@@ -447,14 +458,14 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void schedulerIsNotLeakingIfItsThreadFactoryOutliveIt(Transport transport)
+	void schedulerIsNotLeakingIfItsThreadFactoryOutliveIt(Transport transport, EventLoopSchedulerType schedulerType)
 			throws InterruptedException, ExecutionException {
 		ThreadFactory vThreadFactory;
 		WeakReference<EventLoopScheduler> schedulerWeakRef;
 		EventLoopScheduler.SharedRef schedulerRef;
-		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType);
 		vThreadFactory = group.submit(group::vThreadFactory).get();
 		schedulerRef = group.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler()).get();
 		schedulerWeakRef = new WeakReference<>(schedulerRef.get());
@@ -479,11 +490,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		assertNull(schedulerRefPromise.get().get());
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed(Transport transport)
+	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed(Transport transport, EventLoopSchedulerType schedulerType)
 			throws InterruptedException, ExecutionException, BrokenBarrierException {
-		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
+		var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType);
 		final var barrier = new CyclicBarrier(2);
 		final var vThreadFactory = group.submit(group::vThreadFactory).get();
 		vThreadFactory.newThread(() -> {
@@ -497,11 +508,11 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		barrier.await();
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked(Transport transport)
-			throws BrokenBarrierException, InterruptedException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+	void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked(Transport transport,
+			EventLoopSchedulerType schedulerType) throws BrokenBarrierException, InterruptedException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType)) {
 			var allBlocked = new CyclicBarrier(3);
 			group.execute(() -> {
 				group.vThreadFactory().newThread(() -> {
@@ -519,13 +530,14 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void testFairness(Transport transport) throws ExecutionException, InterruptedException {
+	void testFairness(Transport transport, EventLoopSchedulerType schedulerType)
+			throws ExecutionException, InterruptedException {
 		final long V_TASK_DURATION_NS = TimeUnit.MILLISECONDS.toNanos(100);
 		int tasks = 4;
 		var interleavingVirtualThreads = new AtomicBoolean(false);
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType)) {
 			var nonBlockingTasksCompleted = new CountDownLatch(tasks);
 			group.submit(() -> {
 				var counter = new AtomicInteger();
@@ -554,21 +566,23 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void testPlatformThreadSpawnsVirtualThreads(Transport transport) throws ExecutionException, InterruptedException {
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
+	void testPlatformThreadSpawnsVirtualThreads(Transport transport, EventLoopSchedulerType schedulerType)
+			throws ExecutionException, InterruptedException {
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType);
 				var executor = Executors.newVirtualThreadPerTaskExecutor()) {
 			var scheduler = executor.submit(() -> EventLoopScheduler.currentThreadSchedulerContext().scheduler());
 			assertNull(scheduler.get());
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void testBlockingIO(Transport transport) throws IOException, InterruptedException, ExecutionException {
+	void testBlockingIO(Transport transport, EventLoopSchedulerType schedulerType)
+			throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType);
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
@@ -611,12 +625,12 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void testShutdownSchedulerOnBlockingIO(Transport transport)
+	void testShutdownSchedulerOnBlockingIO(Transport transport, EventLoopSchedulerType schedulerType)
 			throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType);
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
@@ -678,13 +692,13 @@ public class VirtualMultithreadIoEventLoopGroupTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{index} => transport={0}")
+	@ParameterizedTest(name = "{index} => transport={0}, scheduler={1}")
 	@MethodSource("transportsAllowLocal")
-	void testShutdownSchedulerOnLongBlockingIO(Transport transport)
+	void testShutdownSchedulerOnLongBlockingIO(Transport transport, EventLoopSchedulerType schedulerType)
 			throws IOException, InterruptedException, ExecutionException {
 		assumeTrue(NettyScheduler.perCarrierPollers());
 		int bytesToWrite = 16;
-		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory());
+		try (var group = new VirtualMultithreadIoEventLoopGroup(1, transport.handlerFactory(), schedulerType);
 				var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
