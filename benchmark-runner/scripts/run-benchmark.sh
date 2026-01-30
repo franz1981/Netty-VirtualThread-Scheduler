@@ -31,6 +31,7 @@ MOCK_TASKSET="${MOCK_TASKSET:-4,5}"  # CPUs for mock server
 SERVER_PORT="${SERVER_PORT:-8081}"
 SERVER_THREADS="${SERVER_THREADS:-2}"
 SERVER_USE_CUSTOM_SCHEDULER="${SERVER_USE_CUSTOM_SCHEDULER:-false}"
+SERVER_SCHEDULER_TYPE="${SERVER_SCHEDULER_TYPE:-fifo}"
 SERVER_IO="${SERVER_IO:-epoll}"
 SERVER_TASKSET="${SERVER_TASKSET:-2,3}"  # CPUs for handoff server
 SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
@@ -59,6 +60,13 @@ ENABLE_PROFILER="${ENABLE_PROFILER:-false}"
 PROFILER_EVENT="${PROFILER_EVENT:-cpu}"
 PROFILER_OUTPUT="${PROFILER_OUTPUT:-profile.html}"
 ASYNC_PROFILER_PATH="${ASYNC_PROFILER_PATH:-}"  # Path to async-profiler
+
+# JFR configuration
+ENABLE_JFR="${ENABLE_JFR:-false}"
+JFR_EVENTS="${JFR_EVENTS:-all}"
+JFR_OUTPUT="${JFR_OUTPUT:-netty-loom.jfr}"
+JFR_RECORDING_NAME="${JFR_RECORDING_NAME:-netty-loom-benchmark}"
+JFR_SETTINGS_FILE="${JFR_SETTINGS_FILE:-}"
 
 # pidstat configuration
 ENABLE_PIDSTAT="${ENABLE_PIDSTAT:-true}"
@@ -111,6 +119,87 @@ parse_duration_to_seconds() {
     esac
 }
 
+resolve_jfr_events() {
+    local selection="$1"
+    local -a default_events=(
+        "io.netty.loom.NettyRunIo"
+        "io.netty.loom.NettyRunNonBlockingTasks"
+        "io.netty.loom.VirtualThreadTaskRuns"
+        "io.netty.loom.VirtualThreadTaskRun"
+        "io.netty.loom.VirtualThreadTaskSubmit"
+    )
+    local -A event_map=(
+        ["NettyRunIo"]="io.netty.loom.NettyRunIo"
+        ["NettyRunNonBlockingTasks"]="io.netty.loom.NettyRunNonBlockingTasks"
+        ["VirtualThreadTaskRuns"]="io.netty.loom.VirtualThreadTaskRuns"
+        ["VirtualThreadTaskRun"]="io.netty.loom.VirtualThreadTaskRun"
+        ["VirtualThreadTaskSubmit"]="io.netty.loom.VirtualThreadTaskSubmit"
+        ["io.netty.loom.NettyRunIo"]="io.netty.loom.NettyRunIo"
+        ["io.netty.loom.NettyRunNonBlockingTasks"]="io.netty.loom.NettyRunNonBlockingTasks"
+        ["io.netty.loom.VirtualThreadTaskRuns"]="io.netty.loom.VirtualThreadTaskRuns"
+        ["io.netty.loom.VirtualThreadTaskRun"]="io.netty.loom.VirtualThreadTaskRun"
+        ["io.netty.loom.VirtualThreadTaskSubmit"]="io.netty.loom.VirtualThreadTaskSubmit"
+    )
+    local -a resolved=()
+
+    if [[ "$selection" == "all" ]]; then
+        resolved=("${default_events[@]}")
+    else
+        local -a items=()
+        IFS=',' read -r -a items <<< "$selection"
+        for item in "${items[@]}"; do
+            local trimmed="${item//[[:space:]]/}"
+            if [[ -z "$trimmed" ]]; then
+                continue
+            fi
+            if [[ -z "${event_map[$trimmed]+x}" ]]; then
+                error "Unknown JFR event selection: $trimmed"
+            fi
+            resolved+=("${event_map[$trimmed]}")
+        done
+    fi
+
+    if [[ ${#resolved[@]} -eq 0 ]]; then
+        error "JFR_EVENTS resolved to an empty set"
+    fi
+
+    printf '%s\n' "${resolved[@]}"
+}
+
+write_jfr_settings() {
+    if [[ -n "$JFR_SETTINGS_FILE" ]]; then
+        if [[ ! -f "$JFR_SETTINGS_FILE" ]]; then
+            error "JFR_SETTINGS_FILE not found: $JFR_SETTINGS_FILE"
+        fi
+        echo "$JFR_SETTINGS_FILE"
+        return
+    fi
+
+    local repo_settings_path="${SCRIPT_DIR}/jfr/netty-loom.jfc"
+    if [[ -f "$repo_settings_path" ]]; then
+        echo "$repo_settings_path"
+        return
+    fi
+
+    local settings_path="$OUTPUT_DIR/netty-loom.jfc"
+    local -a events=()
+
+    mapfile -t events < <(resolve_jfr_events "$JFR_EVENTS")
+
+    {
+        echo '<?xml version="1.0" encoding="UTF-8"?>'
+        echo '<configuration version="2.0" name="Netty Loom" description="Netty Loom JFR settings" provider="Netty Loom">'
+        for event in "${events[@]}"; do
+            echo "  <event name=\"$event\">"
+            echo '    <setting name="enabled">true</setting>'
+            echo '  </event>'
+        done
+        echo '</configuration>'
+    } > "$settings_path"
+
+    echo "$settings_path"
+}
+
 validate_config() {
     local warmup_secs=$(parse_duration_to_seconds "$WARMUP_DURATION")
     local total_secs=$(parse_duration_to_seconds "$TOTAL_DURATION")
@@ -133,6 +222,15 @@ validate_config() {
 
     if [[ "$ENABLE_PROFILER" == "true" && -z "$ASYNC_PROFILER_PATH" ]]; then
         error "ASYNC_PROFILER_PATH must be set when ENABLE_PROFILER=true"
+    fi
+    if [[ "$ENABLE_JFR" == "true" ]]; then
+        if [[ -n "$JFR_SETTINGS_FILE" ]]; then
+            if [[ ! -f "$JFR_SETTINGS_FILE" ]]; then
+                error "JFR_SETTINGS_FILE not found: $JFR_SETTINGS_FILE"
+            fi
+        else
+            resolve_jfr_events "$JFR_EVENTS" > /dev/null
+        fi
     fi
 
     log "Configuration validated"
@@ -308,6 +406,7 @@ start_handoff_server() {
         --mock-url http://localhost:$MOCK_PORT/fruits \
         --threads $SERVER_THREADS \
         --use-custom-scheduler $SERVER_USE_CUSTOM_SCHEDULER \
+        --scheduler-type $SERVER_SCHEDULER_TYPE \
         --io $SERVER_IO \
         --no-timeout $SERVER_NO_TIMEOUT \
         --reactive $SERVER_REACTIVE \
@@ -383,6 +482,38 @@ stop_profiler() {
     if [[ -n "${PROFILER_PID:-}" ]]; then
         wait "$PROFILER_PID" 2>/dev/null || true
     fi
+}
+
+# ============================================================================
+# Start JFR
+# ============================================================================
+
+start_jfr() {
+    if [[ "$ENABLE_JFR" != "true" ]]; then
+        return
+    fi
+
+    local jcmd="$JAVA_HOME/bin/jcmd"
+    if [[ ! -x "$jcmd" ]]; then
+        error "jcmd not found at $jcmd"
+    fi
+
+    local settings_path
+    settings_path=$(write_jfr_settings)
+
+    local output_file="$OUTPUT_DIR/$JFR_OUTPUT"
+    "$jcmd" "$SERVER_PID" JFR.start \
+        name="$JFR_RECORDING_NAME" \
+        settings="$settings_path" \
+        filename="$output_file" \
+        delay="${PROFILING_DELAY_SECONDS}s" \
+        duration="${PROFILING_DURATION_SECONDS}s" \
+        dumponexit=true > /dev/null
+
+    JFR_STARTED=true
+    log "JFR scheduled after ${PROFILING_DELAY_SECONDS}s for ${PROFILING_DURATION_SECONDS}s"
+    log "JFR output: $output_file"
+    log "JFR events enabled: $JFR_EVENTS"
 }
 
 # ============================================================================
@@ -544,6 +675,7 @@ print_config() {
     log "  Threads:        $SERVER_THREADS"
     log "  Reactive:       $SERVER_REACTIVE"
     log "  Custom Sched:   $SERVER_USE_CUSTOM_SCHEDULER"
+    log "  Scheduler Type: $SERVER_SCHEDULER_TYPE"
     log "  I/O Type:       $SERVER_IO"
     log "  No Timeout:     $SERVER_NO_TIMEOUT"
     log "  Poller Mode:    $SERVER_POLLER_MODE"
@@ -568,6 +700,17 @@ print_config() {
     if [[ "$ENABLE_PROFILER" == "true" ]]; then
         log "  Event:          $PROFILER_EVENT"
         log "  Output:         $PROFILER_OUTPUT"
+    fi
+    log ""
+    log "JFR:"
+    log "  Enabled:        $ENABLE_JFR"
+    if [[ "$ENABLE_JFR" == "true" ]]; then
+        log "  Events:         $JFR_EVENTS"
+        log "  Settings File:  ${JFR_SETTINGS_FILE:-<auto>}"
+        log "  Output:         $JFR_OUTPUT"
+        log "  Recording Name: $JFR_RECORDING_NAME"
+        log "  Delay:          ${PROFILING_DELAY_SECONDS}s"
+        log "  Duration:       ${PROFILING_DURATION_SECONDS}s"
     fi
     log ""
     log "pidstat:"
@@ -617,6 +760,7 @@ Handoff Server:
   SERVER_THREADS            Number of event loop threads (default: 2)
   SERVER_REACTIVE           Use reactive handler with Reactor (default: false)
   SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
+  SERVER_SCHEDULER_TYPE     Scheduler type: fifo or lifo (default: fifo)
   SERVER_IO                 I/O type: epoll, nio, or io_uring (default: epoll)
   SERVER_NO_TIMEOUT         Disable HTTP client timeout (default: false)
   SERVER_TASKSET            CPU affinity range (default: "2,3")
@@ -634,13 +778,26 @@ Load Generator:
 Timing:
   WARMUP_DURATION           Warmup duration (default: 10s)
   TOTAL_DURATION            Total test duration (default: 30s, must keep steady state >= 20s)
+  PROFILING_DELAY_SECONDS   Profiling start delay in seconds (default: 5)
+  PROFILING_DURATION_SECONDS Profiling duration in seconds (default: 10)
 
 Profiling:
   ENABLE_PROFILER           Enable async-profiler (default: false)
   ASYNC_PROFILER_PATH       Path to async-profiler installation
   PROFILER_EVENT            Profiler event type (default: cpu)
   PROFILER_OUTPUT           Profiler output file (default: profile.html)
-  Note: profiling starts after 5s and runs for 10s.
+  Note: profiling uses PROFILING_DELAY_SECONDS and PROFILING_DURATION_SECONDS.
+
+JFR:
+  ENABLE_JFR                Enable Netty Loom JFR events (default: false)
+  JFR_EVENTS                Comma-separated event list or "all" (default: all)
+                           Options: NettyRunIo, NettyRunNonBlockingTasks,
+                                    VirtualThreadTaskRuns, VirtualThreadTaskRun,
+                                    VirtualThreadTaskSubmit
+  JFR_SETTINGS_FILE         Path to a JFR settings (.jfc) file (default: auto)
+  JFR_OUTPUT                JFR output file (default: netty-loom.jfr)
+  JFR_RECORDING_NAME        JFR recording name (default: netty-loom-benchmark)
+  Note: JFR uses PROFILING_DELAY_SECONDS and PROFILING_DURATION_SECONDS.
 
 pidstat:
   ENABLE_PIDSTAT            Enable pidstat collection (default: true)
@@ -719,6 +876,7 @@ EOF
     run_warmup
 
     # Start monitoring after warmup
+    start_jfr
     start_profiler
     start_pidstat
     start_perf_stat
@@ -729,6 +887,10 @@ EOF
     # Stop monitoring
     stop_profiler
     stop_pidstat
+
+    if [[ "$ENABLE_JFR" == "true" ]]; then
+        log "JFR output: $OUTPUT_DIR/$JFR_OUTPUT"
+    fi
 
     log "Benchmark complete!"
     log "Results in: $OUTPUT_DIR"
