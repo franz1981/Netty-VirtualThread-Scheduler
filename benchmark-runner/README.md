@@ -87,6 +87,8 @@ All configuration is via environment variables:
 |----------|---------|-------------|
 | `WARMUP_DURATION` | 10s | Warmup duration (no profiling) |
 | `TOTAL_DURATION` | 30s | Total test duration (steady-state must be >= 20s) |
+| `PROFILING_DELAY_SECONDS` | 5 | Delay before starting profiling/perf/JFR |
+| `PROFILING_DURATION_SECONDS` | 10 | Profiling/perf/JFR duration in seconds |
 
 ### Profiling
 | Variable | Default | Description |
@@ -96,7 +98,27 @@ All configuration is via environment variables:
 | `PROFILER_EVENT` | cpu | Profiler event type |
 | `PROFILER_OUTPUT` | profile.html | Output filename |
 
-Profiling starts 5 seconds into the steady-state phase and runs for a fixed 10 seconds.
+Profiling starts after `PROFILING_DELAY_SECONDS` and runs for `PROFILING_DURATION_SECONDS`.
+Both the async-profiler and perf stat use `PROFILING_DELAY_SECONDS` and `PROFILING_DURATION_SECONDS`.
+
+### JFR (Netty Loom events)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_JFR` | false | Enable Netty Loom JFR events |
+| `JFR_EVENTS` | all | Comma-separated list of events to enable |
+| `JFR_OUTPUT` | netty-loom.jfr | JFR output filename |
+| `JFR_RECORDING_NAME` | netty-loom-benchmark | JFR recording name |
+| `JFR_SETTINGS_FILE` | | Path to a JFR settings file (.jfc). If set, overrides `JFR_EVENTS`. |
+
+Supported event names (short or full):
+- `NettyRunIo` (`io.netty.loom.NettyRunIo`)
+- `NettyRunNonBlockingTasks` (`io.netty.loom.NettyRunNonBlockingTasks`)
+- `VirtualThreadTaskRuns` (`io.netty.loom.VirtualThreadTaskRuns`)
+- `VirtualThreadTaskRun` (`io.netty.loom.VirtualThreadTaskRun`)
+- `VirtualThreadTaskSubmit` (`io.netty.loom.VirtualThreadTaskSubmit`)
+
+JFR uses the same profiling delay/duration settings to capture steady state.
+The default settings file lives at `benchmark-runner/scripts/jfr/netty-loom.jfc`. Override it with `JFR_SETTINGS_FILE`.
 
 ### pidstat
 When enabled, pidstat always records three files: handoff server, mock server, and load generator.
@@ -116,7 +138,7 @@ When enabled, pidstat always records three files: handoff server, mock server, a
 | `ENABLE_PERF_STAT` | false | Enable perf stat collection |
 | `PERF_STAT_OUTPUT` | perf-stat.txt | Output filename |
 
-perf stat starts 5 seconds into the steady-state phase and runs for a fixed 10 seconds.
+perf stat uses `PROFILING_DELAY_SECONDS` and `PROFILING_DURATION_SECONDS`.
 
 ### General
 | Variable | Default | Description |
@@ -167,6 +189,16 @@ TOTAL_DURATION=45s \
 ./run-benchmark.sh
 ```
 
+### With JFR events enabled (subset)
+
+```bash
+JAVA_HOME=/path/to/jdk \
+ENABLE_JFR=true \
+JFR_EVENTS=NettyRunIo,VirtualThreadTaskRun \
+SERVER_USE_CUSTOM_SCHEDULER=true \
+./run-benchmark.sh
+```
+
 ### Rate-limited test with wrk2
 
 ```bash
@@ -193,6 +225,7 @@ Results are saved to `./benchmark-results/` (configurable via `OUTPUT_DIR`):
 
 - `wrk-results.txt` - Load generator output with throughput/latency
 - `profile.html` - Flamegraph (if profiling enabled)
+- `netty-loom.jfr` - JFR recording (if JFR events enabled)
 - `pidstat.log` - Handoff server thread-level CPU usage (if pidstat enabled)
 - `pidstat.log` includes per-thread command lines when `PIDSTAT_HANDOFF_DETAILED=true`. Note: Linux thread names are limited (comm is 15 chars), so very long JVM thread names may still appear truncated.
 - `pidstat-mock.log` - Mock server thread-level CPU usage (if pidstat enabled)
