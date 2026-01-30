@@ -39,9 +39,6 @@ public final class VirtualThreadTaskRunEvent extends Event {
 	@Label("Carrier Thread")
 	public Thread carrierThread;
 
-	@Label("Tasks Executed In Drain")
-	public int tasksExecutedInDrain;
-
 	@Label("Is Poller")
 	public boolean isPoller;
 

@@ -7,11 +7,12 @@ At a high level:
 - Each Netty event loop is backed by a virtual thread (the "event loop virtual thread").
 - Each such virtual thread is executed on a dedicated carrier platform thread.
 - Virtual threads created from the event-loop-specific ThreadFactory returned by the group will be associated with the same EventLoopScheduler and, when possible, will run on the same carrier platform thread as the event loop.
+- You can select FIFO or LIFO scheduling when constructing the group by passing `EventLoopSchedulerType` (default is FIFO).
 
 This allows code that must block (for example, blocking I/O or synchronous library calls) to be executed without moving work between unrelated threads, reducing wake-ups and improving cache locality compared to offloading to an external thread pool.
 
 ## Key behavior (user-facing)
-- Create a `VirtualMultithreadIoEventLoopGroup` like any other Netty `EventLoopGroup`. It behaves like a `MultiThreadIoEventLoopGroup` from the Netty API, but the event loops are driven by virtual threads and coordinated with carrier platform threads by a per-event-loop `EventLoopScheduler`.
+- Create a `VirtualMultithreadIoEventLoopGroup` like any other Netty `EventLoopGroup`. It behaves like a `MultiThreadIoEventLoopGroup` from the Netty API, but the event loops are driven by virtual threads and coordinated with carrier platform threads by a per-event-loop `EventLoopScheduler` (FIFO or LIFO).
 - Call `group.vThreadFactory()` to obtain a `ThreadFactory` that creates virtual threads tied to an `EventLoopScheduler` of the group. When those virtual threads block, the scheduler parks them and resumes them later using the carrier thread.
 - Virtual threads created via the group's `vThreadFactory()` will attempt to inherit the scheduler and run with low-overhead handoffs back to the event loop when continuing work.
 - Virtual threads created with `Thread.ofVirtual().factory()` (the JVM default factory) do NOT automatically inherit the group's scheduler.

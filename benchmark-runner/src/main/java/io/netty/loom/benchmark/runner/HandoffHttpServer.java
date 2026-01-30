@@ -37,6 +37,7 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
+import io.netty.loom.EventLoopSchedulerType;
 import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
 import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
@@ -92,6 +93,7 @@ public class HandoffHttpServer {
 	private final boolean silent;
 	private final boolean noTimeout;
 	private final boolean useReactive;
+	private final EventLoopSchedulerType schedulerType;
 
 	private MultiThreadIoEventLoopGroup workerGroup;
 	private Channel serverChannel;
@@ -112,6 +114,12 @@ public class HandoffHttpServer {
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
 			boolean noTimeout, boolean useReactive) {
+		this(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout, useReactive,
+				EventLoopSchedulerType.FIFO);
+	}
+
+	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
+			boolean noTimeout, boolean useReactive, EventLoopSchedulerType schedulerType) {
 		this.port = port;
 		this.mockUrl = mockUrl;
 		this.threads = threads;
@@ -120,6 +128,7 @@ public class HandoffHttpServer {
 		this.silent = silent;
 		this.noTimeout = noTimeout;
 		this.useReactive = useReactive;
+		this.schedulerType = schedulerType == null ? EventLoopSchedulerType.FIFO : schedulerType;
 	}
 
 	public void start() throws InterruptedException {
@@ -142,7 +151,7 @@ public class HandoffHttpServer {
 		};
 
 		if (useCustomScheduler) {
-			var group = new VirtualMultithreadIoEventLoopGroup(threads, ioHandlerFactory);
+			var group = new VirtualMultithreadIoEventLoopGroup(threads, ioHandlerFactory, schedulerType);
 			threadFactorySupplier = group::vThreadFactory;
 			workerGroup = group;
 		} else {
@@ -174,6 +183,9 @@ public class HandoffHttpServer {
 			System.out.printf("  Threads: %d%n", threads);
 			if (!useReactive) {
 				System.out.printf("  Custom Scheduler: %s%n", useCustomScheduler);
+				if (useCustomScheduler) {
+					System.out.printf("  Scheduler Type: %s%n", schedulerType);
+				}
 			}
 			System.out.printf("  I/O: %s%n", io);
 			System.out.printf("  No Timeout: %s%n", noTimeout);
@@ -329,6 +341,7 @@ public class HandoffHttpServer {
 		boolean silent = false;
 		boolean noTimeout = false;
 		boolean useReactive = false;
+		EventLoopSchedulerType schedulerType = EventLoopSchedulerType.FIFO;
 
 		for (int i = 0; i < args.length; i++) {
 			switch (args[i]) {
@@ -336,6 +349,7 @@ public class HandoffHttpServer {
 				case "--mock-url" -> mockUrl = args[++i];
 				case "--threads" -> threads = Integer.parseInt(args[++i]);
 				case "--use-custom-scheduler" -> useCustomScheduler = Boolean.parseBoolean(args[++i]);
+				case "--scheduler-type" -> schedulerType = EventLoopSchedulerType.valueOf(args[++i].toUpperCase());
 				case "--io" -> io = IO.valueOf(args[++i].toUpperCase());
 				case "--silent" -> silent = true;
 				case "--no-timeout" -> noTimeout = Boolean.parseBoolean(args[++i]);
@@ -348,7 +362,7 @@ public class HandoffHttpServer {
 		}
 
 		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, useCustomScheduler, io, silent,
-				noTimeout, useReactive);
+				noTimeout, useReactive, schedulerType);
 		server.start();
 
 		// Shutdown hook
@@ -367,6 +381,7 @@ public class HandoffHttpServer {
 						  --mock-url <url>               Mock server URL (default: http://localhost:8080/fruits)
 						  --threads <n>                  Number of event loop threads (default: 1)
 						  --use-custom-scheduler <bool>  Use custom Netty scheduler (default: false, ignored if --reactive is true)
+						  --scheduler-type <fifo|lifo>   Scheduler type for custom scheduler (default: fifo)
 						  --io <epoll|nio|io_uring>      I/O type (default: epoll)
 						  --no-timeout <true|false>      Disable HTTP client timeout (default: false)
 						  --reactive <true|false>        Use reactive handler with Reactor (default: false)

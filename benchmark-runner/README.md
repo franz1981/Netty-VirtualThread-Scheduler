@@ -66,6 +66,7 @@ All configuration is via environment variables:
 | `SERVER_THREADS` | 2 | Number of event loop threads |
 | `SERVER_REACTIVE` | false | Use reactive handler with Reactor |
 | `SERVER_USE_CUSTOM_SCHEDULER` | false | Use custom Netty scheduler |
+| `SERVER_SCHEDULER_TYPE` | fifo | Scheduler type: fifo or lifo |
 | `SERVER_IO` | epoll | I/O type: epoll, nio, or io_uring |
 | `SERVER_NO_TIMEOUT` | false | Disable HTTP client timeout |
 | `SERVER_TASKSET` | 2,3 | CPU affinity (e.g., "2-5") |
@@ -272,6 +273,7 @@ java \
   --mock-url http://localhost:8080/fruits \
   --threads 2 \
   --use-custom-scheduler true \
+  --scheduler-type fifo \
   --io epoll
 ```
 
