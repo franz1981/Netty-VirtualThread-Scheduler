@@ -52,8 +52,8 @@ LOAD_GEN_URL="${LOAD_GEN_URL:-http://localhost:8081/fruits}"
 WARMUP_DURATION="${WARMUP_DURATION:-10s}"
 TOTAL_DURATION="${TOTAL_DURATION:-30s}"
 MIN_STEADY_STATE_SECONDS=20
-PROFILING_DELAY_SECONDS=5
-PROFILING_DURATION_SECONDS=10
+PROFILING_DELAY_SECONDS="${PROFILING_DELAY_SECONDS:-5}"
+PROFILING_DURATION_SECONDS="${PROFILING_DURATION_SECONDS:-10}"
 
 # Profiling configuration
 ENABLE_PROFILER="${ENABLE_PROFILER:-false}"
@@ -67,6 +67,10 @@ JFR_EVENTS="${JFR_EVENTS:-all}"
 JFR_OUTPUT="${JFR_OUTPUT:-netty-loom.jfr}"
 JFR_RECORDING_NAME="${JFR_RECORDING_NAME:-netty-loom-benchmark}"
 JFR_SETTINGS_FILE="${JFR_SETTINGS_FILE:-}"
+JFR_TRACE_ENABLED="${JFR_TRACE_ENABLED:-true}"
+JFR_TRACE_OUTPUT="${JFR_TRACE_OUTPUT:-netty-loom-trace.json}"
+JFR_TIMELINE_ENABLED="${JFR_TIMELINE_ENABLED:-false}"
+JFR_TIMELINE_OUTPUT="${JFR_TIMELINE_OUTPUT:-netty-loom-timeline.jsonl}"
 
 # pidstat configuration
 ENABLE_PIDSTAT="${ENABLE_PIDSTAT:-true}"
@@ -91,6 +95,8 @@ CONFIG_OUTPUT="${CONFIG_OUTPUT:-benchmark-config.txt}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RUNNER_JAR="${PROJECT_ROOT}/benchmark-runner/target/benchmark-runner.jar"
+JFR_TO_TRACE_SCRIPT="${SCRIPT_DIR}/jfr/JfrToTrace.java"
+JFR_TO_TIMELINE_SCRIPT="${SCRIPT_DIR}/jfr/JfrToTimeline.java"
 
 # ============================================================================
 # Helper functions
@@ -485,6 +491,54 @@ stop_profiler() {
 }
 
 # ============================================================================
+# Export JFR to Chrome Trace
+# ============================================================================
+
+export_jfr_trace() {
+    if [[ "$ENABLE_JFR" != "true" || "$JFR_TRACE_ENABLED" != "true" ]]; then
+        return
+    fi
+
+    local jfr_path="$OUTPUT_DIR/$JFR_OUTPUT"
+    local trace_path="$OUTPUT_DIR/$JFR_TRACE_OUTPUT"
+
+    if [[ ! -f "$jfr_path" ]]; then
+        log "JFR trace export skipped (file not found): $jfr_path"
+        return
+    fi
+    if [[ ! -f "$JFR_TO_TRACE_SCRIPT" ]]; then
+        log "JFR trace export skipped (script missing): $JFR_TO_TRACE_SCRIPT"
+        return
+    fi
+
+    log "Exporting JFR to Chrome trace..."
+    jbang "$JFR_TO_TRACE_SCRIPT" --input "$jfr_path" --output "$trace_path"
+    log "Chrome trace output: $trace_path"
+}
+
+export_jfr_timeline() {
+    if [[ "$ENABLE_JFR" != "true" || "$JFR_TIMELINE_ENABLED" != "true" ]]; then
+        return
+    fi
+
+    local jfr_path="$OUTPUT_DIR/$JFR_OUTPUT"
+    local timeline_path="$OUTPUT_DIR/$JFR_TIMELINE_OUTPUT"
+
+    if [[ ! -f "$jfr_path" ]]; then
+        log "JFR timeline export skipped (file not found): $jfr_path"
+        return
+    fi
+    if [[ ! -f "$JFR_TO_TIMELINE_SCRIPT" ]]; then
+        log "JFR timeline export skipped (script missing): $JFR_TO_TIMELINE_SCRIPT"
+        return
+    fi
+
+    log "Exporting JFR to timeline..."
+    jbang "$JFR_TO_TIMELINE_SCRIPT" --input "$jfr_path" --output "$timeline_path"
+    log "Timeline output: $timeline_path"
+}
+
+# ============================================================================
 # Start JFR
 # ============================================================================
 
@@ -711,6 +765,10 @@ print_config() {
         log "  Recording Name: $JFR_RECORDING_NAME"
         log "  Delay:          ${PROFILING_DELAY_SECONDS}s"
         log "  Duration:       ${PROFILING_DURATION_SECONDS}s"
+        log "  Chrome Trace:   $JFR_TRACE_ENABLED"
+        log "  Trace Output:   $JFR_TRACE_OUTPUT"
+        log "  Timeline:       $JFR_TIMELINE_ENABLED"
+        log "  Timeline Output: $JFR_TIMELINE_OUTPUT"
     fi
     log ""
     log "pidstat:"
@@ -797,6 +855,10 @@ JFR:
   JFR_SETTINGS_FILE         Path to a JFR settings (.jfc) file (default: auto)
   JFR_OUTPUT                JFR output file (default: netty-loom.jfr)
   JFR_RECORDING_NAME        JFR recording name (default: netty-loom-benchmark)
+  JFR_TRACE_ENABLED         Export Chrome trace after JFR (default: true)
+  JFR_TRACE_OUTPUT          Chrome trace output file (default: netty-loom-trace.json)
+  JFR_TIMELINE_ENABLED      Export compact timeline after JFR (default: false)
+  JFR_TIMELINE_OUTPUT       Timeline output file (default: netty-loom-timeline.jsonl)
   Note: JFR uses PROFILING_DELAY_SECONDS and PROFILING_DURATION_SECONDS.
 
 pidstat:
@@ -887,9 +949,17 @@ EOF
     # Stop monitoring
     stop_profiler
     stop_pidstat
+    export_jfr_trace
+    export_jfr_timeline
 
     if [[ "$ENABLE_JFR" == "true" ]]; then
         log "JFR output: $OUTPUT_DIR/$JFR_OUTPUT"
+        if [[ "$JFR_TRACE_ENABLED" == "true" ]]; then
+            log "Chrome trace output: $OUTPUT_DIR/$JFR_TRACE_OUTPUT"
+        fi
+        if [[ "$JFR_TIMELINE_ENABLED" == "true" ]]; then
+            log "Timeline output: $OUTPUT_DIR/$JFR_TIMELINE_OUTPUT"
+        fi
     fi
 
     log "Benchmark complete!"
