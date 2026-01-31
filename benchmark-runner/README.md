@@ -110,6 +110,8 @@ Both the async-profiler and perf stat use `PROFILING_DELAY_SECONDS` and `PROFILI
 | `JFR_OUTPUT` | netty-loom.jfr | JFR output filename |
 | `JFR_RECORDING_NAME` | netty-loom-benchmark | JFR recording name |
 | `JFR_SETTINGS_FILE` | | Path to a JFR settings file (.jfc). If set, overrides `JFR_EVENTS`. |
+| `JFR_TRACE_ENABLED` | true | Export Chrome trace after JFR collection |
+| `JFR_TRACE_OUTPUT` | netty-loom-trace.json | Chrome trace output filename |
 
 Supported event names (short or full):
 - `NettyRunIo` (`io.netty.loom.NettyRunIo`)
@@ -120,6 +122,7 @@ Supported event names (short or full):
 
 JFR uses the same profiling delay/duration settings to capture steady state.
 The default settings file lives at `benchmark-runner/scripts/jfr/netty-loom.jfc`. Override it with `JFR_SETTINGS_FILE`.
+When enabled, the benchmark also converts the JFR file into Chrome Trace Format using `benchmark-runner/scripts/jfr/JfrToTrace.java` and stores the JSON trace alongside the other outputs.
 
 ### pidstat
 When enabled, pidstat always records three files: handoff server, mock server, and load generator.
