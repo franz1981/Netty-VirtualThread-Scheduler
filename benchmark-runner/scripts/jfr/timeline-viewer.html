@@ -396,11 +396,6 @@
       return `hsl(${hue} 50% 55%)`;
     }
 
-    function carrierColor(tid) {
-      const hue = (tid * 29) % 360;
-      return `hsl(${hue} 50% 55%)`;
-    }
-
     async function loadTimeline(file) {
       resetState();
       setStats('Loading...');

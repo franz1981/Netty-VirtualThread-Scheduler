@@ -821,7 +821,8 @@ JFR:
   ENABLE_JFR                Enable Netty Loom JFR events (default: false)
   JFR_EVENTS                Comma-separated event list or "all" (default: all)
                            Options: NettyRunIo, NettyRunTasks,
-                                    VirtualThreadTaskRuns, VirtualThreadTaskSubmit
+                                    VirtualThreadTaskRuns, VirtualThreadTaskRun,
+                                    VirtualThreadTaskSubmit
   JFR_SETTINGS_FILE         Path to a JFR settings (.jfc) file (default: auto)
   JFR_OUTPUT                JFR output file (default: netty-loom.jfr)
   JFR_RECORDING_NAME        JFR recording name (default: netty-loom-benchmark)

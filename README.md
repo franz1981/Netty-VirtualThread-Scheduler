@@ -106,6 +106,7 @@ Netty Loom publishes custom Java Flight Recorder events (disabled by default) fo
 - `io.netty.loom.NettyRunIo`
 - `io.netty.loom.NettyRunTasks`
 - `io.netty.loom.VirtualThreadTaskRuns`
+- `io.netty.loom.VirtualThreadTaskRun`
 - `io.netty.loom.VirtualThreadTaskSubmit`
 
 The benchmark runner can enable these events selectively via `ENABLE_JFR=true` and `JFR_EVENTS=...`. See `benchmark-runner/README.md` for details.
