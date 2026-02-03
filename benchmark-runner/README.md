@@ -116,6 +116,7 @@ Supported event names (short or full):
 - `NettyRunIo` (`io.netty.loom.NettyRunIo`)
 - `NettyRunTasks` (`io.netty.loom.NettyRunTasks`)
 - `VirtualThreadTaskRuns` (`io.netty.loom.VirtualThreadTaskRuns`)
+- `VirtualThreadTaskRun` (`io.netty.loom.VirtualThreadTaskRun`)
 - `VirtualThreadTaskSubmit` (`io.netty.loom.VirtualThreadTaskSubmit`)
 
 JFR uses the same profiling delay/duration settings to capture steady state.
