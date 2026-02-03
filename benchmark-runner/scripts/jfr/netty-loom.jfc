@@ -3,7 +3,7 @@
   <event name="io.netty.loom.NettyRunIo">
     <setting name="enabled">true</setting>
   </event>
-  <event name="io.netty.loom.NettyRunNonBlockingTasks">
+  <event name="io.netty.loom.NettyRunTasks">
     <setting name="enabled">true</setting>
   </event>
   <event name="io.netty.loom.VirtualThreadTaskRuns">

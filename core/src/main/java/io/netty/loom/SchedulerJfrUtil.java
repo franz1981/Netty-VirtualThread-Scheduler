@@ -40,21 +40,23 @@ final class SchedulerJfrUtil {
 		event.commit();
 	}
 
-	public static NettyRunNonBlockingTasksEvent beginRunNonBlockingTasksEvent() {
-		if (!NettyRunNonBlockingTasksEvent.isEventEnabled()) {
+	public static NettyRunTasksEvent beginRunTasksEvent() {
+		if (!NettyRunTasksEvent.isEventEnabled()) {
 			return null;
 		}
-		var event = new NettyRunNonBlockingTasksEvent();
+		var event = new NettyRunTasksEvent();
 		event.begin();
 		return event;
 	}
 
-	public static void commitRunNonBlockingTasksEvent(NettyRunNonBlockingTasksEvent event, Thread carrierThread,
-			int tasksHandled) {
+	public static void commitRunTasksEvent(NettyRunTasksEvent event, Thread carrierThread, int tasksHandled,
+			int queueDepthBefore, int queueDepthAfter) {
 		event.end();
 		event.eventLoopThread = Thread.currentThread();
 		event.carrierThread = carrierThread;
 		event.tasksHandled = tasksHandled;
+		event.queueDepthBefore = queueDepthBefore;
+		event.queueDepthAfter = queueDepthAfter;
 		event.commit();
 	}
 
@@ -63,6 +65,15 @@ final class SchedulerJfrUtil {
 			return null;
 		}
 		var event = new VirtualThreadTaskRunsEvent();
+		event.begin();
+		return event;
+	}
+
+	public static VirtualThreadTaskRunEvent beginVirtualThreadTaskRunEvent() {
+		if (!VirtualThreadTaskRunEvent.isEventEnabled()) {
+			return null;
+		}
+		var event = new VirtualThreadTaskRunEvent();
 		event.begin();
 		return event;
 	}
@@ -77,31 +88,27 @@ final class SchedulerJfrUtil {
 		event.commit();
 	}
 
+	public static void commitVirtualThreadTaskRunEvent(VirtualThreadTaskRunEvent event, Thread carrierThread,
+			Thread virtualThread, boolean isPoller, boolean isEventLoop, boolean immediate) {
+		event.end();
+		event.carrierThread = carrierThread;
+		event.virtualThread = virtualThread;
+		event.isPoller = isPoller;
+		event.isEventLoop = isEventLoop;
+		event.immediate = immediate;
+		event.commit();
+	}
+
 	public static void commitVirtualThreadTaskSubmitEvent(Thread.VirtualThreadTask task, Thread submitterThread,
-			Thread carrierThread, boolean isPoller) {
+			Thread carrierThread, boolean isPoller, boolean isEventLoop, boolean immediate) {
 		var event = new VirtualThreadTaskSubmitEvent();
 		event.virtualThread = task.thread();
 		event.submitterThread = submitterThread;
 		event.carrierThread = carrierThread;
 		event.isPoller = isPoller;
+		event.isEventLoop = isEventLoop;
+		event.immediate = immediate;
 		event.commit();
 	}
 
-	public static VirtualThreadTaskRunEvent beginVirtualThreadTaskRunEvent() {
-		if (!VirtualThreadTaskRunEvent.isEventEnabled()) {
-			return null;
-		}
-		var event = new VirtualThreadTaskRunEvent();
-		event.begin();
-		return event;
-	}
-
-	public static void commitVirtualThreadTaskRunEvent(VirtualThreadTaskRunEvent event, Thread carrierThread,
-			Thread.VirtualThreadTask task, boolean isPoller) {
-		event.end();
-		event.virtualThread = task.thread();
-		event.carrierThread = carrierThread;
-		event.isPoller = isPoller;
-		event.commit();
-	}
 }

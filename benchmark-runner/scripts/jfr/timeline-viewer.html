@@ -203,7 +203,7 @@
       <input id="threadFilter" type="text" placeholder="contains">
     </div>
     <div class="panel">
-      <label>Min Duration (us)</label>
+      <label>Min Duration (ns)</label>
       <input id="minDuration" type="number" min="0" value="0">
     </div>
     <div class="panel">
@@ -244,6 +244,8 @@
       count: 0,
       viewStart: 0,
       viewEnd: 0,
+      timeUnit: 'us',
+      timeScale: 1_000,
       selection: null,
       laneHeight: 12,
       minLaneHeight: 6,
@@ -316,6 +318,8 @@
       state.count = 0;
       state.viewStart = 0;
       state.viewEnd = 0;
+      state.timeUnit = 'us';
+      state.timeScale = 1_000;
       state.selection = null;
       state.overviewReady = false;
       legend.innerHTML = '';
@@ -352,6 +356,39 @@
     function eventColor(idx) {
       const hue = (idx * 63) % 360;
       return `hsl(${hue} 70% 45%)`;
+    }
+
+    const VT_RUN_EVENT_NAME = 'VirtualThreadTaskRun';
+    const VT_SUBMIT_EVENT_NAME = 'VirtualThreadTaskSubmit';
+    const VT_RUN_COLORS = {
+      poller: '#e11d48',
+      eventLoop: '#2563eb',
+      immediate: '#f59e0b',
+    };
+    const VT_RUN_COMBO = mixColors(VT_RUN_COLORS.poller, VT_RUN_COLORS.immediate);
+
+    function mixColors(hexA, hexB) {
+      const a = hexToRgb(hexA);
+      const b = hexToRgb(hexB);
+      const mix = {
+        r: Math.round((a.r + b.r) / 2),
+        g: Math.round((a.g + b.g) / 2),
+        b: Math.round((a.b + b.b) / 2),
+      };
+      return `rgb(${mix.r}, ${mix.g}, ${mix.b})`;
+    }
+
+    function hexToRgb(hex) {
+      const clean = hex.replace('#', '');
+      const value = clean.length === 3
+        ? clean.split('').map(c => c + c).join('')
+        : clean;
+      const intVal = parseInt(value, 16);
+      return {
+        r: (intVal >> 16) & 255,
+        g: (intVal >> 8) & 255,
+        b: intVal & 255,
+      };
     }
 
     function carrierColor(tid) {
@@ -410,6 +447,8 @@
         case 'h':
           state.events = obj.events || [];
           state.eventEnabled = state.events.map(() => true);
+          state.timeUnit = obj.unit || 'us';
+          state.timeScale = unitToNanos(state.timeUnit);
           updateLegend();
           break;
         case 'm': {
@@ -419,21 +458,30 @@
         }
         case 'e': {
           const thread = getThread(obj.tid);
-          thread.s.push(obj.s);
-          thread.d.push(obj.d);
+          const start = obj.s * state.timeScale;
+          const dur = obj.d * state.timeScale;
+          thread.s.push(start);
+          thread.d.push(dur);
           thread.n.push(obj.n);
           thread.v.push(obj.v || 0);
-          thread.p.push(obj.p || 0);
-          thread.b.push(obj.b || 0);
+          thread.p.push(obj.p ?? null);
+          thread.el.push(obj.el ?? null);
+          thread.im.push(obj.im ?? null);
+          thread.b.push(obj.b ?? null);
+          thread.te.push(obj.te ?? null);
+          thread.q0.push(obj.q0 ?? null);
+          thread.q1.push(obj.q1 ?? null);
+          thread.io.push(obj.io ?? null);
+          thread.th.push(obj.th ?? null);
           state.count += 1;
-          if (!state.minMicros || obj.s < state.minMicros) state.minMicros = obj.s;
-          const end = obj.s + obj.d;
+          if (!state.minMicros || start < state.minMicros) state.minMicros = start;
+          const end = start + dur;
           if (end > state.maxMicros) state.maxMicros = end;
           break;
         }
         case 'f':
-          state.minMicros = obj.min || state.minMicros;
-          state.maxMicros = obj.max || state.maxMicros;
+          if (obj.min != null) state.minMicros = obj.min * state.timeScale;
+          if (obj.max != null) state.maxMicros = obj.max * state.timeScale;
           break;
         default:
           break;
@@ -443,7 +491,7 @@
     function getThread(tid) {
       let thread = state.threads.get(tid);
       if (!thread) {
-        thread = { tid, name: `tid-${tid}`, s: [], d: [], n: [], v: [], p: [], b: [] };
+        thread = { tid, name: `tid-${tid}`, s: [], d: [], n: [], v: [], p: [], el: [], im: [], b: [], te: [], q0: [], q1: [], io: [], th: [] };
         state.threads.set(tid, thread);
       }
       return thread;
@@ -463,22 +511,53 @@
         thread.n = order.map(i => thread.n[i]);
         thread.v = order.map(i => thread.v[i]);
         thread.p = order.map(i => thread.p[i]);
+        thread.el = order.map(i => thread.el[i]);
+        thread.im = order.map(i => thread.im[i]);
         thread.b = order.map(i => thread.b[i]);
+        thread.te = order.map(i => thread.te[i]);
+        thread.q0 = order.map(i => thread.q0[i]);
+        thread.q1 = order.map(i => thread.q1[i]);
+        thread.io = order.map(i => thread.io[i]);
+        thread.th = order.map(i => thread.th[i]);
       }
       state.viewStart = state.minMicros;
       state.viewEnd = state.maxMicros;
     }
 
     function summaryText() {
-      const durationUs = Math.max(0, state.maxMicros - state.minMicros);
-      return `Threads: ${state.threadOrder.length} | Events: ${state.count} | Range: ${formatDuration(durationUs)}`;
+      const durationNs = Math.max(0, state.maxMicros - state.minMicros);
+      return `Threads: ${state.threadOrder.length} | Events: ${state.count} | Range: ${formatDuration(durationNs)}`;
     }
 
-    function formatDuration(micros) {
-      const ms = micros / 1000;
-      if (ms < 1000) return `${ms.toFixed(2)} ms`;
-      const s = ms / 1000;
-      return `${s.toFixed(2)} s`;
+    function unitToNanos(unit) {
+      switch ((unit || '').toLowerCase()) {
+        case 'ns':
+          return 1;
+        case 'us':
+          return 1_000;
+        case 'ms':
+          return 1_000_000;
+        case 's':
+          return 1_000_000_000;
+        default:
+          return 1;
+      }
+    }
+
+    function formatDuration(nanos) {
+      const abs = Math.abs(nanos);
+      if (abs < 1_000) return `${nanos} ns`;
+      if (abs < 1_000_000) return `${(nanos / 1_000).toFixed(3)} us`;
+      if (abs < 1_000_000_000) return `${(nanos / 1_000_000).toFixed(3)} ms`;
+      if (abs < 60_000_000_000) return `${(nanos / 1_000_000_000).toFixed(3)} s`;
+      const minutes = nanos / 60_000_000_000;
+      if (Math.abs(minutes) < 60) return `${minutes.toFixed(3)} min`;
+      const hours = minutes / 60;
+      return `${hours.toFixed(3)} h`;
+    }
+
+    function formatNanosRaw(nanos) {
+      return `${nanos} ns`;
     }
 
     function formatBytes(bytes) {
@@ -563,9 +642,7 @@
         ctx.fillStyle = 'rgba(15, 118, 110, 0.25)';
         ctx.fillRect(Math.min(x1, x2), 0, Math.abs(x2 - x1), height);
         const selDuration = Math.abs(state.selection.end - state.selection.start);
-        const selLabel = selDuration >= 1_000_000
-          ? `${(selDuration / 1_000_000).toFixed(3)} s`
-          : `${(selDuration / 1000).toFixed(3)} ms`;
+        const selLabel = formatDuration(selDuration);
         ctx.fillStyle = 'rgba(29, 27, 22, 0.85)';
         ctx.font = '12px "JetBrains Mono", "IBM Plex Mono", monospace';
         ctx.fillText(selLabel, Math.min(x1, x2) + 6, snap(height / 2 - 18));
@@ -659,22 +736,45 @@
         const end = start + dur;
         if (end < state.viewStart || start > state.viewEnd) continue;
         if (!state.eventEnabled[n[i]]) continue;
-      const x1 = offsetX + ((start - state.viewStart) / duration) * width;
-      const x2 = offsetX + ((end - state.viewStart) / duration) * width;
-      ctx.fillStyle = eventColor(n[i]);
-      const barWidth = Math.max(1, snap(x2 - x1));
-      const barHeight = Math.max(1, snap(height));
-      const barX = snap(x1);
-      ctx.fillRect(barX, baseY, barWidth, barHeight);
-      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-      ctx.beginPath();
-      ctx.moveTo(barX + 0.5, baseY);
-      ctx.lineTo(barX + 0.5, baseY + barHeight);
-      if (barWidth > 2) {
-        ctx.moveTo(barX + barWidth - 0.5, baseY);
-        ctx.lineTo(barX + barWidth - 0.5, baseY + barHeight);
-      }
-      ctx.stroke();
+        const rawX1 = offsetX + ((start - state.viewStart) / duration) * width;
+        const rawX2 = offsetX + ((end - state.viewStart) / duration) * width;
+        let clampedX1 = Math.max(offsetX, Math.min(offsetX + width, rawX1));
+        let clampedX2 = Math.max(offsetX, Math.min(offsetX + width, rawX2));
+        if (clampedX2 < clampedX1) {
+          const tmp = clampedX1;
+          clampedX1 = clampedX2;
+          clampedX2 = tmp;
+        }
+        let color = eventColor(n[i]);
+      if (state.events[n[i]] === VT_RUN_EVENT_NAME || state.events[n[i]] === VT_SUBMIT_EVENT_NAME) {
+          const isPoller = thread.p[i] === 1 || thread.p[i] === true;
+          const isEventLoop = thread.el[i] === 1 || thread.el[i] === true;
+          const isImmediate = thread.im[i] === 1 || thread.im[i] === true;
+          if (isEventLoop) {
+            color = VT_RUN_COLORS.eventLoop;
+          } else if (isPoller && isImmediate) {
+            color = VT_RUN_COMBO;
+          } else if (isPoller) {
+            color = VT_RUN_COLORS.poller;
+          } else if (isImmediate) {
+            color = VT_RUN_COLORS.immediate;
+          }
+        }
+        ctx.fillStyle = color;
+        const barWidth = Math.max(1, snap(clampedX2 - clampedX1));
+        const barHeight = Math.max(1, snap(height));
+        const maxBarX = offsetX + width - barWidth;
+        const barX = snap(Math.max(offsetX, Math.min(maxBarX, clampedX1)));
+        ctx.fillRect(barX, baseY, barWidth, barHeight);
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+        ctx.beginPath();
+        ctx.moveTo(barX + 0.5, baseY);
+        ctx.lineTo(barX + 0.5, baseY + barHeight);
+        if (barWidth > 2) {
+          ctx.moveTo(barX + barWidth - 0.5, baseY);
+          ctx.lineTo(barX + barWidth - 0.5, baseY + barHeight);
+        }
+        ctx.stroke();
       }
     }
 
@@ -832,16 +932,54 @@
       const start = thread.s[eventIdx];
       const dur = thread.d[eventIdx];
       const vtid = thread.v[eventIdx];
-      const isPoller = thread.p[eventIdx] ? 'true' : 'false';
-      const canBlock = thread.b[eventIdx] ? 'true' : 'false';
-      tooltip.textContent =
+      const isPoller = thread.p[eventIdx];
+      const isEventLoop = thread.el[eventIdx];
+      const isImmediate = thread.im[eventIdx];
+      const canBlock = thread.b[eventIdx];
+      const tasksExecuted = thread.te[eventIdx];
+      const queueDepthBefore = thread.q0[eventIdx];
+      const queueDepthAfter = thread.q1[eventIdx];
+      const ioEventsHandled = thread.io[eventIdx];
+      const tasksHandled = thread.th[eventIdx];
+
+      // Build tooltip dynamically based on available fields
+      let tooltipText =
         `Carrier: ${thread.name}\n` +
         `Event: ${eventName}\n` +
-        `Start: ${start} us\n` +
-        `Duration: ${dur} us\n` +
-        `VirtualThreadId: ${vtid}\n` +
-        `IsPoller: ${isPoller}\n` +
-        `CanBlock: ${canBlock}`;
+        `Start: ${formatNanosRaw(start)}\n` +
+        `Duration: ${formatNanosRaw(dur)}`;
+
+      if (vtid) {
+        tooltipText += `\nVirtualThreadId: ${vtid}`;
+      }
+      if (isPoller != null) {
+        tooltipText += `\nIsPoller: ${isPoller ? 'true' : 'false'}`;
+      }
+      if (isEventLoop != null) {
+        tooltipText += `\nIsEventLoop: ${isEventLoop ? 'true' : 'false'}`;
+      }
+      if (isImmediate != null) {
+        tooltipText += `\nImmediate: ${isImmediate ? 'true' : 'false'}`;
+      }
+      if (canBlock != null) {
+        tooltipText += `\nCanBlock: ${canBlock ? 'true' : 'false'}`;
+      }
+      if (tasksExecuted != null) {
+        tooltipText += `\nTasksExecuted: ${tasksExecuted}`;
+      }
+      if (queueDepthBefore != null || queueDepthAfter != null) {
+        const beforeText = queueDepthBefore != null ? queueDepthBefore : '?';
+        const afterText = queueDepthAfter != null ? queueDepthAfter : '?';
+        tooltipText += `\nQueueDepth: ${beforeText} -> ${afterText}`;
+      }
+      if (ioEventsHandled != null) {
+        tooltipText += `\nIoEventsHandled: ${ioEventsHandled}`;
+      }
+      if (tasksHandled != null) {
+        tooltipText += `\nTasksHandled: ${tasksHandled}`;
+      }
+
+      tooltip.textContent = tooltipText;
       tooltip.style.left = `${event.clientX}px`;
       tooltip.style.top = `${event.clientY}px`;
       tooltip.style.opacity = 1;

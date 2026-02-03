@@ -182,12 +182,14 @@ final class LifoEventLoopScheduler implements EventLoopScheduler {
 	}
 
 	private int runNonBlockingTasks(long deadlineNs) {
-		var event = SchedulerJfrUtil.beginRunNonBlockingTasksEvent();
+		var event = SchedulerJfrUtil.beginRunTasksEvent();
 		if (event == null) {
 			return ioEventLoop.runNonBlockingTasks(deadlineNs);
 		}
+		int queueDepthBefore = runQueue.size();
 		int tasksHandled = ioEventLoop.runNonBlockingTasks(deadlineNs);
-		SchedulerJfrUtil.commitRunNonBlockingTasksEvent(event, carrierThread, tasksHandled);
+		int queueDepthAfter = runQueue.size();
+		SchedulerJfrUtil.commitRunTasksEvent(event, carrierThread, tasksHandled, queueDepthBefore, queueDepthAfter);
 		return tasksHandled;
 	}
 
@@ -196,7 +198,7 @@ final class LifoEventLoopScheduler implements EventLoopScheduler {
 		var eventLoopContinuation = this.eventLoopContinuatioToRun;
 		if (eventLoopContinuation != null) {
 			this.eventLoopContinuatioToRun = null;
-			runContinuation(eventLoopContinuation);
+			runContinuation(eventLoopContinuation, false);
 			return true;
 		}
 		return false;
@@ -237,9 +239,15 @@ final class LifoEventLoopScheduler implements EventLoopScheduler {
 		var ioTask = this.ioTask;
 		final int count;
 		if (ioTask != null) {
+			var event = SchedulerJfrUtil.beginRunTasksEvent();
+			int queueDepthBefore = event != null ? runQueue.size() : 0;
 			count = 1;
 			this.ioTask = null;
-			runContinuation(ioTask);
+			runContinuation(ioTask, true);
+			if (event != null) {
+				int queueDepthAfter = runQueue.size();
+				SchedulerJfrUtil.commitRunTasksEvent(event, carrierThread, count, queueDepthBefore, queueDepthAfter);
+			}
 		} else {
 			count = runExternalContinuations(RUNNING_YIELD_US);
 		}
@@ -262,7 +270,7 @@ final class LifoEventLoopScheduler implements EventLoopScheduler {
 				break;
 			}
 			runContinuations++;
-			runContinuation(task);
+			runContinuation(task, false);
 			long elapsedNs = System.nanoTime() - startDrainingNs;
 			if (elapsedNs >= deadlineNs) {
 				break;
@@ -298,7 +306,8 @@ final class LifoEventLoopScheduler implements EventLoopScheduler {
 			assert ioTask == null;
 			ioTask = task;
 			if (submitEventEnabled) {
-				commitVirtualThreadTaskSubmitEvent(task, currentThread, carrierThread, context.isPoller);
+				commitVirtualThreadTaskSubmitEvent(task, currentThread, carrierThread, context.isPoller, eventLoopTask,
+						true);
 			}
 			Thread.yield();
 			return true;
@@ -309,7 +318,8 @@ final class LifoEventLoopScheduler implements EventLoopScheduler {
 			}
 		}
 		if (submitEventEnabled) {
-			commitVirtualThreadTaskSubmitEvent(task, currentThread, carrierThread, context.isPoller);
+			commitVirtualThreadTaskSubmitEvent(task, currentThread, carrierThread, context.isPoller, eventLoopTask,
+					false);
 		}
 		if (currentThread != eventLoopThread) {
 			// currentThread == carrierThread iff
@@ -326,16 +336,17 @@ final class LifoEventLoopScheduler implements EventLoopScheduler {
 		return true;
 	}
 
-	private void runContinuation(Thread.VirtualThreadTask task) {
+	private void runContinuation(Thread.VirtualThreadTask task, boolean immediate) {
 		var event = SchedulerJfrUtil.beginVirtualThreadTaskRunEvent();
 		if (event == null) {
 			task.run();
 			return;
 		}
-		var context = (SchedulingContext) task.attachment();
-		boolean isPoller = context.isPoller;
+		boolean isEventLoop = task.thread() == eventLoopThread;
+		boolean isPoller = ((SchedulingContext) task.attachment()).isPoller;
 		task.run();
-		SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task, isPoller);
+		SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task.thread(), isPoller, isEventLoop,
+				immediate);
 	}
 
 }

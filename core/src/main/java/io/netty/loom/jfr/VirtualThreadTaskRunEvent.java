@@ -25,7 +25,7 @@ import jdk.jfr.StackTrace;
 
 @Name("io.netty.loom.VirtualThreadTaskRun")
 @Label("Virtual Thread Task Run")
-@Description("Virtual thread execution on the Netty Loom scheduler.")
+@Description("Virtual thread task execution by the scheduler.")
 @Category({"Netty", "Scheduler"})
 @Enabled(false)
 @StackTrace(false)
@@ -33,14 +33,20 @@ public final class VirtualThreadTaskRunEvent extends Event {
 
 	private static final EventType EVENT_TYPE = EventType.getEventType(VirtualThreadTaskRunEvent.class);
 
-	@Label("Virtual Thread")
-	public Thread virtualThread;
-
 	@Label("Carrier Thread")
 	public Thread carrierThread;
 
+	@Label("Virtual Thread")
+	public Thread virtualThread;
+
 	@Label("Is Poller")
 	public boolean isPoller;
+
+	@Label("Is Event Loop")
+	public boolean isEventLoop;
+
+	@Label("Immediate")
+	public boolean immediate;
 
 	public static boolean isEventEnabled() {
 		return EVENT_TYPE.isEnabled();

@@ -6,10 +6,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
 
 import jdk.jfr.consumer.RecordedEvent;
 import jdk.jfr.consumer.RecordedThread;
@@ -18,11 +15,19 @@ import jdk.jfr.consumer.RecordingFile;
 public class JfrToTimeline {
     private static final String[] NETTY_EVENTS = {
             "io.netty.loom.NettyRunIo",
-            "io.netty.loom.NettyRunNonBlockingTasks",
+            "io.netty.loom.NettyRunTasks",
             "io.netty.loom.VirtualThreadTaskRuns",
             "io.netty.loom.VirtualThreadTaskRun",
             "io.netty.loom.VirtualThreadTaskSubmit"
     };
+    private static final int SUBMIT_EVENT_INDEX = 4;
+    private static final String[] NETTY_EVENT_SHORT_NAMES = new String[NETTY_EVENTS.length];
+
+    static {
+        for (int i = 0; i < NETTY_EVENTS.length; i++) {
+            NETTY_EVENT_SHORT_NAMES[i] = shortName(NETTY_EVENTS[i]);
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         Config config = Config.parse(args);
@@ -39,11 +44,6 @@ public class JfrToTimeline {
             Files.createDirectories(config.output.getParent());
         }
 
-        Map<String, Integer> eventIndex = new HashMap<>();
-        for (int i = 0; i < NETTY_EVENTS.length; i++) {
-            eventIndex.put(NETTY_EVENTS[i], i);
-        }
-
         long minMicros = Long.MAX_VALUE;
         long maxMicros = Long.MIN_VALUE;
         long eventCount = 0;
@@ -55,8 +55,8 @@ public class JfrToTimeline {
 
             while (recording.hasMoreEvents()) {
                 RecordedEvent event = recording.readEvent();
-                Integer idx = eventIndex.get(event.getEventType().getName());
-                if (idx == null) {
+                int idx = eventIndex(event.getEventType().getName());
+                if (idx < 0) {
                     continue;
                 }
 
@@ -73,9 +73,21 @@ public class JfrToTimeline {
                     writeThreadMeta(writer, tid, threadName(carrierThread));
                 }
 
-                long startMicros = toMicros(event.getStartTime());
-                long durMicros = Math.max(0L, Duration.between(event.getStartTime(), event.getEndTime()).toNanos() / 1_000L);
-                long endMicros = startMicros + durMicros;
+                Instant startTime = event.getStartTime();
+                long startMicros = toNanos(startTime);
+                long endMicros = startMicros;
+                long durMicros;
+                if (idx == SUBMIT_EVENT_INDEX) {
+                    durMicros = 0L;
+                } else {
+                    Instant endTime = event.getEndTime();
+                    endMicros = toNanos(endTime);
+                    durMicros = endMicros - startMicros;
+                }
+                if (durMicros < 0L) {
+                    durMicros = 0L;
+                    endMicros = startMicros;
+                }
                 if (startMicros < minMicros) {
                     minMicros = startMicros;
                 }
@@ -100,12 +112,12 @@ public class JfrToTimeline {
     }
 
     private static void writeHeader(LineWriter writer) throws IOException {
-        writer.writeAscii("{\"t\":\"h\",\"v\":1,\"unit\":\"us\",\"events\":[");
-        for (int i = 0; i < NETTY_EVENTS.length; i++) {
+        writer.writeAscii("{\"t\":\"h\",\"v\":1,\"unit\":\"ns\",\"events\":[");
+        for (int i = 0; i < NETTY_EVENT_SHORT_NAMES.length; i++) {
             if (i > 0) {
                 writer.writeAscii(",");
             }
-            writer.writeJsonString(shortName(NETTY_EVENTS[i]));
+            writer.writeJsonString(NETTY_EVENT_SHORT_NAMES[i]);
         }
         writer.writeAscii("]}");
         writer.writeLineEnd();
@@ -140,11 +152,41 @@ public class JfrToTimeline {
             writer.writeAscii(",\"v\":");
             writer.writeLong(threadId(virtualThread));
         }
-        if (event.hasField("isPoller") && event.getBoolean("isPoller")) {
-            writer.writeAscii(",\"p\":1");
+        if (event.hasField("isPoller")) {
+            writer.writeAscii(",\"p\":");
+            writer.writeAscii(event.getBoolean("isPoller") ? "1" : "0");
         }
-        if (event.hasField("canBlock") && event.getBoolean("canBlock")) {
-            writer.writeAscii(",\"b\":1");
+        if (event.hasField("isEventLoop")) {
+            writer.writeAscii(",\"el\":");
+            writer.writeAscii(event.getBoolean("isEventLoop") ? "1" : "0");
+        }
+        if (event.hasField("immediate")) {
+            writer.writeAscii(",\"im\":");
+            writer.writeAscii(event.getBoolean("immediate") ? "1" : "0");
+        }
+        if (event.hasField("canBlock")) {
+            writer.writeAscii(",\"b\":");
+            writer.writeAscii(event.getBoolean("canBlock") ? "1" : "0");
+        }
+        if (event.hasField("tasksExecuted")) {
+            writer.writeAscii(",\"te\":");
+            writer.writeLong(event.getInt("tasksExecuted"));
+        }
+        if (event.hasField("queueDepthBefore")) {
+            writer.writeAscii(",\"q0\":");
+            writer.writeLong(event.getInt("queueDepthBefore"));
+        }
+        if (event.hasField("queueDepthAfter")) {
+            writer.writeAscii(",\"q1\":");
+            writer.writeLong(event.getInt("queueDepthAfter"));
+        }
+        if (event.hasField("ioEventsHandled")) {
+            writer.writeAscii(",\"io\":");
+            writer.writeLong(event.getInt("ioEventsHandled"));
+        }
+        if (event.hasField("tasksHandled")) {
+            writer.writeAscii(",\"th\":");
+            writer.writeLong(event.getInt("tasksHandled"));
         }
 
         writer.writeAscii("}");
@@ -167,8 +209,17 @@ public class JfrToTimeline {
         return index >= 0 ? fullName.substring(index + 1) : fullName;
     }
 
-    private static long toMicros(Instant instant) {
-        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000L;
+    private static int eventIndex(String eventName) {
+        for (int i = 0; i < NETTY_EVENTS.length; i++) {
+            if (NETTY_EVENTS[i].equals(eventName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static long toNanos(Instant instant) {
+        return instant.getEpochSecond() * 1_000_000_000L + instant.getNano();
     }
 
     private static RecordedThread getThread(RecordedEvent event, String field) {
@@ -239,8 +290,10 @@ public class JfrToTimeline {
 
     private static final class LineWriter implements Closeable {
         private static final int BUFFER_SIZE = 1 << 16;
+        private static final int LONG_BUFFER_SIZE = 20;
         private final OutputStream out;
         private final byte[] buffer = new byte[BUFFER_SIZE];
+        private final char[] longBuffer = new char[LONG_BUFFER_SIZE];
         private int position;
 
         LineWriter(OutputStream out) {
@@ -260,18 +313,21 @@ public class JfrToTimeline {
             }
             if (value < 0) {
                 writeByte((byte) '-');
+                if (value == Long.MIN_VALUE) {
+                    writeAscii("9223372036854775808");
+                    return;
+                }
                 value = -value;
             }
-            char[] digits = new char[20];
             int idx = 0;
             while (value > 0) {
                 long q = value / 10;
                 int r = (int) (value - q * 10);
-                digits[idx++] = (char) ('0' + r);
+                longBuffer[idx++] = (char) ('0' + r);
                 value = q;
             }
             for (int i = idx - 1; i >= 0; i--) {
-                writeByte((byte) digits[i]);
+                writeByte((byte) longBuffer[i]);
             }
         }
 
