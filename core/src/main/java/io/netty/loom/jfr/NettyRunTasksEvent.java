@@ -23,15 +23,15 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-@Name("io.netty.loom.NettyRunNonBlockingTasks")
-@Label("Netty Run Non-Blocking Tasks")
-@Description("Netty event loop non-blocking task processing cycle.")
+@Name("io.netty.loom.NettyRunTasks")
+@Label("Netty Run Tasks")
+@Description("Netty event loop task processing cycle.")
 @Category({"Netty", "Scheduler"})
 @Enabled(false)
 @StackTrace(false)
-public final class NettyRunNonBlockingTasksEvent extends Event {
+public final class NettyRunTasksEvent extends Event {
 
-	private static final EventType EVENT_TYPE = EventType.getEventType(NettyRunNonBlockingTasksEvent.class);
+	private static final EventType EVENT_TYPE = EventType.getEventType(NettyRunTasksEvent.class);
 
 	@Label("Event Loop Thread")
 	public Thread eventLoopThread;
@@ -41,6 +41,12 @@ public final class NettyRunNonBlockingTasksEvent extends Event {
 
 	@Label("Tasks Handled")
 	public int tasksHandled;
+
+	@Label("Queue Depth Before")
+	public int queueDepthBefore;
+
+	@Label("Queue Depth After")
+	public int queueDepthAfter;
 
 	public static boolean isEventEnabled() {
 		return EVENT_TYPE.isEnabled();

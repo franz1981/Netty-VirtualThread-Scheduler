@@ -110,19 +110,17 @@ Both the async-profiler and perf stat use `PROFILING_DELAY_SECONDS` and `PROFILI
 | `JFR_OUTPUT` | netty-loom.jfr | JFR output filename |
 | `JFR_RECORDING_NAME` | netty-loom-benchmark | JFR recording name |
 | `JFR_SETTINGS_FILE` | | Path to a JFR settings file (.jfc). If set, overrides `JFR_EVENTS`. |
-| `JFR_TRACE_ENABLED` | true | Export Chrome trace after JFR collection |
-| `JFR_TRACE_OUTPUT` | netty-loom-trace.json | Chrome trace output filename |
+| `JFR_TIMELINE_OUTPUT` | netty-loom-timeline.jsonl | Timeline output filename (empty = skip export) |
 
 Supported event names (short or full):
 - `NettyRunIo` (`io.netty.loom.NettyRunIo`)
-- `NettyRunNonBlockingTasks` (`io.netty.loom.NettyRunNonBlockingTasks`)
+- `NettyRunTasks` (`io.netty.loom.NettyRunTasks`)
 - `VirtualThreadTaskRuns` (`io.netty.loom.VirtualThreadTaskRuns`)
-- `VirtualThreadTaskRun` (`io.netty.loom.VirtualThreadTaskRun`)
 - `VirtualThreadTaskSubmit` (`io.netty.loom.VirtualThreadTaskSubmit`)
 
 JFR uses the same profiling delay/duration settings to capture steady state.
 The default settings file lives at `benchmark-runner/scripts/jfr/netty-loom.jfc`. Override it with `JFR_SETTINGS_FILE`.
-When enabled, the benchmark also converts the JFR file into Chrome Trace Format using `benchmark-runner/scripts/jfr/JfrToTrace.java` and stores the JSON trace alongside the other outputs.
+When enabled, the benchmark exports a compact timeline JSONL alongside the JFR output (unless `JFR_TIMELINE_OUTPUT` is empty).
 
 ### pidstat
 When enabled, pidstat always records three files: handoff server, mock server, and load generator.
@@ -198,7 +196,7 @@ TOTAL_DURATION=45s \
 ```bash
 JAVA_HOME=/path/to/jdk \
 ENABLE_JFR=true \
-JFR_EVENTS=NettyRunIo,VirtualThreadTaskRun \
+JFR_EVENTS=NettyRunIo,VirtualThreadTaskRuns \
 SERVER_USE_CUSTOM_SCHEDULER=true \
 ./run-benchmark.sh
 ```
@@ -230,6 +228,7 @@ Results are saved to `./benchmark-results/` (configurable via `OUTPUT_DIR`):
 - `wrk-results.txt` - Load generator output with throughput/latency
 - `profile.html` - Flamegraph (if profiling enabled)
 - `netty-loom.jfr` - JFR recording (if JFR events enabled)
+- `netty-loom-timeline.jsonl` - Timeline export (if JFR enabled and `JFR_TIMELINE_OUTPUT` set)
 - `pidstat.log` - Handoff server thread-level CPU usage (if pidstat enabled)
 - `pidstat.log` includes per-thread command lines when `PIDSTAT_HANDOFF_DETAILED=true`. Note: Linux thread names are limited (comm is 15 chars), so very long JVM thread names may still appear truncated.
 - `pidstat-mock.log` - Mock server thread-level CPU usage (if pidstat enabled)

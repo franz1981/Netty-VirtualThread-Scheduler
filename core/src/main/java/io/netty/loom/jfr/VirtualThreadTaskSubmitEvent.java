@@ -45,6 +45,12 @@ public final class VirtualThreadTaskSubmitEvent extends Event {
 	@Label("Is Poller")
 	public boolean isPoller;
 
+	@Label("Is Event Loop")
+	public boolean isEventLoop;
+
+	@Label("Immediate")
+	public boolean immediate;
+
 	public static boolean isEventEnabled() {
 		return EVENT_TYPE.isEnabled();
 	}
