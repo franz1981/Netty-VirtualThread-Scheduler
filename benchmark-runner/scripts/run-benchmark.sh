@@ -560,7 +560,7 @@ start_pidstat() {
     local pidstat_args=()
 
     if [[ "$PIDSTAT_HANDOFF_DETAILED" == "true" ]]; then
-        pidstat_args+=("-t" "-l")
+        pidstat_args+=("-u" "-w" "-t" "-l")
     fi
 
     pidstat "${pidstat_args[@]}" -p "$SERVER_PID" "$PIDSTAT_INTERVAL" > "$output_file" 2>&1 &
