@@ -140,6 +140,7 @@ When enabled, pidstat always records three files: handoff server, mock server, a
 |----------|---------|-------------|
 | `ENABLE_PERF_STAT` | false | Enable perf stat collection |
 | `PERF_STAT_OUTPUT` | perf-stat.txt | Output filename |
+| `PERF_STAT_ARGS` | | Extra perf stat arguments (passed as-is) |
 
 perf stat uses `PROFILING_DELAY_SECONDS` and `PROFILING_DURATION_SECONDS`.
 
