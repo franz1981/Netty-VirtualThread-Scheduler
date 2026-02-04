@@ -80,6 +80,7 @@ PIDSTAT_HANDOFF_DETAILED="${PIDSTAT_HANDOFF_DETAILED:-true}"
 # perf stat configuration
 ENABLE_PERF_STAT="${ENABLE_PERF_STAT:-false}"
 PERF_STAT_OUTPUT="${PERF_STAT_OUTPUT:-perf-stat.txt}"
+PERF_STAT_ARGS="${PERF_STAT_ARGS:-}"
 
 # Output directory
 OUTPUT_DIR="${OUTPUT_DIR:-./benchmark-results}"
@@ -619,7 +620,7 @@ start_perf_stat() {
     local profiling_delay_ms=$((PROFILING_DELAY_SECONDS * 1000))
     local profiling_duration_ms=$((PROFILING_DURATION_SECONDS * 1000))
 
-    perf stat -p "$SERVER_PID" -o "$output_file" -D "$profiling_delay_ms" --timeout "$profiling_duration_ms" &
+    perf stat $PERF_STAT_ARGS -p "$SERVER_PID" -o "$output_file" -D "$profiling_delay_ms" --timeout "$profiling_duration_ms" &
     PERF_STAT_PID=$!
 
     log "perf stat running (PID: $PERF_STAT_PID) after ${PROFILING_DELAY_SECONDS}s for ${PROFILING_DURATION_SECONDS}s"
@@ -756,6 +757,7 @@ print_config() {
     log "  Enabled:        $ENABLE_PERF_STAT"
     if [[ "$ENABLE_PERF_STAT" == "true" ]]; then
         log "  Output:         $PERF_STAT_OUTPUT"
+        log "  Extra Args:     ${PERF_STAT_ARGS:-<none>}"
     fi
     log ""
     log "Output Directory: $OUTPUT_DIR"
@@ -840,6 +842,7 @@ pidstat:
 perf stat:
   ENABLE_PERF_STAT          Enable perf stat collection (default: false)
   PERF_STAT_OUTPUT          Output file (default: perf-stat.txt)
+  PERF_STAT_ARGS            Extra perf stat arguments (default: empty)
 
 General:
   JAVA_HOME                 Path to Java installation (required)
