@@ -174,7 +174,7 @@ final class FifoEventLoopScheduler implements EventLoopScheduler {
 		var eventLoopContinuation = this.eventLoopContinuatioToRun;
 		if (eventLoopContinuation != null) {
 			this.eventLoopContinuatioToRun = null;
-			runContinuation(eventLoopContinuation, false);
+			runContinuation(eventLoopContinuation);
 			return true;
 		}
 		return false;
@@ -230,7 +230,7 @@ final class FifoEventLoopScheduler implements EventLoopScheduler {
 				break;
 			}
 			runContinuations++;
-			runContinuation(task, false);
+			runContinuation(task);
 			long elapsedNs = System.nanoTime() - startDrainingNs;
 			if (elapsedNs >= deadlineNs) {
 				break;
@@ -269,7 +269,7 @@ final class FifoEventLoopScheduler implements EventLoopScheduler {
 		}
 		if (submitEventEnabled) {
 			SchedulerJfrUtil.commitVirtualThreadTaskSubmitEvent(task, currentThread, carrierThread, context.isPoller,
-					eventLoopTask, false);
+					eventLoopTask);
 		}
 		if (currentThread != eventLoopThread) {
 			// currentThread == carrierThread iff
@@ -282,19 +282,11 @@ final class FifoEventLoopScheduler implements EventLoopScheduler {
 					LockSupport.unpark(parkedCarrierThread);
 				}
 			}
-		} else if (!eventLoopTask && !eventLoopIsRunning.get()) {
-			// the event loop thread is allowed to give up cycles to consume external
-			// continuations
-			// whilst is just woken up for I/O
-			assert eventLoopContinuatioToRun == null;
-			if (!runQueue.isEmpty()) {
-				Thread.yield();
-			}
 		}
 		return true;
 	}
 
-	private void runContinuation(Thread.VirtualThreadTask task, boolean immediate) {
+	private void runContinuation(Thread.VirtualThreadTask task) {
 		var event = SchedulerJfrUtil.beginVirtualThreadTaskRunEvent();
 		if (event == null) {
 			task.run();
@@ -303,8 +295,7 @@ final class FifoEventLoopScheduler implements EventLoopScheduler {
 		boolean isEventLoop = task.thread() == eventLoopThread;
 		boolean isPoller = ((SchedulingContext) task.attachment()).isPoller;
 		task.run();
-		SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task.thread(), isPoller, isEventLoop,
-				immediate);
+		SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task.thread(), isPoller, isEventLoop);
 	}
 
 }

@@ -160,10 +160,6 @@ public class JfrToTimeline {
             writer.writeAscii(",\"el\":");
             writer.writeAscii(event.getBoolean("isEventLoop") ? "1" : "0");
         }
-        if (event.hasField("immediate")) {
-            writer.writeAscii(",\"im\":");
-            writer.writeAscii(event.getBoolean("immediate") ? "1" : "0");
-        }
         if (event.hasField("canBlock")) {
             writer.writeAscii(",\"b\":");
             writer.writeAscii(event.getBoolean("canBlock") ? "1" : "0");
