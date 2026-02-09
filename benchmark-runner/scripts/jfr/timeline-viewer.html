@@ -363,33 +363,7 @@
     const VT_RUN_COLORS = {
       poller: '#e11d48',
       eventLoop: '#2563eb',
-      immediate: '#f59e0b',
     };
-    const VT_RUN_COMBO = mixColors(VT_RUN_COLORS.poller, VT_RUN_COLORS.immediate);
-
-    function mixColors(hexA, hexB) {
-      const a = hexToRgb(hexA);
-      const b = hexToRgb(hexB);
-      const mix = {
-        r: Math.round((a.r + b.r) / 2),
-        g: Math.round((a.g + b.g) / 2),
-        b: Math.round((a.b + b.b) / 2),
-      };
-      return `rgb(${mix.r}, ${mix.g}, ${mix.b})`;
-    }
-
-    function hexToRgb(hex) {
-      const clean = hex.replace('#', '');
-      const value = clean.length === 3
-        ? clean.split('').map(c => c + c).join('')
-        : clean;
-      const intVal = parseInt(value, 16);
-      return {
-        r: (intVal >> 16) & 255,
-        g: (intVal >> 8) & 255,
-        b: intVal & 255,
-      };
-    }
 
     function carrierColor(tid) {
       const hue = (tid * 29) % 360;
@@ -461,7 +435,6 @@
           thread.v.push(obj.v || 0);
           thread.p.push(obj.p ?? null);
           thread.el.push(obj.el ?? null);
-          thread.im.push(obj.im ?? null);
           thread.b.push(obj.b ?? null);
           thread.te.push(obj.te ?? null);
           thread.q0.push(obj.q0 ?? null);
@@ -487,7 +460,7 @@
     function getThread(tid) {
       let thread = state.threads.get(tid);
       if (!thread) {
-        thread = { tid, name: `tid-${tid}`, s: [], d: [], n: [], v: [], p: [], el: [], im: [], b: [], te: [], q0: [], q1: [], io: [], th: [], st: [] };
+        thread = { tid, name: `tid-${tid}`, s: [], d: [], n: [], v: [], p: [], el: [], b: [], te: [], q0: [], q1: [], io: [], th: [], st: [] };
         state.threads.set(tid, thread);
       }
       return thread;
@@ -508,7 +481,6 @@
         thread.v = order.map(i => thread.v[i]);
         thread.p = order.map(i => thread.p[i]);
         thread.el = order.map(i => thread.el[i]);
-        thread.im = order.map(i => thread.im[i]);
         thread.b = order.map(i => thread.b[i]);
         thread.te = order.map(i => thread.te[i]);
         thread.q0 = order.map(i => thread.q0[i]);
@@ -743,18 +715,13 @@
           clampedX2 = tmp;
         }
         let color = eventColor(n[i]);
-      if (state.events[n[i]] === VT_RUN_EVENT_NAME || state.events[n[i]] === VT_SUBMIT_EVENT_NAME) {
+        if (state.events[n[i]] === VT_RUN_EVENT_NAME || state.events[n[i]] === VT_SUBMIT_EVENT_NAME) {
           const isPoller = thread.p[i] === 1 || thread.p[i] === true;
           const isEventLoop = thread.el[i] === 1 || thread.el[i] === true;
-          const isImmediate = thread.im[i] === 1 || thread.im[i] === true;
           if (isEventLoop) {
             color = VT_RUN_COLORS.eventLoop;
-          } else if (isPoller && isImmediate) {
-            color = VT_RUN_COMBO;
           } else if (isPoller) {
             color = VT_RUN_COLORS.poller;
-          } else if (isImmediate) {
-            color = VT_RUN_COLORS.immediate;
           }
         }
         ctx.fillStyle = color;
@@ -931,7 +898,6 @@
       const vtid = thread.v[eventIdx];
       const isPoller = thread.p[eventIdx];
       const isEventLoop = thread.el[eventIdx];
-      const isImmediate = thread.im[eventIdx];
       const canBlock = thread.b[eventIdx];
       const tasksExecuted = thread.te[eventIdx];
       const queueDepthBefore = thread.q0[eventIdx];
@@ -955,9 +921,6 @@
       }
       if (isEventLoop != null) {
         tooltipText += `\nIsEventLoop: ${isEventLoop ? 'true' : 'false'}`;
-      }
-      if (isImmediate != null) {
-        tooltipText += `\nImmediate: ${isImmediate ? 'true' : 'false'}`;
       }
       if (canBlock != null) {
         tooltipText += `\nCanBlock: ${canBlock ? 'true' : 'false'}`;

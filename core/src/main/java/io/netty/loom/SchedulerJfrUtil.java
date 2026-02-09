@@ -89,25 +89,23 @@ final class SchedulerJfrUtil {
 	}
 
 	public static void commitVirtualThreadTaskRunEvent(VirtualThreadTaskRunEvent event, Thread carrierThread,
-			Thread virtualThread, boolean isPoller, boolean isEventLoop, boolean immediate) {
+			Thread virtualThread, boolean isPoller, boolean isEventLoop) {
 		event.end();
 		event.carrierThread = carrierThread;
 		event.virtualThread = virtualThread;
 		event.isPoller = isPoller;
 		event.isEventLoop = isEventLoop;
-		event.immediate = immediate;
 		event.commit();
 	}
 
 	public static void commitVirtualThreadTaskSubmitEvent(Thread.VirtualThreadTask task, Thread submitterThread,
-			Thread carrierThread, boolean isPoller, boolean isEventLoop, boolean immediate) {
+			Thread carrierThread, boolean isPoller, boolean isEventLoop) {
 		var event = new VirtualThreadTaskSubmitEvent();
 		event.virtualThread = task.thread();
 		event.submitterThread = submitterThread;
 		event.carrierThread = carrierThread;
 		event.isPoller = isPoller;
 		event.isEventLoop = isEventLoop;
-		event.immediate = immediate;
 		event.commit();
 	}
 

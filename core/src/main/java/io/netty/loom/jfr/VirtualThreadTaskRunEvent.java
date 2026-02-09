@@ -45,9 +45,6 @@ public final class VirtualThreadTaskRunEvent extends Event {
 	@Label("Is Event Loop")
 	public boolean isEventLoop;
 
-	@Label("Immediate")
-	public boolean immediate;
-
 	public static boolean isEventEnabled() {
 		return EVENT_TYPE.isEnabled();
 	}
