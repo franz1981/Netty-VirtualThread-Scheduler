@@ -468,6 +468,7 @@
           thread.q1.push(obj.q1 ?? null);
           thread.io.push(obj.io ?? null);
           thread.th.push(obj.th ?? null);
+          thread.st.push(obj.st ?? null);
           state.count += 1;
           if (!state.minMicros || start < state.minMicros) state.minMicros = start;
           const end = start + dur;
@@ -486,7 +487,7 @@
     function getThread(tid) {
       let thread = state.threads.get(tid);
       if (!thread) {
-        thread = { tid, name: `tid-${tid}`, s: [], d: [], n: [], v: [], p: [], el: [], im: [], b: [], te: [], q0: [], q1: [], io: [], th: [] };
+        thread = { tid, name: `tid-${tid}`, s: [], d: [], n: [], v: [], p: [], el: [], im: [], b: [], te: [], q0: [], q1: [], io: [], th: [], st: [] };
         state.threads.set(tid, thread);
       }
       return thread;
@@ -514,6 +515,7 @@
         thread.q1 = order.map(i => thread.q1[i]);
         thread.io = order.map(i => thread.io[i]);
         thread.th = order.map(i => thread.th[i]);
+        thread.st = order.map(i => thread.st[i]);
       }
       state.viewStart = state.minMicros;
       state.viewEnd = state.maxMicros;
@@ -936,6 +938,7 @@
       const queueDepthAfter = thread.q1[eventIdx];
       const ioEventsHandled = thread.io[eventIdx];
       const tasksHandled = thread.th[eventIdx];
+      const submitterTid = thread.st[eventIdx];
 
       // Build tooltip dynamically based on available fields
       let tooltipText =
@@ -972,6 +975,9 @@
       }
       if (tasksHandled != null) {
         tooltipText += `\nTasksHandled: ${tasksHandled}`;
+      }
+      if (submitterTid != null) {
+        tooltipText += `\nSubmitterThreadId: ${submitterTid}`;
       }
 
       tooltip.textContent = tooltipText;

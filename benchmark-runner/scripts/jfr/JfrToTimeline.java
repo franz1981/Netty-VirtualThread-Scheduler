@@ -188,6 +188,11 @@ public class JfrToTimeline {
             writer.writeAscii(",\"th\":");
             writer.writeLong(event.getInt("tasksHandled"));
         }
+        RecordedThread submitterThread = getThread(event, "submitterThread");
+        if (submitterThread != null) {
+            writer.writeAscii(",\"st\":");
+            writer.writeLong(threadId(submitterThread));
+        }
 
         writer.writeAscii("}");
         writer.writeLineEnd();
