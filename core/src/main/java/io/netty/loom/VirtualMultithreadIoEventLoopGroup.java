@@ -32,7 +32,6 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 	private List<EventLoopScheduler> schedulers;
 	private AtomicLong nextScheduler;
 	private ThreadFactory threadFactory;
-	private final EventLoopSchedulerType schedulerType;
 
 	public VirtualMultithreadIoEventLoopGroup(int nThreads, IoHandlerFactory ioHandlerFactory) {
 		this(nThreads, ioHandlerFactory, EventLoopSchedulerType.FIFO);
@@ -42,8 +41,7 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 			EventLoopSchedulerType schedulerType) {
 		super(nThreads, (Executor) command -> {
 			throw new UnsupportedOperationException("this executor is not supposed to be used");
-		}, ioHandlerFactory);
-		this.schedulerType = schedulerType == null ? EventLoopSchedulerType.FIFO : schedulerType;
+		}, ioHandlerFactory, schedulerType);
 	}
 
 	private static void validateNettyAvailability() {
@@ -110,20 +108,14 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 		if (threadFactory == null) {
 			threadFactory = newDefaultThreadFactory();
 		}
+		var schedulerType = (EventLoopSchedulerType) args[0];
 		EventLoopScheduler customScheduler;
 		var effectiveSchedulerType = schedulerType == null ? EventLoopSchedulerType.FIFO : schedulerType;
-		switch (effectiveSchedulerType) {
-			case FIFO :
-				customScheduler = new FifoEventLoopScheduler(this, threadFactory, ioHandlerFactory,
-						RESUMED_CONTINUATIONS_EXPECTED_COUNT);
-				break;
-			case LIFO :
-				customScheduler = new LifoEventLoopScheduler(this, threadFactory, ioHandlerFactory,
-						RESUMED_CONTINUATIONS_EXPECTED_COUNT);
-				break;
-			default :
-				throw new IllegalStateException("Unexpected scheduler type: " + schedulerType);
+		if (effectiveSchedulerType != EventLoopSchedulerType.FIFO) {
+			throw new IllegalStateException("Unexpected scheduler type: " + schedulerType);
 		}
+		customScheduler = new FifoEventLoopScheduler(this, threadFactory, ioHandlerFactory,
+				RESUMED_CONTINUATIONS_EXPECTED_COUNT);
 		eventSchedulerMappings.put(customScheduler.ioEventLoop(), customScheduler);
 		schedulers.add(customScheduler);
 		return customScheduler.ioEventLoop();

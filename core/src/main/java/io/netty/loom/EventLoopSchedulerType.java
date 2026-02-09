@@ -15,5 +15,5 @@
 package io.netty.loom;
 
 public enum EventLoopSchedulerType {
-	FIFO, LIFO
+	FIFO
 }
