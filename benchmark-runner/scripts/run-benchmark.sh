@@ -31,7 +31,6 @@ MOCK_TASKSET="${MOCK_TASKSET:-4,5}"  # CPUs for mock server
 SERVER_PORT="${SERVER_PORT:-8081}"
 SERVER_THREADS="${SERVER_THREADS:-2}"
 SERVER_USE_CUSTOM_SCHEDULER="${SERVER_USE_CUSTOM_SCHEDULER:-false}"
-SERVER_SCHEDULER_TYPE="${SERVER_SCHEDULER_TYPE:-fifo}"
 SERVER_IO="${SERVER_IO:-epoll}"
 SERVER_TASKSET="${SERVER_TASKSET:-2,3}"  # CPUs for handoff server
 SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
@@ -52,7 +51,7 @@ LOAD_GEN_URL="${LOAD_GEN_URL:-http://localhost:8081/fruits}"
 WARMUP_DURATION="${WARMUP_DURATION:-10s}"
 TOTAL_DURATION="${TOTAL_DURATION:-30s}"
 MIN_STEADY_STATE_SECONDS=20
-PROFILING_DELAY_SECONDS="${PROFILING_DELAY_SECONDS:-5}"
+PROFILING_DELAY_SECONDS="${PROFILING_DELAY_SECONDS:-10}"
 PROFILING_DURATION_SECONDS="${PROFILING_DURATION_SECONDS:-10}"
 
 # Profiling configuration
@@ -409,7 +408,6 @@ start_handoff_server() {
         --mock-url http://localhost:$MOCK_PORT/fruits \
         --threads $SERVER_THREADS \
         --use-custom-scheduler $SERVER_USE_CUSTOM_SCHEDULER \
-        --scheduler-type $SERVER_SCHEDULER_TYPE \
         --io $SERVER_IO \
         --no-timeout $SERVER_NO_TIMEOUT \
         --reactive $SERVER_REACTIVE \
@@ -704,7 +702,6 @@ print_config() {
     log "  Threads:        $SERVER_THREADS"
     log "  Reactive:       $SERVER_REACTIVE"
     log "  Custom Sched:   $SERVER_USE_CUSTOM_SCHEDULER"
-    log "  Scheduler Type: $SERVER_SCHEDULER_TYPE"
     log "  I/O Type:       $SERVER_IO"
     log "  No Timeout:     $SERVER_NO_TIMEOUT"
     log "  Poller Mode:    $SERVER_POLLER_MODE"
@@ -791,7 +788,6 @@ Handoff Server:
   SERVER_THREADS            Number of event loop threads (default: 2)
   SERVER_REACTIVE           Use reactive handler with Reactor (default: false)
   SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
-  SERVER_SCHEDULER_TYPE     Scheduler type: fifo or lifo (default: fifo)
   SERVER_IO                 I/O type: epoll, nio, or io_uring (default: epoll)
   SERVER_NO_TIMEOUT         Disable HTTP client timeout (default: false)
   SERVER_TASKSET            CPU affinity range (default: "2,3")

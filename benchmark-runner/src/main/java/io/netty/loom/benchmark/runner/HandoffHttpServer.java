@@ -381,7 +381,7 @@ public class HandoffHttpServer {
 						  --mock-url <url>               Mock server URL (default: http://localhost:8080/fruits)
 						  --threads <n>                  Number of event loop threads (default: 1)
 						  --use-custom-scheduler <bool>  Use custom Netty scheduler (default: false, ignored if --reactive is true)
-						  --scheduler-type <fifo|lifo>   Scheduler type for custom scheduler (default: fifo)
+						  --scheduler-type <fifo>        Scheduler type for custom scheduler (default: fifo)
 						  --io <epoll|nio|io_uring>      I/O type (default: epoll)
 						  --no-timeout <true|false>      Disable HTTP client timeout (default: false)
 						  --reactive <true|false>        Use reactive handler with Reactor (default: false)
