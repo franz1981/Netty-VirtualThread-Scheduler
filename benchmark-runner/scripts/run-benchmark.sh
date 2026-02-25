@@ -38,6 +38,7 @@ SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-3}"  # jdk.pollerMode value (1, 2, or 
 SERVER_FJ_PARALLELISM="${SERVER_FJ_PARALLELISM:-}"  # ForkJoinPool parallelism (empty = JVM default)
 SERVER_NO_TIMEOUT="${SERVER_NO_TIMEOUT:-false}"  # Disable HTTP client timeout
 SERVER_REACTIVE="${SERVER_REACTIVE:-false}"  # Use reactive handler with Project Reactor
+SERVER_USE_AFFINITY="${SERVER_USE_AFFINITY:-false}"  # Use affinity mode with inherited CPU affinity
 
 # Load generator configuration
 LOAD_GEN_TASKSET="${LOAD_GEN_TASKSET:-0,1}"  # CPUs for load generator
@@ -382,7 +383,9 @@ start_handoff_server() {
     jvm_args="$jvm_args -XX:-DoJVMTIVirtualThreadTransitions"
     jvm_args="$jvm_args -Djdk.trackAllThreads=false"
 
-    if [[ "$SERVER_USE_CUSTOM_SCHEDULER" == "true" ]]; then
+    if [[ "$SERVER_USE_AFFINITY" == "true" ]]; then
+        jvm_args="$jvm_args -Djdk.pollerMode=3"
+    elif [[ "$SERVER_USE_CUSTOM_SCHEDULER" == "true" ]]; then
         jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"
         jvm_args="$jvm_args -Djdk.pollerMode=$SERVER_POLLER_MODE"
     fi
@@ -411,6 +414,7 @@ start_handoff_server() {
         --io $SERVER_IO \
         --no-timeout $SERVER_NO_TIMEOUT \
         --reactive $SERVER_REACTIVE \
+        --use-affinity $SERVER_USE_AFFINITY \
         --silent"
 
     log "Handoff server command: $cmd"
@@ -701,6 +705,7 @@ print_config() {
     log "  Port:           $SERVER_PORT"
     log "  Threads:        $SERVER_THREADS"
     log "  Reactive:       $SERVER_REACTIVE"
+    log "  Affinity:       $SERVER_USE_AFFINITY"
     log "  Custom Sched:   $SERVER_USE_CUSTOM_SCHEDULER"
     log "  I/O Type:       $SERVER_IO"
     log "  No Timeout:     $SERVER_NO_TIMEOUT"
@@ -787,6 +792,7 @@ Handoff Server:
   SERVER_PORT               Server port (default: 8081)
   SERVER_THREADS            Number of event loop threads (default: 2)
   SERVER_REACTIVE           Use reactive handler with Reactor (default: false)
+  SERVER_USE_AFFINITY       Use affinity mode with inherited CPU affinity (default: false)
   SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
   SERVER_IO                 I/O type: epoll, nio, or io_uring (default: epoll)
   SERVER_NO_TIMEOUT         Disable HTTP client timeout (default: false)
@@ -869,6 +875,12 @@ Examples:
   # Reactive handler test
   JAVA_HOME=/path/to/jdk \
   SERVER_REACTIVE=true \
+  SERVER_THREADS=2 \
+  ./run-benchmark.sh
+
+  # Affinity mode (inherited CPU affinity, forces NIO + pollerMode=3)
+  JAVA_HOME=/path/to/jdk \
+  SERVER_USE_AFFINITY=true \
   SERVER_THREADS=2 \
   ./run-benchmark.sh
 

@@ -65,6 +65,7 @@ All configuration is via environment variables:
 | `SERVER_PORT` | 8081 | Server port |
 | `SERVER_THREADS` | 2 | Number of event loop threads |
 | `SERVER_REACTIVE` | false | Use reactive handler with Reactor |
+| `SERVER_USE_AFFINITY` | false | Use affinity mode with inherited CPU affinity (forces NIO + pollerMode=3) |
 | `SERVER_USE_CUSTOM_SCHEDULER` | false | Use custom Netty scheduler |
 | `SERVER_IO` | epoll | I/O type: epoll, nio, or io_uring |
 | `SERVER_NO_TIMEOUT` | false | Disable HTTP client timeout |
@@ -213,6 +214,15 @@ WARMUP_DURATION=15s \
 ./run-benchmark.sh
 ```
 
+### Affinity mode (inherited CPU affinity)
+
+```bash
+JAVA_HOME=/path/to/jdk \
+SERVER_USE_AFFINITY=true \
+SERVER_THREADS=2 \
+./run-benchmark.sh
+```
+
 ### With pidstat monitoring
 
 ```bash
@@ -277,6 +287,23 @@ java \
   --threads 2 \
   --use-custom-scheduler true \
   --io epoll
+```
+
+### Handoff Server (with affinity mode)
+
+```bash
+java \
+  --add-opens=java.base/java.lang=ALL-UNNAMED \
+  -XX:+UnlockExperimentalVMOptions \
+  -XX:-DoJVMTIVirtualThreadTransitions \
+  -Djdk.trackAllThreads=false \
+  -Djdk.pollerMode=3 \
+  -cp benchmark-runner/target/benchmark-runner.jar \
+  io.netty.loom.benchmark.runner.HandoffHttpServer \
+  --port 8081 \
+  --mock-url http://localhost:8080/fruits \
+  --threads 2 \
+  --use-affinity true
 ```
 
 ### Handoff Server (with default scheduler)

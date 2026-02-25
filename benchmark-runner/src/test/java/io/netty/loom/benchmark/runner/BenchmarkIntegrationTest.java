@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * <li>NIO I/O with custom scheduler</li>
  * <li>EPOLL I/O with default scheduler</li>
  * <li>EPOLL I/O with custom scheduler</li>
+ * <li>NIO I/O with affinity mode</li>
  * </ul>
  */
 class BenchmarkIntegrationTest {
@@ -53,16 +54,22 @@ class BenchmarkIntegrationTest {
 
 	static Stream<Arguments> serverConfigurations() {
 		return Stream.of(
-				// IO type, use custom scheduler, use reactive, description
-				Arguments.of(HandoffHttpServer.IO.NIO, false, false, "NIO with default scheduler"),
-				Arguments.of(HandoffHttpServer.IO.NIO, true, false, "NIO with custom scheduler"),
-				Arguments.of(HandoffHttpServer.IO.NIO, false, true, "NIO with reactive handler"),
-				Arguments.of(HandoffHttpServer.IO.EPOLL, false, false, "EPOLL with default scheduler"),
-				Arguments.of(HandoffHttpServer.IO.EPOLL, true, false, "EPOLL with custom scheduler"),
-				Arguments.of(HandoffHttpServer.IO.EPOLL, false, true, "EPOLL with reactive handler"));
+				// IO type, use custom scheduler, use reactive, use affinity, description
+				Arguments.of(HandoffHttpServer.IO.NIO, false, false, false, "NIO with default scheduler"),
+				Arguments.of(HandoffHttpServer.IO.NIO, true, false, false, "NIO with custom scheduler"),
+				Arguments.of(HandoffHttpServer.IO.NIO, false, true, false, "NIO with reactive handler"),
+				Arguments.of(HandoffHttpServer.IO.NIO, false, false, true, "NIO with affinity"),
+				Arguments.of(HandoffHttpServer.IO.EPOLL, false, false, false, "EPOLL with default scheduler"),
+				Arguments.of(HandoffHttpServer.IO.EPOLL, true, false, false, "EPOLL with custom scheduler"),
+				Arguments.of(HandoffHttpServer.IO.EPOLL, false, true, false, "EPOLL with reactive handler"));
 	}
 
 	void startServers(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, false);
+	}
+
+	void startServers(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive, boolean useAffinity)
+			throws Exception {
 		// Use unique ports for each test to avoid conflicts
 		mockPort = PORT_COUNTER.getAndIncrement();
 		handoffPort = PORT_COUNTER.getAndIncrement();
@@ -82,7 +89,7 @@ class BenchmarkIntegrationTest {
 
 		// Start handoff server with specified configuration
 		handoffServer = new HandoffHttpServer(handoffPort, "http://localhost:" + mockPort + "/fruits", 1,
-				useCustomScheduler, ioType, true, false, useReactive);
+				useCustomScheduler, ioType, true, false, useReactive, useAffinity);
 		handoffServer.start();
 
 		// Wait for handoff server to be ready
@@ -107,64 +114,64 @@ class BenchmarkIntegrationTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void mockServerHealthEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 		given().port(mockPort).when().get("/health").then().statusCode(200).body(equalTo("OK"));
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void mockServerFruitsEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 		given().port(mockPort).when().get("/fruits").then().statusCode(200).contentType(ContentType.JSON)
 				.body("fruits", hasSize(10)).body("fruits[0].name", equalTo("Apple"))
 				.body("fruits[0].color", equalTo("Red")).body("fruits[0].price", equalTo(1.20f));
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void handoffServerHealthEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 		given().port(handoffPort).when().get("/health").then().statusCode(200).body(equalTo("OK"));
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void handoffServerFruitsEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 		given().port(handoffPort).when().get("/fruits").then().statusCode(200).contentType(ContentType.JSON)
 				.body("fruits", hasSize(10)).body("fruits[0].name", equalTo("Apple"))
 				.body("fruits[0].color", equalTo("Red"));
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void handoffServerRootEndpoint(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 		given().port(handoffPort).when().get("/").then().statusCode(200).contentType(ContentType.JSON).body("fruits",
 				hasSize(10));
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void handoffServer404ForUnknownPath(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 		given().port(handoffPort).when().get("/unknown").then().statusCode(404);
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void handoffServerReturnsAllFruits(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 
 		List<String> fruitNames = given().port(handoffPort).when().get("/fruits").then().statusCode(200).extract()
 				.jsonPath().getList("fruits.name", String.class);
@@ -175,11 +182,11 @@ class BenchmarkIntegrationTest {
 		assertTrue(fruitNames.contains("Kiwi"));
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void handoffServerHandlesMultipleRequests(HandoffHttpServer.IO ioType, boolean useCustomScheduler,
-			boolean useReactive, String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useReactive, boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 
 		// Send multiple requests to verify server handles concurrent load
 		for (int i = 0; i < 10; i++) {
@@ -187,11 +194,11 @@ class BenchmarkIntegrationTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{3}")
+	@ParameterizedTest(name = "{4}")
 	@MethodSource("serverConfigurations")
 	void verifyEndToEndJsonParsing(HandoffHttpServer.IO ioType, boolean useCustomScheduler, boolean useReactive,
-			String description) throws Exception {
-		startServers(ioType, useCustomScheduler, useReactive);
+			boolean useAffinity, String description) throws Exception {
+		startServers(ioType, useCustomScheduler, useReactive, useAffinity);
 
 		// This test verifies the complete flow:
 		// 1. HandoffHttpServer receives request
