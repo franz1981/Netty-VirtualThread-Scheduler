@@ -95,6 +95,7 @@ public class HandoffHttpServer {
 	private final boolean noTimeout;
 	private final boolean useReactive;
 	private final boolean useAffinity;
+	private final boolean useManualNoAffinity;
 	private final EventLoopSchedulerType schedulerType;
 
 	private MultiThreadIoEventLoopGroup workerGroup;
@@ -121,12 +122,19 @@ public class HandoffHttpServer {
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
 			boolean noTimeout, boolean useReactive, boolean useAffinity) {
-		this(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout, useReactive, useAffinity,
+		this(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout, useReactive, useAffinity, false,
 				EventLoopSchedulerType.FIFO);
 	}
 
 	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
 			boolean noTimeout, boolean useReactive, boolean useAffinity, EventLoopSchedulerType schedulerType) {
+		this(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout, useReactive, useAffinity, false,
+				schedulerType);
+	}
+
+	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
+			boolean noTimeout, boolean useReactive, boolean useAffinity, boolean useManualNoAffinity,
+			EventLoopSchedulerType schedulerType) {
 		this.port = port;
 		this.mockUrl = mockUrl;
 		this.threads = threads;
@@ -136,6 +144,7 @@ public class HandoffHttpServer {
 		this.noTimeout = noTimeout;
 		this.useReactive = useReactive;
 		this.useAffinity = useAffinity;
+		this.useManualNoAffinity = useManualNoAffinity;
 		this.schedulerType = schedulerType == null ? EventLoopSchedulerType.FIFO : schedulerType;
 	}
 
@@ -149,7 +158,14 @@ public class HandoffHttpServer {
 		final Class<? extends ServerSocketChannel> serverChannelClass;
 		final Class<? extends io.netty.channel.socket.SocketChannel> clientChannelClass;
 
-		if (useAffinity) {
+		if (useManualNoAffinity) {
+			var group = new VirtualMultithreadManualIoEventLoopGroup(threads, NioIoHandler.newFactory(), false);
+			workerGroup = group;
+			var defaultFactory = Thread.ofVirtual().factory();
+			threadFactorySupplier = () -> defaultFactory;
+			serverChannelClass = NioServerSocketChannel.class;
+			clientChannelClass = io.netty.channel.socket.nio.NioSocketChannel.class;
+		} else if (useAffinity) {
 			var group = new VirtualMultithreadManualIoEventLoopGroup(threads, NioIoHandler.newFactory());
 			workerGroup = group;
 			var affinityFactory = Thread.ofVirtual().inheritAffinity().factory();
@@ -197,19 +213,22 @@ public class HandoffHttpServer {
 		if (!silent) {
 			System.out.printf("Handoff HTTP Server started on port %d%n", port);
 			System.out.printf("  Mode: %s%n",
-					useAffinity
-							? "Affinity (inherited CPU affinity)"
-							: useReactive ? "Reactive (Project Reactor)" : "Virtual Thread");
+					useManualNoAffinity
+							? "Manual (no affinity)"
+							: useAffinity
+									? "Affinity (inherited CPU affinity)"
+									: useReactive ? "Reactive (Project Reactor)" : "Virtual Thread");
 			System.out.printf("  Mock URL: %s%n", mockUrl);
 			System.out.printf("  Threads: %d%n", threads);
-			if (!useReactive && !useAffinity) {
+			if (!useReactive && !useAffinity && !useManualNoAffinity) {
 				System.out.printf("  Custom Scheduler: %s%n", useCustomScheduler);
 				if (useCustomScheduler) {
 					System.out.printf("  Scheduler Type: %s%n", schedulerType);
 				}
 			}
 			System.out.printf("  Affinity: %s%n", useAffinity);
-			System.out.printf("  I/O: %s%n", useAffinity ? "NIO (forced)" : io);
+			System.out.printf("  Manual (no affinity): %s%n", useManualNoAffinity);
+			System.out.printf("  I/O: %s%n", (useAffinity || useManualNoAffinity) ? "NIO (forced)" : io);
 			System.out.printf("  No Timeout: %s%n", noTimeout);
 		}
 	}
@@ -364,6 +383,7 @@ public class HandoffHttpServer {
 		boolean noTimeout = false;
 		boolean useReactive = false;
 		boolean useAffinity = false;
+		boolean useManualNoAffinity = false;
 		EventLoopSchedulerType schedulerType = EventLoopSchedulerType.FIFO;
 
 		for (int i = 0; i < args.length; i++) {
@@ -378,6 +398,7 @@ public class HandoffHttpServer {
 				case "--no-timeout" -> noTimeout = Boolean.parseBoolean(args[++i]);
 				case "--reactive" -> useReactive = Boolean.parseBoolean(args[++i]);
 				case "--use-affinity" -> useAffinity = Boolean.parseBoolean(args[++i]);
+				case "--use-manual-no-affinity" -> useManualNoAffinity = Boolean.parseBoolean(args[++i]);
 				case "--help" -> {
 					printUsage();
 					return;
@@ -386,7 +407,7 @@ public class HandoffHttpServer {
 		}
 
 		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, useCustomScheduler, io, silent,
-				noTimeout, useReactive, useAffinity, schedulerType);
+				noTimeout, useReactive, useAffinity, useManualNoAffinity, schedulerType);
 		server.start();
 
 		// Shutdown hook
@@ -410,6 +431,7 @@ public class HandoffHttpServer {
 						  --no-timeout <true|false>      Disable HTTP client timeout (default: false)
 						  --reactive <true|false>        Use reactive handler with Reactor (default: false)
 						  --use-affinity <true|false>    Use affinity mode with inherited CPU affinity (default: false)
+						  --use-manual-no-affinity <true|false>  Use manual IO event loop without affinity (default: false)
 						  --silent                       Suppress output messages
 						  --help                         Show this help
 
@@ -417,6 +439,7 @@ public class HandoffHttpServer {
 						  Virtual Thread (default): Uses virtual threads with blocking Apache HttpClient
 						  Reactive (--reactive true): Uses Project Reactor with non-blocking Reactor Netty HTTP client
 						  Affinity (--use-affinity true): Uses VirtualMultithreadManualIoEventLoopGroup with inherited CPU affinity (forces NIO)
+						  Manual no-affinity (--use-manual-no-affinity true): Uses VirtualMultithreadManualIoEventLoopGroup without affinity hints (forces NIO)
 						""");
 	}
 }

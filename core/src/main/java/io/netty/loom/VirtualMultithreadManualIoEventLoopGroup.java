@@ -23,26 +23,30 @@ import java.util.concurrent.ThreadFactory;
 
 public class VirtualMultithreadManualIoEventLoopGroup extends MultiThreadIoEventLoopGroup {
 
-	private ThreadFactory eventLoopThreadFactory;
+	private ThreadFactory threadFactory;
 
 	public VirtualMultithreadManualIoEventLoopGroup(int nThreads, IoHandlerFactory factory) {
-		super(nThreads, factory);
+		this(nThreads, factory, true);
+	}
+
+	public VirtualMultithreadManualIoEventLoopGroup(int nThreads, IoHandlerFactory factory, boolean useAffinity) {
+		super(nThreads, (Executor) null, factory, useAffinity);
 	}
 
 	@Override
 	protected IoEventLoop newChild(Executor executor, IoHandlerFactory ioHandlerFactory, Object... args) {
-		if (eventLoopThreadFactory == null) {
-			eventLoopThreadFactory = newDefaultThreadFactory();
+		boolean useAffinity = (boolean) args[0];
+		if (threadFactory == null) {
+			var builder = Thread.ofVirtual();
+			if (useAffinity) {
+				builder = builder.roundRobinAffinity();
+			}
+			threadFactory = builder.factory();
 		}
 		var manualTask = new ManualIoEventLoopTask(this, null, ioHandlerFactory);
-		var newThread = eventLoopThreadFactory.newThread(manualTask);
+		var newThread = threadFactory.newThread(manualTask);
 		manualTask.setOwningThread(newThread);
 		newThread.start();
 		return manualTask;
-	}
-
-	@Override
-	protected ThreadFactory newDefaultThreadFactory() {
-		return Thread.ofVirtual().name("VirtualIoEventLoop-").roundRobinAffinity().factory();
 	}
 }

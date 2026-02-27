@@ -18,7 +18,12 @@ import io.netty.channel.IoEventLoopGroup;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
 
+import java.util.concurrent.TimeUnit;
+
 public class ManualIoEventLoopTask extends ManualIoEventLoop implements Runnable {
+
+	private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS
+			.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 1));
 
 	public ManualIoEventLoopTask(IoEventLoopGroup parent, Thread owningThread, IoHandlerFactory factory) {
 		super(parent, owningThread, factory);
@@ -27,9 +32,9 @@ public class ManualIoEventLoopTask extends ManualIoEventLoop implements Runnable
 	@Override
 	public void run() {
 		while (!isShuttingDown()) {
-			run(0);
+			run(0, RUNNING_YIELD_US);
 			Thread.yield();
-			runNonBlockingTasks(0);
+			runNonBlockingTasks(RUNNING_YIELD_US);
 			Thread.yield();
 		}
 		while (!isTerminated()) {
