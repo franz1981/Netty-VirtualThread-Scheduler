@@ -36,6 +36,7 @@ SERVER_TASKSET="${SERVER_TASKSET:-2,3}"  # CPUs for handoff server
 SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
 SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-3}"  # jdk.pollerMode value (1, 2, or 3)
 SERVER_FJ_PARALLELISM="${SERVER_FJ_PARALLELISM:-}"  # ForkJoinPool parallelism (empty = JVM default)
+SERVER_FJ_AFFINITY="${SERVER_FJ_AFFINITY:-false}"  # ForkJoinPool virtual thread scheduler affinity
 SERVER_NO_TIMEOUT="${SERVER_NO_TIMEOUT:-false}"  # Disable HTTP client timeout
 SERVER_REACTIVE="${SERVER_REACTIVE:-false}"  # Use reactive handler with Project Reactor
 SERVER_USE_AFFINITY="${SERVER_USE_AFFINITY:-false}"  # Use affinity mode with inherited CPU affinity
@@ -59,6 +60,7 @@ PROFILING_DURATION_SECONDS="${PROFILING_DURATION_SECONDS:-10}"
 # Profiling configuration
 ENABLE_PROFILER="${ENABLE_PROFILER:-false}"
 PROFILER_EVENT="${PROFILER_EVENT:-cpu}"
+PROFILER_FORMAT="${PROFILER_FORMAT:-flamegraph}"  # Output format: flamegraph, collapsed, jfr
 PROFILER_OUTPUT="${PROFILER_OUTPUT:-profile.html}"
 ASYNC_PROFILER_PATH="${ASYNC_PROFILER_PATH:-}"  # Path to async-profiler
 
@@ -397,6 +399,8 @@ start_handoff_server() {
         jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=$SERVER_FJ_PARALLELISM"
     fi
 
+    jvm_args="$jvm_args -Djdk.virtualThreadScheduler.affinity=$SERVER_FJ_AFFINITY"
+
     # Add debug non-safepoints if profiling is enabled
     if [[ "$ENABLE_PROFILER" == "true" ]]; then
         jvm_args="$jvm_args -XX:+UnlockDiagnosticVMOptions"
@@ -476,7 +480,7 @@ start_profiler() {
     (
         sleep "$PROFILING_DELAY_SECONDS"
         # --record-cpu
-        "$asprof" --threads -e "$PROFILER_EVENT" -o flamegraph -d "$PROFILING_DURATION_SECONDS" -f "$output_file" "$SERVER_PID"
+        "$asprof" --threads -e "$PROFILER_EVENT" -o "$PROFILER_FORMAT" -d "$PROFILING_DURATION_SECONDS" -f "$output_file" "$SERVER_PID"
     ) &
     PROFILER_PID=$!
 
@@ -717,6 +721,7 @@ print_config() {
     log "  No Timeout:     $SERVER_NO_TIMEOUT"
     log "  Poller Mode:    $SERVER_POLLER_MODE"
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
+    log "  FJ Affinity:    $SERVER_FJ_AFFINITY"
     log "  CPU Affinity:   ${SERVER_TASKSET:-<none>}"
     log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
     log ""
@@ -807,6 +812,7 @@ Handoff Server:
   SERVER_JVM_ARGS           Additional JVM arguments
   SERVER_POLLER_MODE        jdk.pollerMode value: 1, 2, or 3 (default: 3)
   SERVER_FJ_PARALLELISM     ForkJoinPool parallelism (empty = JVM default)
+  SERVER_FJ_AFFINITY        ForkJoinPool scheduler affinity (default: false)
 
 Load Generator:
   LOAD_GEN_CONNECTIONS      Number of connections (default: 100)
