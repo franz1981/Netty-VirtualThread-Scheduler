@@ -11,6 +11,8 @@
 | Mock think time | 30ms |
 | CPU pinning | server=8-15, mock=4-7, loadgen=0-3 |
 
+**Glossary:** EL = Event Loop (Netty I/O thread), FJ = ForkJoinPool (virtual thread scheduler), IPC = Instructions Per Cycle, nvcswch = non-voluntary context switches (thread yielded CPU involuntarily).
+
 ### Configurations tested
 
 | Config | Event Loop | Scheduler | Threads | Poller | Affinity |
@@ -44,7 +46,7 @@ From deep profiling (6 perf stat passes, ≤5 HW events each). See [FINDINGS.md]
 
 custom_8_nio uses 13-15% less CPU to serve the same 120K req/s. Two sources ([FINDINGS.md](FINDINGS.md)):
 1. Fewer instructions/req — no FJ scheduling overhead
-2. Fewer DRAM misses/req — same carrier handles the same connection, keeping continuation stack chunks and Netty pipeline objects warm in cache
+2. Fewer DRAM misses/req — perf mem shows DRAM hotspots in continuation thaw and Netty pipeline traversal are 2-3x lower in custom
 
 fj_8_8 has the highest IPC (1.015) but executes the most instructions/req (+7.3% vs custom). See section 7 for fj_8_8-specific costs.
 
@@ -94,13 +96,13 @@ fj_8_8 (standard Netty, 8 EL + 8 FJ workers) has unique overhead at 120K:
 - **4.86% of DRAM samples** in LinkedBlockingQueue + unparkVirtualThread — the handoff queue cost, absent in ManualEL configs
 - **6.13% continuation DRAM** — 3.5x custom, highest of all configs
 
-At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% from time-slicing 16 threads on 8 cores, giving fj_8_8 the lowest max throughput among 8-EL configs (161K vs 168K affinity, 174K custom).
+At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% (16 threads on 8 cores), giving fj_8_8 the lowest max throughput among 8-EL configs (161K vs 168K affinity, 174K custom).
 
 ---
 
 ## 8. Key Takeaways
 
-1. **custom_8_nio is the most efficient at every load level** — 13-15% less CPU, fewer instructions/req (no FJ overhead), fewer DRAM misses/req (implicit data locality).
+1. **custom_8_nio is the most efficient at every load level** — 13-15% less CPU, fewer instructions/req (no FJ overhead), fewer DRAM misses/req.
 
 2. **Affinity has no measurable effect at sub-maximal load.** affinity_8 and no_affinity_8 produce similar metrics at 120K. At max throughput, affinity_8 achieves higher throughput (168K vs 159K).
 

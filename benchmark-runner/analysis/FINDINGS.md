@@ -8,6 +8,8 @@ Four configs at 120K fixed-rate. All hit ~119.7K ± 0.1% across all passes. affi
 
 All server cores (8-15) are on CCD1 sharing the same 32MB L3. L3 is the last level cache — an L3 miss goes to DRAM.
 
+**Glossary:** EL = Event Loop (Netty I/O thread), FJ = ForkJoinPool (virtual thread scheduler), IPC = Instructions Per Cycle, nvcswch = non-voluntary context switches, IBS = Instruction Based Sampling (AMD hardware profiling, tags each sample with exact data source), CCD = Core Complex Die (8 cores sharing L3), DRAM = off-chip main memory.
+
 ---
 
 ## Question 1: Why does custom_8_nio use less CPU than FJ-based configs at 120K?
@@ -32,7 +34,7 @@ Delta vs custom_8_nio:
 | context switches | **3.1x** | **3.0x** | **3.2x** |
 | cpu-migrations | -26% | -34% | **+281%** |
 
-Two sources of the CPU gap: FJ configs execute more instructions/req (scheduling overhead) and have more DRAM misses/req (cold data).
+Two sources of the CPU gap: FJ configs execute more instructions/req (scheduling overhead) and have more DRAM misses/req.
 
 ### Where DRAM accesses happen (perf mem, IBS)
 
@@ -46,7 +48,7 @@ Two sources of the CPU gap: FJ configs execute more instructions/req (scheduling
 
 **Continuation thaw** accesses `stackChunkOopDesc` fields (`_bottom`, `_sp`, `_offset_of_stack`) and frozen stack frame data. The access pattern is pointer-chasing — each load depends on the previous load's result, so the CPU cannot prefetch ahead. IBS data source tagging shows these misses go straight from L2 to DRAM (near-zero L3 hits), meaning the data has been evicted from the entire cache hierarchy between thaw cycles.
 
-**channelRead** traverses Netty's linked list of `ChannelHandlerContext` nodes — pointer-chasing, unprefetchable. In FJ configs, the entire object graph is cold when a connection is served by a different carrier than last time. fj_8_8's low channelRead DRAM (0.55%) is because EL threads handle pipeline traversal with per-connection locality; the DRAM cost shifts to the handoff queue.
+**channelRead** traverses Netty's linked list of `ChannelHandlerContext` nodes — pointer-chasing, unprefetchable. custom_8_nio shows 0.03% DRAM here vs 2.95-3.65% for ManualEL FJ configs. fj_8_8 shows only 0.55% channelRead DRAM but has 4.86% in the handoff queue instead.
 
 **fj_8_8-specific costs:** LinkedBlockingQueue (2.84%) and unparkVirtualThread (2.02%) are the EL→FJ handoff. These don't exist in ManualEL configs. Combined with 6.13% continuation DRAM (3.5x custom), fj_8_8 has the highest total DRAM samples (2,453). Its 16 threads on 8 cores also cause 178K cpu-migrations — 4-6x more than 8-thread configs. Each migration moves a thread to a core where its working set is not in L1/L2.
 
@@ -64,7 +66,7 @@ Two sources of the CPU gap: FJ configs execute more instructions/req (scheduling
 | DRAM misses/req | 2,858 | 1,317 | **-54.0%** |
 | context switches/10s | 1,000K | 10K | **-99%** |
 
-Same instructions/req at both load levels. DRAM misses/req drop 54% and context switches drop 99% at max. Carriers run continuously at max (8.0 CPUs), keeping data warm.
+Same instructions/req at both load levels. DRAM misses/req drop 54% and context switches drop 99% at max. Carriers are saturated at max (8.0 CPUs).
 
 ### fj_8_8: 120K vs max
 
@@ -77,7 +79,7 @@ Same instructions/req at both load levels. DRAM misses/req drop 54% and context 
 | context switches/10s | 1,071K | 170K | **-84.2%** |
 | cpu-migrations/10s | 178K | 6K | **-96.6%** |
 
-Different pattern from affinity_8: instructions/req drop 14% at max while IPC also drops 14%, canceling out. The 16 threads stop migrating (-97%) and DRAM misses drop 47%. But IPC drops because 16 threads time-slice on 8 cores — threads sharing a core evict each other's L1/L2.
+Different pattern from affinity_8: instructions/req drop 14% at max while IPC also drops 14%, canceling out. The 16 threads stop migrating (-97%) and DRAM misses drop 47%. IPC drops with 16 threads on 8 cores.
 
 ### L3 miss rate (same-run)
 
@@ -90,7 +92,7 @@ Different pattern from affinity_8: instructions/req drop 14% at max while IPC al
 | affinity_8 @ max | 1,554 | **8.7%** |
 | fj_8_8 @ max | 1,252 | **7.4%** |
 
-L3 miss rate nearly doubles from max to 120K for both configs. At 120K, IBS shows continuation data is not in any cache level by the time it's needed again. At max, the lower miss rate indicates data is being re-accessed before eviction.
+L3 miss rate nearly doubles from max to 120K for both configs. At 120K, IBS shows continuation data is not in any cache level by the time it's needed again.
 
 ---
 
@@ -106,11 +108,11 @@ L3 miss rate nearly doubles from max to 120K for both configs. At 120K, IBS show
 | Continuation DRAM % | 1.76% | 3.50% | 3.71% | 6.13% |
 | Handoff queue DRAM % | — | — | — | 4.86% |
 
-custom_8_nio uses 13-15% less CPU at 120K from fewer instructions/req (no FJ scheduling overhead) and fewer DRAM misses/req (implicit data locality).
+custom_8_nio uses 13-15% less CPU at 120K from fewer instructions/req (no FJ scheduling overhead) and fewer DRAM misses/req.
 
 affinity_8 and no_affinity_8 have similar metrics at 120K. At max throughput (wrk-only), affinity_8 achieves 168K vs 159K for no_affinity_8.
 
-fj_8_8 executes the most instructions/req (+7.3% vs custom), has unique DRAM costs from the EL→FJ handoff (4.86%), the highest continuation DRAM (6.13%), and 4-6x more cpu-migrations from 16 threads on 8 cores. At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% from time-slicing.
+fj_8_8 executes the most instructions/req (+7.3% vs custom), has unique DRAM costs from the EL→FJ handoff (4.86%), the highest continuation DRAM (6.13%), and 4-6x more cpu-migrations from 16 threads on 8 cores. At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% (16 threads on 8 cores).
 
 ---
 
