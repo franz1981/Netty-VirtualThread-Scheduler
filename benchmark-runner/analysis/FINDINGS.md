@@ -8,7 +8,14 @@ Four configs at 120K fixed-rate. All hit ~119.7K ± 0.1% across all passes. affi
 
 All server cores (8-15) are on CCD1 sharing the same 32MB L3. L3 is the last level cache — an L3 miss goes to DRAM.
 
-**Glossary:** EL = Event Loop (Netty I/O thread), FJ = ForkJoinPool (virtual thread scheduler), IPC = Instructions Per Cycle, nvcswch = non-voluntary context switches, IBS = Instruction Based Sampling (AMD hardware profiling, tags each sample with exact data source), CCD = Core Complex Die (8 cores sharing L3), DRAM = off-chip main memory.
+> **Glossary**
+> - **EL** — Event Loop (Netty I/O thread)
+> - **FJ** — ForkJoinPool (virtual thread scheduler)
+> - **IPC** — Instructions Per Cycle
+> - **nvcswch** — non-voluntary context switches
+> - **IBS** — Instruction Based Sampling (AMD hardware profiling, tags each sample with exact data source)
+> - **CCD** — Core Complex Die (8 cores sharing L3)
+> - **DRAM** — off-chip main memory
 
 ---
 
@@ -100,7 +107,7 @@ L3 miss rate nearly doubles from max to 120K for both configs. At 120K, IBS show
 
 |  | custom_8_nio | affinity_8 | no_affinity_8 | fj_8_8 |
 |--|-------------|-----------|--------------|-------|
-| Max throughput (wrk-only) | 174K | 168K | 159K | 161K |
+| Max throughput | 174K | 168K | 159K | 161K |
 | CPUs at 120K | 5.94 | 6.95 | 6.95 | 6.82 |
 | DRAM misses/req @ 120K | 2,041 | 2,858 | 3,202 | 2,390 |
 | instructions/req @ 120K | 215,386 | 225,894 | 225,781 | 231,115 |
@@ -110,7 +117,7 @@ L3 miss rate nearly doubles from max to 120K for both configs. At 120K, IBS show
 
 custom_8_nio uses 13-15% less CPU at 120K from fewer instructions/req (no FJ scheduling overhead) and fewer DRAM misses/req.
 
-affinity_8 and no_affinity_8 have similar metrics at 120K. At max throughput (wrk-only), affinity_8 achieves 168K vs 159K for no_affinity_8.
+affinity_8 and no_affinity_8 have similar metrics at 120K. At max throughput, affinity_8 achieves 168K vs 159K for no_affinity_8.
 
 fj_8_8 executes the most instructions/req (+7.3% vs custom), has unique DRAM costs from the EL→FJ handoff (4.86%), the highest continuation DRAM (6.13%), and 4-6x more cpu-migrations from 16 threads on 8 cores. At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% (16 threads on 8 cores).
 
@@ -122,5 +129,5 @@ fj_8_8 executes the most instructions/req (+7.3% vs custom), has unique DRAM cos
 - L3 miss rate from pass E: `cache-references` and `cache-misses` in the same run.
 - perf mem uses AMD IBS sampling (~300K samples per run) with JIT symbol resolution.
 - All 120K runs hit 119.7K ± 0.1%.
-- *Max throughput during profiling runs is lower than wrk-only runs (REPORT.md) due to perf stat overhead. fj_8_8: 143-149K (vs 161K wrk-only). affinity_8: 152-163K (vs 168K wrk-only).
+- *Max throughput during profiling runs is lower than REPORT.md due to perf stat overhead. fj_8_8: 143-149K (vs 161K). affinity_8: 152-163K (vs 168K).
 - perf c2c: ~760 HITMs at both load levels, ruling out false sharing.

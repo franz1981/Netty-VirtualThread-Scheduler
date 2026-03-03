@@ -1,43 +1,54 @@
 # Netty Virtual Thread Scheduler — Max Load Benchmark Report
 **Date:** 2026-03-02 | **Machine:** AMD Ryzen 9 7950X, Fedora 43, Linux 6.18 | **JDK:** Custom OpenJDK build (loom branch)
 
-## Test Setup
+## 1. Test Setup
 
-All tests: 10,000 connections, 4 wrk threads, 30ms mock backend think-time, 10s warmup + 20s measurement, `taskset` CPU pinning (load-gen: 0-3, mock: 4-7, server: 8-15). All server cores on CCD1, sharing 32MB L3.
+| Parameter | Value |
+|-----------|-------|
+| Load | max throughput |
+| Connections | 10,000 |
+| Mock think time | 30ms |
+| Load-gen threads | 4 |
+| Duration | 10s warmup + 20s measurement |
+| CPU pinning | server=8-15, mock=4-7, loadgen=0-3 |
 
-**Glossary:** EL = Event Loop (Netty I/O thread), FJ = ForkJoinPool (virtual thread scheduler), IPC = Instructions Per Cycle, nvcswch = non-voluntary context switches (thread yielded CPU involuntarily).
+All server cores on CCD1, sharing 32MB L3.
 
----
-
-## 1. Configuration Summary
-
-| Test | Scheduler | I/O | Threads | Affinity | Poller Mode |
-|------|-----------|-----|---------|----------|-------------|
-| **custom_8_epoll** | NettyScheduler (custom) | epoll | 8 | structural | 3 |
-| **custom_8_nio** | NettyScheduler (custom) | NIO | 8 | structural | 3 |
-| **affinity_8** | Default FJ | NIO | 8 | roundRobin + inherit | 2 |
-| **no_affinity_8** | Default FJ | NIO | 8 | none (manual EL) | 2 |
-| **fj_8_8** | Default FJ | NIO | 8+8 | none | 2 |
-| **fj_4_4** | Default FJ | NIO | 4+4 | none | 2 |
-
----
-
-## 2. Throughput
-
-| Test | Requests/sec | Avg Latency | Stdev |
-|------|-------------|-------------|-------|
-| **custom_8_epoll** | **183,041** | 54.16ms | 3.61ms |
-| **custom_8_nio** | 174,374 | 56.99ms | 4.18ms |
-| **affinity_8** | 168,189 | 58.93ms | 4.27ms |
-| **fj_8_8** | 161,368 | 61.46ms | 15.89ms |
-| **no_affinity_8** | 158,798 | 62.49ms | 14.73ms |
-| **fj_4_4** | 136,362 | 72.61ms | 17.25ms |
-
-Custom scheduler configs achieve 3-4x lower latency variance than FJ configs.
+> **Glossary**
+> - **EL** — Event Loop (Netty I/O thread)
+> - **FJ** — ForkJoinPool (virtual thread scheduler)
+> - **IPC** — Instructions Per Cycle
+> - **nvcswch** — non-voluntary context switches (thread yielded CPU involuntarily)
 
 ---
 
-## 3. perf stat (10s steady state)
+## 2. Configurations tested
+
+| Config | Event Loop | Scheduler | I/O | Threads | Affinity | Poller |
+|--------|-----------|-----------|-----|---------|----------|--------|
+| **custom_8_epoll** | VirtualMultithreadIoELG | NettyScheduler | epoll | 8 | structural | 3 |
+| **custom_8_nio** | VirtualMultithreadIoELG | NettyScheduler | NIO | 8 | structural | 3 |
+| **affinity_8** | ManualIoELG | ForkJoinPool | NIO | 8 | roundRobin + inherit | 2 |
+| **no_affinity_8** | ManualIoELG | ForkJoinPool | NIO | 8 | none | 2 |
+| **fj_8_8** | MultiThreadIoELG | ForkJoinPool | NIO | 8+8 | none | 2 |
+| **fj_4_4** | MultiThreadIoELG | ForkJoinPool | NIO | 4+4 | none | 2 |
+
+---
+
+## 3. Throughput
+
+| Config | Requests/sec |
+|--------|-------------|
+| **custom_8_epoll** | **183,041** |
+| **custom_8_nio** | 174,374 |
+| **affinity_8** | 168,189 |
+| **fj_8_8** | 161,368 |
+| **no_affinity_8** | 158,798 |
+| **fj_4_4** | 136,362 |
+
+---
+
+## 4. perf stat (10s steady state)
 
 | Metric | custom_8_epoll | custom_8_nio | affinity_8 | fj_8_8 | no_affinity_8 | fj_4_4 |
 |--------|---------------|-------------|-----------|--------|--------------|--------|
@@ -52,7 +63,7 @@ The IPC gap (1.09 custom vs 0.99 fj_8_8) is driven by DRAM misses — deep profi
 
 ---
 
-## 4. nvcswch Imbalance at Max Load
+## 5. Non-voluntary Context Switch Imbalance at Max Load
 
 | Config | nvcswch/s range | max/min spread |
 |--------|----------------|----------------|
@@ -62,11 +73,11 @@ The IPC gap (1.09 custom vs 0.99 fj_8_8) is driven by DRAM misses — deep profi
 | no_affinity_8 | 257-2,214 | **8.6x** |
 | fj_8_8 | (EL: 95-280, FJ: 110-240) | 2.5x |
 
-no_affinity_8 shows massive nvcswch imbalance (8.6x spread). Affinity flattens this to 1.6x. custom scheduler produces near-zero nvcswch. This imbalance disappears at sub-maximal load (see [REPORT-120K.md](REPORT-120K.md)).
+no_affinity_8 shows massive non-voluntary context switch imbalance (8.6x spread). Affinity flattens this to 1.6x. custom scheduler produces near-zero non-voluntary context switches. This imbalance disappears at sub-maximal load (see [REPORT-120K.md](REPORT-120K.md)).
 
 ---
 
-## 5. Affinity at Max Load (affinity_8 vs no_affinity_8)
+## 6. Affinity at Max Load (affinity_8 vs no_affinity_8)
 
 Same event loop, same FJ pool, only difference is affinity hints:
 
@@ -75,13 +86,12 @@ Same event loop, same FJ pool, only difference is affinity hints:
 | Requests/sec | 168,189 | 158,798 | **+6%** |
 | Context switches | 11,727 | 164,813 | **-93%** |
 | nvcswch spread | 1.6x | 8.6x | **-81%** |
-| Latency stdev | 4.27ms | 14.73ms | **-71%** |
 
 Affinity provides +6% throughput, 14x fewer context switches, and balanced worker load at max throughput. At sub-maximal load (120K), affinity has no measurable effect — affinity_8 and no_affinity_8 produce similar metrics ([FINDINGS.md](FINDINGS.md)).
 
 ---
 
-## 6. Why Custom Beats FJ
+## 7. Why Custom Beats FJ
 
 | Metric | custom_8_nio | affinity_8 | fj_8_8 |
 |--------|-------------|-----------|-------|
@@ -100,9 +110,9 @@ fj_8_8 (standard Netty, 8 EL + 8 FJ) additionally pays for the EL→FJ handoff q
 
 ---
 
-## 7. Key Takeaways
+## 8. Key Takeaways
 
-1. **custom_8_epoll is the most efficient config** — 183K req/s, 3.6ms latency stdev, highest IPC (1.08).
+1. **custom_8_epoll is the most efficient config** — 183K req/s, highest IPC (1.08).
 
 2. **epoll vs NIO on custom scheduler:** epoll wins on throughput (+5%) and latency. Both achieve near-zero context switches.
 

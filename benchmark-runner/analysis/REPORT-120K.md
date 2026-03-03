@@ -6,21 +6,29 @@
 
 | Parameter | Value |
 |-----------|-------|
-| Target rate | 120,000 req/s |
+| Load | 120,000 req/s fixed rate |
 | Connections | 10,000 |
 | Mock think time | 30ms |
+| Load-gen threads | 4 |
+| Duration | 10s warmup + 20s measurement |
 | CPU pinning | server=8-15, mock=4-7, loadgen=0-3 |
 
-**Glossary:** EL = Event Loop (Netty I/O thread), FJ = ForkJoinPool (virtual thread scheduler), IPC = Instructions Per Cycle, nvcswch = non-voluntary context switches (thread yielded CPU involuntarily).
+All server cores on CCD1, sharing 32MB L3.
+
+> **Glossary**
+> - **EL** — Event Loop (Netty I/O thread)
+> - **FJ** — ForkJoinPool (virtual thread scheduler)
+> - **IPC** — Instructions Per Cycle
+> - **nvcswch** — non-voluntary context switches (thread yielded CPU involuntarily)
 
 ### Configurations tested
 
-| Config | Event Loop | Scheduler | Threads | Poller | Affinity |
-|--------|-----------|-----------|---------|--------|----------|
-| **custom_8_nio** | VirtualMultithreadIoELG | NettyScheduler | 8 | 3 | structural |
-| **affinity_8** | ManualIoELG | ForkJoinPool | 8 | 2 | roundRobin + inherit |
-| **no_affinity_8** | ManualIoELG | ForkJoinPool | 8 | 2 | none |
-| **fj_8_8** | MultiThreadIoELG | ForkJoinPool | 8+8 | 2 | none |
+| Config | Event Loop | Scheduler | I/O | Threads | Affinity | Poller |
+|--------|-----------|-----------|-----|---------|----------|--------|
+| **custom_8_nio** | VirtualMultithreadIoELG | NettyScheduler | NIO | 8 | structural | 3 |
+| **affinity_8** | ManualIoELG | ForkJoinPool | NIO | 8 | roundRobin + inherit | 2 |
+| **no_affinity_8** | ManualIoELG | ForkJoinPool | NIO | 8 | none | 2 |
+| **fj_8_8** | MultiThreadIoELG | ForkJoinPool | NIO | 8+8 | none | 2 |
 
 All configs achieved the target rate (119,695-119,810 req/s, within 0.1%).
 
@@ -65,7 +73,7 @@ At 120K, threads park between requests. All configs show dramatically more conte
 
 ---
 
-## 5. nvcswch Balance
+## 5. Non-voluntary Context Switch Balance
 
 | Config | Avg nvcswch/s | max/min spread |
 |--------|--------------|----------------|
@@ -74,7 +82,7 @@ At 120K, threads park between requests. All configs show dramatically more conte
 | affinity_8 | 1,556 | 1.09x |
 | fj_8_8 (FJ workers) | 1,631 | 1.04x |
 
-The nvcswch imbalance observed at max load has vanished. At max load, no_affinity showed an 8.6x nvcswch spread. At 120K, all configs are balanced (1.04-1.15x). custom_8_nio still has 4-5x fewer nvcswch/s.
+The non-voluntary context switch imbalance observed at max load has vanished. At max load, no_affinity showed an 8.6x spread. At 120K, all configs are balanced (1.04-1.15x). custom_8_nio still has 4-5x fewer non-voluntary context switches/s.
 
 ---
 
@@ -82,9 +90,7 @@ The nvcswch imbalance observed at max load has vanished. At max load, no_affinit
 
 **At 120K, affinity has no measurable effect.** affinity_8 vs no_affinity_8 metrics are within 2-3% — within run-to-run variance.
 
-At 120K, carriers are not saturated (6.95 CPUs out of 8). affinity_8 and no_affinity_8 produce similar metrics at this load level (both 6.95 CPUs, DRAM misses/req within 12%). At max throughput (wrk-only), affinity_8 achieves 168K vs 159K for no_affinity_8.
-
-At max throughput (wrk-only), affinity_8 achieves 168K vs 159K for no_affinity_8. See [FINDINGS.md](FINDINGS.md) for affinity_8's 120K-vs-max comparison.
+At 120K, carriers are not saturated (6.95 CPUs out of 8). affinity_8 and no_affinity_8 produce similar metrics at this load level (both 6.95 CPUs, DRAM misses/req within 12%). At max throughput, affinity_8 achieves 168K vs 159K for no_affinity_8. See [FINDINGS.md](FINDINGS.md) for affinity_8's 120K-vs-max comparison.
 
 ---
 
@@ -106,6 +112,6 @@ At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 1
 
 2. **Affinity has no measurable effect at sub-maximal load.** affinity_8 and no_affinity_8 produce similar metrics at 120K. At max throughput, affinity_8 achieves higher throughput (168K vs 159K).
 
-3. **nvcswch imbalance disappears at sub-maximal load.** The 8.6x spread seen at max load drops to 1.04-1.15x at 120K.
+3. **Non-voluntary context switch imbalance disappears at sub-maximal load.** The 8.6x spread seen at max load drops to 1.04-1.15x at 120K.
 
 4. **fj_8_8 is the least efficient 8-EL FJ config** — most instructions/req, most migrations, unique handoff queue DRAM costs, lowest max throughput among 8-EL configs.
