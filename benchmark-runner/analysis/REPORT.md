@@ -26,12 +26,12 @@ All server cores on CCD1, sharing 32MB L3.
 
 | Config | Event Loop | Scheduler | I/O | Threads | Affinity | Poller |
 |--------|-----------|-----------|-----|---------|----------|--------|
-| **custom_8_epoll** | VirtualMultithreadIoELG | NettyScheduler | epoll | 8 | structural | 3 |
-| **custom_8_nio** | VirtualMultithreadIoELG | NettyScheduler | NIO | 8 | structural | 3 |
-| **affinity_8** | ManualIoELG | ForkJoinPool | NIO | 8 | roundRobin + inherit | 2 |
-| **no_affinity_8** | ManualIoELG | ForkJoinPool | NIO | 8 | none | 2 |
-| **fj_8_8** | MultiThreadIoELG | ForkJoinPool | NIO | 8+8 | none | 2 |
-| **fj_4_4** | MultiThreadIoELG | ForkJoinPool | NIO | 4+4 | none | 2 |
+| **custom_8_epoll** | VirtualMultithreadIoELG | NettyScheduler | epoll | 8 | structural | POLLER_PER_CARRIER |
+| **custom_8_nio** | VirtualMultithreadIoELG | NettyScheduler | NIO | 8 | structural | POLLER_PER_CARRIER |
+| **affinity_8** | ManualIoELG | ForkJoinPool | NIO | 8 | roundRobin + inherit | VTHREAD_POLLERS |
+| **no_affinity_8** | ManualIoELG | ForkJoinPool | NIO | 8 | none | VTHREAD_POLLERS |
+| **fj_8_8** | MultiThreadIoELG | ForkJoinPool | NIO | 8+8 | none | VTHREAD_POLLERS |
+| **fj_4_4** | MultiThreadIoELG | ForkJoinPool | NIO | 4+4 | none | VTHREAD_POLLERS |
 
 ---
 
