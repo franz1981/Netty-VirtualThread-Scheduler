@@ -30,9 +30,9 @@ At 120K, latency does not differentiate the configs. All four are identical up t
 
 ---
 
-## 3. CPU Usage and Per-Request Cost (exact, 0% multiplexing)
+## 3. CPU Usage and Per-Request Cost
 
-From deep profiling (6 perf stat passes, ≤5 HW events each). See [FINDINGS.md](investigation/FINDINGS.md) for full methodology.
+From deep profiling (6 perf stat passes, ≤5 HW events each). See [FINDINGS.md](FINDINGS.md) for full methodology.
 
 |  | custom_8_nio | no_affinity_8 | affinity_8 | fj_8_8 |
 |--|-------------|--------------|-----------|-------|
@@ -40,15 +40,13 @@ From deep profiling (6 perf stat passes, ≤5 HW events each). See [FINDINGS.md]
 | **IPC** | 0.997 | 0.981 | 0.970 | 1.015 |
 | **instructions/req** | **215,386** | 225,781 | 225,894 | 231,115 |
 | **DRAM misses/req** | **2,041** | 3,202 | 2,858 | 2,390 |
-| **L3 miss%** | **11.8%** | 13.1% | 14.0% | 14.2% |
 | **context switches/10s** | **333K** | 1,033K | 1,000K | 1,071K |
-| **cpu-migrations/10s** | 46K | 35K | 31K | **178K** |
 
-custom_8_nio uses 13-15% less CPU to serve the same 120K req/s. Two sources ([FINDINGS.md](investigation/FINDINGS.md)):
+custom_8_nio uses 13-15% less CPU to serve the same 120K req/s. Two sources ([FINDINGS.md](FINDINGS.md)):
 1. Fewer instructions/req — no FJ scheduling overhead
 2. Fewer DRAM misses/req — same carrier handles the same connection, keeping continuation stack chunks and Netty pipeline objects warm in cache
 
-fj_8_8 has the highest IPC (1.015) but executes the most instructions/req (+7.3% vs custom) and has 4-6x more cpu-migrations from 16 threads on 8 cores.
+fj_8_8 has the highest IPC (1.015) but executes the most instructions/req (+7.3% vs custom). See section 7 for fj_8_8-specific costs.
 
 ---
 
@@ -84,7 +82,7 @@ The nvcswch imbalance observed at max load has vanished. At max load, no_affinit
 
 At 120K, carriers are not saturated (6.95 CPUs out of 8). Carriers idle between requests. During idle time, continuation stack chunk data gets evicted from the 32MB shared L3. The next thaw fetches from DRAM regardless of whether it's the same carrier or a different one.
 
-At max throughput, affinity makes a difference: carriers run continuously, DRAM misses/req drop 54%, context switches drop 99%. See [FINDINGS.md](investigation/FINDINGS.md) for the 120K-vs-max comparison.
+At max throughput, affinity makes a difference: carriers run continuously, DRAM misses/req drop 54%, context switches drop 99%. See [FINDINGS.md](FINDINGS.md) for the 120K-vs-max comparison.
 
 ---
 

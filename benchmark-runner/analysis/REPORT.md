@@ -46,7 +46,7 @@ Custom scheduler configs achieve 3-4x lower latency variance than FJ configs.
 
 At max load, all 8-thread configs saturate the available cores (~8.0 CPUs). The efficiency difference shows in throughput per CPU: custom_8_epoll gets 22,938 req/s per CPU vs 19,950-20,449 for FJ configs.
 
-The IPC gap (1.09 custom vs 0.99 fj_8_8) is driven by DRAM misses — deep profiling ([FINDINGS.md](investigation/FINDINGS.md)) shows ManualEL FJ configs have 40-57% more DRAM misses/req from cold continuation stack chunks and cold Netty pipeline objects. fj_8_8 has +17% more DRAM misses/req with additional costs from its EL→FJ handoff queue.
+The IPC gap (1.09 custom vs 0.99 fj_8_8) is driven by DRAM misses — deep profiling ([FINDINGS.md](FINDINGS.md)) shows ManualEL FJ configs have 40-57% more DRAM misses/req from cold continuation stack chunks and cold Netty pipeline objects. fj_8_8 has +17% more DRAM misses/req with additional costs from its EL→FJ handoff queue.
 
 ---
 
@@ -75,7 +75,7 @@ Same event loop, same FJ pool, only difference is affinity hints:
 | nvcswch spread | 1.6x | 8.6x | **-81%** |
 | Latency stdev | 4.27ms | 14.73ms | **-71%** |
 
-Affinity provides +6% throughput, 14x fewer context switches, and balanced worker load at max throughput. At sub-maximal load (120K), affinity has no measurable effect — carriers idle and data goes cold regardless of affinity hints ([FINDINGS.md](investigation/FINDINGS.md)).
+Affinity provides +6% throughput, 14x fewer context switches, and balanced worker load at max throughput. At sub-maximal load (120K), affinity has no measurable effect — carriers idle and data goes cold regardless of affinity hints ([FINDINGS.md](FINDINGS.md)).
 
 ---
 
@@ -90,7 +90,7 @@ Affinity provides +6% throughput, 14x fewer context switches, and balanced worke
 
 The custom scheduler runs I/O events and virtual thread tasks on the same carrier thread. A virtual thread resumes on the same carrier that received the I/O event for its connection — implicit data locality without affinity hints.
 
-Deep profiling ([FINDINGS.md](investigation/FINDINGS.md)) identified two sources of the efficiency gap:
+Deep profiling ([FINDINGS.md](FINDINGS.md)) identified two sources of the efficiency gap:
 1. **Fewer DRAM misses/req** — continuation stack chunks and Netty pipeline objects stay warm in the carrier's cache
 2. **Fewer instructions/req** — no FJ scheduling overhead, no EL→FJ handoff
 

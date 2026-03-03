@@ -2,7 +2,7 @@
 
 ## Setup
 
-Deep profiling with exact perf stat (6 passes, ≤5 HW events each, 0% multiplexing) and perf mem (AMD IBS sampling, ~300K samples, JIT symbol resolution via `libperf-jvmti.so` + `perf inject --jit`).
+Deep profiling with perf stat (6 passes, ≤5 HW events each, no multiplexing) and perf mem (AMD IBS sampling, ~300K samples, JIT symbol resolution via `libperf-jvmti.so` + `perf inject --jit`).
 
 Four configs at 120K fixed-rate. All hit ~119.7K ± 0.1% across all passes. affinity_8 and fj_8_8 also profiled at max throughput.
 
@@ -12,16 +12,14 @@ All server cores (8-15) are on CCD1 sharing the same 32MB L3. L3 is the last lev
 
 ## Question 1: Why does custom_8_nio use less CPU than FJ-based configs at 120K?
 
-### Per-request metrics (exact, 0% multiplexing)
+### Per-request metrics
 
 |  | custom_8_nio | no_affinity_8 | affinity_8 | fj_8_8 |
 |--|-------------|--------------|-----------|-------|
 | CPUs utilized | 5.94 | 6.95 | 6.95 | 6.82 |
 | IPC | 0.997 | 0.981 | 0.970 | 1.015 |
 | instructions/req | 215,386 | 225,781 | 225,894 | 231,115 |
-| cycles/req | 215,936 | 230,079 | 232,765 | 227,685 |
 | DRAM misses/req | 2,041 | 3,202 | 2,858 | 2,390 |
-| L3 miss% (same-run) | 11.8% | 13.1% | 14.0% | 14.2% |
 | context switches/10s | 333K | 1,033K | 1,000K | 1,071K |
 | cpu-migrations/10s | 46K | 35K | 31K | **178K** |
 
@@ -30,7 +28,6 @@ Delta vs custom_8_nio:
 | Metric | no_affinity_8 | affinity_8 | fj_8_8 |
 |--------|--------------|-----------|-------|
 | instructions/req | +4.8% | +4.9% | **+7.3%** |
-| cycles/req | +6.5% | +7.8% | +5.4% |
 | DRAM misses/req | **+56.9%** | **+40.0%** | +17.1% |
 | context switches | **3.1x** | **3.0x** | **3.2x** |
 | cpu-migrations | -26% | -34% | **+281%** |
@@ -47,14 +44,7 @@ Two sources of the CPU gap: FJ configs execute more instructions/req (scheduling
 | unparkVirtualThread | — | — | — | **2.02%** |
 | Total DRAM samples | 1,595 | 1,833 | 1,750 | 2,453 |
 
-**Continuation thaw** accesses `stackChunkOopDesc` fields (`_bottom`, `_sp`, `_offset_of_stack`) and frozen stack frame data. The access pattern is pointer-chasing — each load depends on the previous load's result, so the CPU cannot prefetch ahead. IBS data source tagging shows these misses go straight from L2 to DRAM (near-zero L3 hits), meaning the data has been evicted from the entire cache hierarchy between thaw cycles:
-
-| Data source | custom_8_nio thaw_slow | affinity_8 thaw_slow |
-|-------------|----------------------|---------------------|
-| L1 hit | 1,438 | 1,316 |
-| L2 hit | 76 | 118 |
-| L3 hit | 4 | 1 |
-| RAM hit | 13 | 24 |
+**Continuation thaw** accesses `stackChunkOopDesc` fields (`_bottom`, `_sp`, `_offset_of_stack`) and frozen stack frame data. The access pattern is pointer-chasing — each load depends on the previous load's result, so the CPU cannot prefetch ahead. IBS data source tagging shows these misses go straight from L2 to DRAM (near-zero L3 hits), meaning the data has been evicted from the entire cache hierarchy between thaw cycles.
 
 **channelRead** traverses Netty's linked list of `ChannelHandlerContext` nodes — pointer-chasing, unprefetchable. In FJ configs, the entire object graph is cold when a connection is served by a different carrier than last time. fj_8_8's low channelRead DRAM (0.55%) is because EL threads handle pipeline traversal with per-connection locality; the DRAM cost shifts to the handoff queue.
 
@@ -64,7 +54,7 @@ Two sources of the CPU gap: FJ configs execute more instructions/req (scheduling
 
 ## Question 2: Why does affinity/FJ work better at max throughput than at 120K?
 
-### affinity_8: 120K vs max (exact, 0% multiplexing)
+### affinity_8: 120K vs max
 
 | Metric | @ 120K | @ max (152-163K*) | Delta |
 |--------|--------|-------------|-------|
@@ -76,21 +66,20 @@ Two sources of the CPU gap: FJ configs execute more instructions/req (scheduling
 
 Same instructions/req at both load levels. DRAM misses/req drop 54% and context switches drop 99% at max. Carriers run continuously at max (8.0 CPUs), keeping data warm.
 
-### fj_8_8: 120K vs max (exact, 0% multiplexing)
+### fj_8_8: 120K vs max
 
 | Metric | @ 120K | @ max (143-149K*) | Delta |
 |--------|--------|-------------|-------|
 | CPUs utilized | 6.82 | 7.90 | near-saturated |
 | IPC | 1.015 | 0.870 | **-14.3%** |
 | instructions/req | 231,115 | 199,160 | **-13.8%** |
-| cycles/req | 227,685 | 228,851 | flat |
 | DRAM misses/req | 2,390 | 1,260 | **-47.3%** |
 | context switches/10s | 1,071K | 170K | **-84.2%** |
 | cpu-migrations/10s | 178K | 6K | **-96.6%** |
 
-Different pattern from affinity_8: instructions/req drop 14% at max while IPC also drops 14% (cycles/req stays flat). The 16 threads stop migrating (-97%) and DRAM misses drop 47%. But IPC drops because 16 threads time-slice on 8 cores — threads sharing a core evict each other's L1/L2.
+Different pattern from affinity_8: instructions/req drop 14% at max while IPC also drops 14%, canceling out. The 16 threads stop migrating (-97%) and DRAM misses drop 47%. But IPC drops because 16 threads time-slice on 8 cores — threads sharing a core evict each other's L1/L2.
 
-### L3 miss rate (same-run, 0% multiplexing)
+### L3 miss rate (same-run)
 
 | Config | L3 miss/req | L3 miss rate |
 |--------|------------|-------------|
@@ -112,10 +101,8 @@ L3 miss rate nearly doubles from max to 120K for both configs. At 120K, carriers
 | Max throughput (wrk-only) | 174K | 168K | 159K | 161K |
 | CPUs at 120K | 5.94 | 6.95 | 6.95 | 6.82 |
 | DRAM misses/req @ 120K | 2,041 | 2,858 | 3,202 | 2,390 |
-| L3 miss% @ 120K | 11.8% | 14.0% | 13.1% | 14.2% |
 | instructions/req @ 120K | 215,386 | 225,894 | 225,781 | 231,115 |
 | context switches @ 120K | 333K | 1,000K | 1,033K | 1,071K |
-| cpu-migrations @ 120K | 46K | 31K | 35K | 178K |
 | Continuation DRAM % | 1.76% | 3.50% | 3.71% | 6.13% |
 | Handoff queue DRAM % | — | — | — | 4.86% |
 
@@ -129,7 +116,7 @@ fj_8_8 executes the most instructions/req (+7.3% vs custom), has unique DRAM cos
 
 ## Data quality
 
-- All perf stat values are exact (0% multiplexing) from 6-pass collection with ≤5 HW events per pass on AMD Zen4 (5 available GP counters after NMI watchdog).
+- All perf stat values are exact (no multiplexing) from 6-pass collection with ≤5 HW events per pass on AMD Zen4 (5 available GP counters after NMI watchdog).
 - L3 miss rate from pass E: `cache-references` and `cache-misses` in the same run.
 - perf mem uses AMD IBS sampling (~300K samples per run) with JIT symbol resolution.
 - All 120K runs hit 119.7K ± 0.1%.
