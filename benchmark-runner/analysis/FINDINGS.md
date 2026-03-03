@@ -90,7 +90,7 @@ Different pattern from affinity_8: instructions/req drop 14% at max while IPC al
 | affinity_8 @ max | 1,554 | **8.7%** |
 | fj_8_8 @ max | 1,252 | **7.4%** |
 
-L3 miss rate nearly doubles from max to 120K for both configs. At 120K, carriers idle between requests and data gets evicted from L3. At max, carriers run continuously and re-access data before it's evicted.
+L3 miss rate nearly doubles from max to 120K for both configs. At 120K, IBS shows continuation data is not in any cache level by the time it's needed again. At max, the lower miss rate indicates data is being re-accessed before eviction.
 
 ---
 
@@ -108,7 +108,7 @@ L3 miss rate nearly doubles from max to 120K for both configs. At 120K, carriers
 
 custom_8_nio uses 13-15% less CPU at 120K from fewer instructions/req (no FJ scheduling overhead) and fewer DRAM misses/req (implicit data locality).
 
-affinity_8 and no_affinity_8 have similar CPU usage at 120K. At max throughput, affinity_8 pulls ahead (168K vs 159K) with 54% fewer DRAM misses/req when carriers are saturated.
+affinity_8 and no_affinity_8 have similar metrics at 120K. At max throughput (wrk-only), affinity_8 achieves 168K vs 159K for no_affinity_8.
 
 fj_8_8 executes the most instructions/req (+7.3% vs custom), has unique DRAM costs from the EL→FJ handoff (4.86%), the highest continuation DRAM (6.13%), and 4-6x more cpu-migrations from 16 threads on 8 cores. At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% from time-slicing.
 

@@ -80,9 +80,9 @@ The nvcswch imbalance observed at max load has vanished. At max load, no_affinit
 
 **At 120K, affinity has no measurable effect.** affinity_8 vs no_affinity_8 metrics are within 2-3% — within run-to-run variance.
 
-At 120K, carriers are not saturated (6.95 CPUs out of 8). Carriers idle between requests. During idle time, continuation stack chunk data gets evicted from the 32MB shared L3. The next thaw fetches from DRAM regardless of whether it's the same carrier or a different one.
+At 120K, carriers are not saturated (6.95 CPUs out of 8). affinity_8 and no_affinity_8 produce similar metrics at this load level (both 6.95 CPUs, DRAM misses/req within 12%). At max throughput (wrk-only), affinity_8 achieves 168K vs 159K for no_affinity_8.
 
-At max throughput, affinity makes a difference: carriers run continuously, DRAM misses/req drop 54%, context switches drop 99%. See [FINDINGS.md](FINDINGS.md) for the 120K-vs-max comparison.
+At max throughput (wrk-only), affinity_8 achieves 168K vs 159K for no_affinity_8. See [FINDINGS.md](FINDINGS.md) for affinity_8's 120K-vs-max comparison.
 
 ---
 
@@ -102,7 +102,7 @@ At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 1
 
 1. **custom_8_nio is the most efficient at every load level** — 13-15% less CPU, fewer instructions/req (no FJ overhead), fewer DRAM misses/req (implicit data locality).
 
-2. **Affinity has no effect at sub-maximal load.** Carriers idle and cache data goes cold regardless. Affinity only helps when carriers are saturated (max throughput), where it cuts DRAM misses by 54%.
+2. **Affinity has no measurable effect at sub-maximal load.** affinity_8 and no_affinity_8 produce similar metrics at 120K. At max throughput, affinity_8 achieves higher throughput (168K vs 159K).
 
 3. **nvcswch imbalance disappears at sub-maximal load.** The 8.6x spread seen at max load drops to 1.04-1.15x at 120K.
 
