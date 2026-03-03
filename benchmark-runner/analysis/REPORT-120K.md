@@ -94,7 +94,7 @@ fj_8_8 (standard Netty, 8 EL + 8 FJ workers) has unique overhead at 120K:
 - **4.86% of DRAM samples** in LinkedBlockingQueue + unparkVirtualThread — the handoff queue cost, absent in ManualEL configs
 - **6.13% continuation DRAM** — 3.5x custom, highest of all configs
 
-At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% from time-slicing 16 threads on 8 cores, giving fj_8_8 the lowest max throughput of the 8-core configs (161K vs 168K affinity, 174K custom).
+At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% from time-slicing 16 threads on 8 cores, giving fj_8_8 the lowest max throughput among 8-EL configs (161K vs 168K affinity, 174K custom).
 
 ---
 
@@ -106,4 +106,4 @@ At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 1
 
 3. **nvcswch imbalance disappears at sub-maximal load.** The 8.6x spread seen at max load drops to 1.04-1.15x at 120K.
 
-4. **fj_8_8 is the least efficient 8-core FJ config** — most instructions/req, most migrations, unique handoff queue DRAM costs, lowest max throughput of the 8-core configs.
+4. **fj_8_8 is the least efficient 8-EL FJ config** — most instructions/req, most migrations, unique handoff queue DRAM costs, lowest max throughput among 8-EL configs.

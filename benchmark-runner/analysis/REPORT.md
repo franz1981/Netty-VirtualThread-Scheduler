@@ -106,6 +106,6 @@ fj_8_8 (standard Netty, 8 EL + 8 FJ) additionally pays for the EL→FJ handoff q
 
 3. **Affinity helps FJ at max load** — +6% throughput, 14x fewer context switches, balanced worker load. But it cannot match custom's architectural advantage, and has no effect at sub-maximal load.
 
-4. **fj_8_8 is the least efficient config** — 16 threads cause high context switches (145K) and cpu-migrations (4.2K) at max load, plus unique DRAM costs from the EL→FJ handoff. Lowest throughput of the 8-core configs.
+4. **fj_8_8 is the least efficient config** — 16 threads cause high context switches (145K) and cpu-migrations (4.2K) at max load, plus unique DRAM costs from the EL→FJ handoff. Lowest throughput among 8-EL configs.
 
 5. **The IPC gap is DRAM misses** — not branch prediction or frontend stalls. ManualEL FJ configs have 40-57% more DRAM misses/req from cold continuation and pipeline data; fj_8_8 has +17% with additional handoff queue costs.
