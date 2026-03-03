@@ -106,4 +106,4 @@ At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 1
 
 3. **nvcswch imbalance disappears at sub-maximal load.** The 8.6x spread seen at max load drops to 1.04-1.15x at 120K.
 
-4. **fj_8_8 is the least efficient FJ config** — most instructions/req, most migrations, unique handoff queue DRAM costs, lowest max throughput.
+4. **fj_8_8 is the least efficient 8-core FJ config** — most instructions/req, most migrations, unique handoff queue DRAM costs, lowest max throughput of the 8-core configs.
