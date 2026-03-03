@@ -1,6 +1,6 @@
 # Sustained Load Efficiency Analysis — 120K req/s Fixed Load
 
-## 1. Test Overview
+## 1. Test Setup
 
 **Objective:** Compare scheduler configurations under a fixed 120K req/s load (≈70% of max throughput) to measure per-request efficiency when the system has headroom.
 
@@ -21,7 +21,7 @@ All server cores on CCD1, sharing 32MB L3.
 > - **IPC** — Instructions Per Cycle
 > - **nvcswch** — non-voluntary context switches (thread yielded CPU involuntarily)
 
-### Configurations tested
+## 2. Configurations tested
 
 | Config | Event Loop | Scheduler | I/O | Threads | Affinity | Poller |
 |--------|-----------|-----------|-----|---------|----------|--------|
@@ -34,13 +34,13 @@ All configs achieved the target rate (119,695-119,810 req/s, within 0.1%).
 
 ---
 
-## 2. Latency
+## 3. Latency
 
 At 120K, latency does not differentiate the configs. All four are identical up to p90 (~30.5-32.8ms = mock delay + overhead). p90+ tail latency is not stable on this machine across runs.
 
 ---
 
-## 3. CPU Usage and Per-Request Cost
+## 4. CPU Usage and Per-Request Cost
 
 From deep profiling (6 perf stat passes, ≤5 HW events each). See [FINDINGS.md](FINDINGS.md) for full methodology.
 
@@ -50,7 +50,6 @@ From deep profiling (6 perf stat passes, ≤5 HW events each). See [FINDINGS.md]
 | **IPC** | 0.997 | 0.981 | 0.970 | 1.015 |
 | **instructions/req** | **215,386** | 225,781 | 225,894 | 231,115 |
 | **DRAM misses/req** | **2,041** | 3,202 | 2,858 | 2,390 |
-| **context switches/10s** | **333K** | 1,033K | 1,000K | 1,071K |
 
 custom_8_nio uses 13-15% less CPU to serve the same 120K req/s. Two sources ([FINDINGS.md](FINDINGS.md)):
 1. Fewer instructions/req — no FJ scheduling overhead
@@ -60,29 +59,18 @@ fj_8_8 has the highest IPC (1.015) but executes the most instructions/req (+7.3%
 
 ---
 
-## 4. Context Switches at 120K vs Max Load
+## 5. Context Switches
 
-| Config | ctx_sw (max load) | ctx_sw (120K) |
-|--------|------------------|---------------|
-| custom_8_nio | 1,151 | 333,017 |
-| affinity_8 | 11,727 | 1,000,118 |
-| no_affinity_8 | 164,813 | 1,033,285 |
-| fj_8_8 | 144,578 | 1,071,409 |
+| Config | context switches (max) | context switches (120K) | nvcswch/s @ 120K | nvcswch spread @ 120K |
+|--------|-------------|---------------|-----------------|---------------------|
+| custom_8_nio | 1,151 | 333,017 | 291 | 1.14x |
+| affinity_8 | 11,727 | 1,000,118 | 1,556 | 1.09x |
+| no_affinity_8 | 164,813 | 1,033,285 | 1,299 | 1.15x |
+| fj_8_8 | 144,578 | 1,071,409 | 1,631 (FJ workers) | 1.04x |
 
-At 120K, threads park between requests. All configs show dramatically more context switches. custom_8_nio still has the fewest — 3x fewer than others.
+At 120K, all configs show dramatically more context switches as threads park between requests. custom_8_nio still has 3x fewer than others.
 
----
-
-## 5. Non-voluntary Context Switch Balance
-
-| Config | Avg nvcswch/s | max/min spread |
-|--------|--------------|----------------|
-| custom_8_nio | 291 | 1.14x |
-| no_affinity_8 | 1,299 | 1.15x |
-| affinity_8 | 1,556 | 1.09x |
-| fj_8_8 (FJ workers) | 1,631 | 1.04x |
-
-The non-voluntary context switch imbalance observed at max load has vanished. At max load, no_affinity showed an 8.6x spread. At 120K, all configs are balanced (1.04-1.15x). custom_8_nio still has 4-5x fewer non-voluntary context switches/s.
+The non-voluntary context switch imbalance observed at max load (no_affinity: 8.6x spread) has vanished at 120K — all configs are balanced (1.04-1.15x). custom_8_nio still has 4-5x fewer non-voluntary context switches/s.
 
 ---
 

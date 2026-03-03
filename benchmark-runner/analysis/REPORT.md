@@ -48,13 +48,12 @@ All server cores on CCD1, sharing 32MB L3.
 
 ---
 
-## 4. perf stat (10s steady state)
+## 4. CPU Usage and Per-Request Cost
 
 | Metric | custom_8_epoll | custom_8_nio | affinity_8 | fj_8_8 | no_affinity_8 | fj_4_4 |
 |--------|---------------|-------------|-----------|--------|--------------|--------|
 | **CPUs utilized** | 7.99 | 8.00 | 7.99 | 7.91 | 7.96 | 6.66 |
 | **IPC** | 1.08 | 1.09 | 1.05 | 0.99 | 1.03 | 0.99 |
-| **Context switches** | 1,667 | 1,151 | 11,727 | 144,578 | 164,813 | 37,220 |
 | **CPU migrations** | 271 | 138 | 1,836 | 4,158 | 181 | 1,562 |
 
 At max load, all 8-thread configs saturate the available cores (~8.0 CPUs). The efficiency difference shows in throughput per CPU: custom_8_epoll gets 22,938 req/s per CPU vs 19,950-20,449 for FJ configs.
@@ -63,17 +62,18 @@ The IPC gap (1.09 custom vs 0.99 fj_8_8) is driven by DRAM misses — deep profi
 
 ---
 
-## 5. Non-voluntary Context Switch Imbalance at Max Load
+## 5. Context Switches
 
-| Config | nvcswch/s range | max/min spread |
-|--------|----------------|----------------|
-| custom_8_nio | 15-25 | 1.3x |
-| custom_8_epoll | 11-20 | 1.5x |
-| affinity_8 | 120-288 | 1.6x |
-| no_affinity_8 | 257-2,214 | **8.6x** |
-| fj_8_8 | (EL: 95-280, FJ: 110-240) | 2.5x |
+| Config | context switches | nvcswch/s range | nvcswch spread |
+|--------|---------------------|----------------|----------------------|
+| custom_8_epoll | 1,667 | 11-20 | 1.5x |
+| custom_8_nio | 1,151 | 15-25 | 1.3x |
+| affinity_8 | 11,727 | 120-288 | 1.6x |
+| no_affinity_8 | 164,813 | 257-2,214 | **8.6x** |
+| fj_8_8 | 144,578 | (EL: 95-280, FJ: 110-240) | 2.5x |
+| fj_4_4 | 37,220 | — | — |
 
-no_affinity_8 shows massive non-voluntary context switch imbalance (8.6x spread). Affinity flattens this to 1.6x. custom scheduler produces near-zero non-voluntary context switches. This imbalance disappears at sub-maximal load (see [REPORT-120K.md](REPORT-120K.md)).
+Custom scheduler produces 100-140x fewer context switches and near-zero non-voluntary context switches. no_affinity_8 shows massive non-voluntary context switch imbalance (8.6x spread) — affinity flattens this to 1.6x. This imbalance disappears at sub-maximal load (see [REPORT-120K.md](REPORT-120K.md)).
 
 ---
 
