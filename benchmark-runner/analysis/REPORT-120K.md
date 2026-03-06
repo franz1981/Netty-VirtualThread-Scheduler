@@ -53,7 +53,7 @@ From deep profiling (6 perf stat passes, ≤5 HW events each). See [FINDINGS.md]
 
 custom_8_nio uses 13-15% less CPU to serve the same 120K req/s. Two sources ([FINDINGS.md](FINDINGS.md)):
 1. Fewer instructions/req — no FJ scheduling overhead
-2. Fewer DRAM misses/req — perf mem shows DRAM hotspots in continuation thaw and Netty pipeline traversal are 2-3x lower in custom
+2. Fewer DRAM misses/req — perf mem (IBS) shows the DRAM increase in FJ configs is broad across every category (Netty pipeline, continuation, HTTP client, kernel networking)
 
 fj_8_8 has the highest IPC (1.015) but executes the most instructions/req (+7.3% vs custom). See section 7 for fj_8_8-specific costs.
 
@@ -87,8 +87,8 @@ At 120K, carriers are not saturated (6.95 CPUs out of 8). affinity_8 and no_affi
 fj_8_8 (standard Netty, 8 EL + 8 FJ workers) has unique overhead at 120K:
 - **+7.3% instructions/req** vs custom — EL→FJ handoff adds scheduling work
 - **178K cpu-migrations** — 4-6x more than 8-thread configs (16 threads on 8 cores)
-- **4.86% of DRAM samples** in LinkedBlockingQueue + unparkVirtualThread — the handoff queue cost, absent in ManualEL configs
-- **6.13% continuation DRAM** — 3.5x custom, highest of all configs
+- **174 IBS DRAM samples** in LinkedBlockingQueue + unparkVirtualThread — the handoff queue cost, absent in other configs
+- **Highest total IBS DRAM samples** (2,453, +54% vs custom) — increase is broad across all categories (see [FINDINGS.md](FINDINGS.md))
 
 At max throughput, migrations drop 97% and DRAM misses drop 47%, but IPC drops 14% (16 threads on 8 cores), giving fj_8_8 the lowest max throughput among 8-EL configs (161K vs 168K affinity, 174K custom).
 

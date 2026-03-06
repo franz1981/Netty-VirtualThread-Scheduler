@@ -58,7 +58,7 @@ All server cores on CCD1, sharing 32MB L3.
 
 At max load, all 8-thread configs saturate the available cores (~8.0 CPUs). The efficiency difference shows in throughput per CPU: custom_8_epoll gets 22,938 req/s per CPU vs 19,950-20,449 for FJ configs.
 
-The IPC gap (1.09 custom vs 0.99 fj_8_8) is driven by DRAM misses — deep profiling ([FINDINGS.md](FINDINGS.md)) shows ManualEL FJ configs have 40-57% more DRAM misses/req (continuation thaw and pipeline traversal). fj_8_8 has +17% more DRAM misses/req with additional costs from its EL→FJ handoff queue.
+The IPC gap (1.09 custom vs 0.99 fj_8_8) is driven by DRAM misses — deep profiling ([FINDINGS.md](FINDINGS.md)) shows ManualEL FJ configs have 40-57% more DRAM misses/req. fj_8_8 has +17% more DRAM misses/req with additional costs from its EL→FJ handoff queue. The DRAM increase is broad across all categories (Netty pipeline, continuation, HTTP client, kernel networking).
 
 ---
 
@@ -103,10 +103,10 @@ Affinity provides +6% throughput, 14x fewer context switches, and balanced worke
 The custom scheduler runs I/O events and virtual thread tasks on the same carrier thread. A virtual thread resumes on the same carrier that received the I/O event for its connection — implicit data locality without affinity hints.
 
 Deep profiling ([FINDINGS.md](FINDINGS.md)) identified two sources of the efficiency gap:
-1. **Fewer DRAM misses/req** — perf mem shows DRAM hotspots in continuation thaw and Netty pipeline traversal are 2-3x lower in custom
+1. **Fewer DRAM misses/req** — perf mem (IBS) shows the DRAM increase in FJ configs is broad across every category (Netty pipeline, continuation, HTTP client, kernel networking)
 2. **Fewer instructions/req** — no FJ scheduling overhead, no EL→FJ handoff
 
-fj_8_8 (standard Netty, 8 EL + 8 FJ) additionally pays for the EL→FJ handoff queue (LinkedBlockingQueue + unparkVirtualThread = 4.86% of DRAM samples) and 4x more cpu-migrations from 16 threads on 8 cores.
+fj_8_8 (standard Netty, 8 EL + 8 FJ) additionally pays for the EL→FJ handoff queue (LinkedBlockingQueue + unparkVirtualThread) and 4x more cpu-migrations from 16 threads on 8 cores. It has the highest total IBS DRAM samples (+54% vs custom) — see [FINDINGS.md](FINDINGS.md).
 
 ---
 
@@ -120,4 +120,4 @@ fj_8_8 (standard Netty, 8 EL + 8 FJ) additionally pays for the EL→FJ handoff q
 
 4. **fj_8_8 is the least efficient config** — 16 threads cause high context switches (145K) and cpu-migrations (4.2K) at max load, plus unique DRAM costs from the EL→FJ handoff. Lowest throughput among 8-EL configs.
 
-5. **The IPC gap is DRAM misses** — not branch prediction or frontend stalls. ManualEL FJ configs have 40-57% more DRAM misses/req (continuation thaw and pipeline traversal); fj_8_8 has +17% with additional handoff queue costs.
+5. **The IPC gap is DRAM misses** — not branch prediction or frontend stalls. ManualEL FJ configs have 40-57% more DRAM misses/req; fj_8_8 has +17% with additional handoff queue costs. The increase is broad across all categories — not concentrated in a few hotspots.
