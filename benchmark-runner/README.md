@@ -151,47 +151,126 @@ perf stat uses `PROFILING_DELAY_SECONDS` and `PROFILING_DURATION_SECONDS`.
 
 ## Example Runs
 
-### Basic comparison: modes
+### Choosing CPU pinning with `lscpu -e`
+
+Good benchmarking requires NUMA-aware CPU pinning. Start by inspecting your topology:
 
 ```bash
-# Custom scheduler mode
-./run-benchmark.sh --mode netty_scheduler
-
-# Virtual Netty mode, mockless
-./run-benchmark.sh --mode virtual_netty --threads 2 --mockless
+$ lscpu -e
+CPU NODE SOCKET CORE L1d:L1i:L2:L3 ONLINE
+  0    0      0    0 0:0:0:0          yes    # NUMA 0, physical core 0
+  1    0      0    1 1:1:1:0          yes    # NUMA 0, physical core 1
+  ...
+  8    1      0    8 8:8:8:1          yes    # NUMA 1, physical core 8
+  ...
+ 16    0      0    0 0:0:0:0          yes    # NUMA 0, SMT sibling of core 0
+ 17    0      0    1 1:1:1:0          yes    # NUMA 0, SMT sibling of core 1
 ```
 
-### With CPU pinning
+Key rules:
+- **Keep all benchmark components on the same NUMA node** to avoid cross-node memory latency
+- **Use physical cores only** (avoid SMT siblings) for more stable results
+- **Isolate noisy processes** (IDEs, browsers) on the other NUMA node
+
+Example layout for a 16-core/2-NUMA system with 4 server threads:
+
+| Component | CPUs | Rationale |
+|-----------|------|-----------|
+| Load generator | 0-1 | 2 physical cores, enough to saturate |
+| Mock server | 2-3 | 2 physical cores for backend simulation |
+| Handoff server | 4-7 | 4 physical cores, one per event loop thread |
+| Other processes | 8-15 | Isolated on NUMA node 1 |
+
+### NETTY_SCHEDULER with 4 threads
 
 ```bash
-./run-benchmark.sh --mode netty_scheduler --threads 4 \
-  --server-cpuset 1-4 --mock-cpuset 0 --load-cpuset 5-7
+./run-benchmark.sh --mode NETTY_SCHEDULER --threads 4 --io nio \
+  --server-cpuset "4-7" --mock-cpuset "2-3" --load-cpuset "0-1" \
+  --jvm-args "-Xms8g -Xmx8g" \
+  --connections 10000 --load-threads 4 \
+  --mock-think-time 30 --mock-threads 4 \
+  --perf-stat
 ```
 
-### With profiling
+### Analyzing bottlenecks with perf stat
+
+Use `--perf-stat` to get reliable hardware-level metrics. The `perf-stat.txt` output is the
+ground truth for CPU utilization — pidstat per-thread numbers can be misleading with virtual threads.
+
+```
+Performance counter stats for process id '95868':
+
+  39,741,757,754  task-clock           #  3.970 CPUs utilized
+             806  context-switches     # 20.281 /sec
+     199,114,762,646  instructions     #  1.17 insn per cycle
+   1,338,722,757  branch-misses        #  3.08% of all branches
+```
+
+Key metrics to watch:
+- **CPUs utilized**: how many cores the server is actually using (3.97 of 4 = fully saturated)
+- **Context switches/sec**: lower is better; custom scheduler typically achieves 20-80/sec
+- **IPC (insn per cycle)**: higher is better; >1.0 is good, <0.5 suggests memory stalls
+- **Branch misses**: >5% suggests unpredictable control flow
+
+If CPUs utilized equals your allocated core count, the server is CPU-bound — add more cores.
+If context switches are high (>10K/sec), the scheduler or OS is thrashing.
+
+pidstat is still useful for spotting **mock server or load generator bottlenecks** —
+check `pidstat-mock.log` and `pidstat-loadgen.log` to ensure they aren't saturated.
+
+### NON_VIRTUAL_NETTY (default mode)
 
 ```bash
-./run-benchmark.sh --mode netty_scheduler \
+./run-benchmark.sh --threads 4 \
+  --server-cpuset "4-7" --mock-cpuset "2-3" --load-cpuset "0-1" \
+  --connections 10000 --mock-think-time 30
+```
+
+### VIRTUAL_NETTY mode
+
+```bash
+./run-benchmark.sh --mode VIRTUAL_NETTY --threads 4 --io nio \
+  --server-cpuset "4-7" --mock-cpuset "2-3" --load-cpuset "0-1" \
+  --connections 10000 --mock-think-time 30
+```
+
+### Mockless mode (skip HTTP call to mock, inline Jackson work)
+
+```bash
+./run-benchmark.sh --mode NETTY_SCHEDULER --threads 4 --mockless \
+  --server-cpuset "4-7" --load-cpuset "0-1" \
+  --connections 10000
+```
+
+### With async-profiler
+
+```bash
+./run-benchmark.sh --mode NETTY_SCHEDULER --threads 4 \
+  --server-cpuset "4-7" --mock-cpuset "2-3" --load-cpuset "0-1" \
   --profiler --profiler-path /path/to/async-profiler \
   --warmup 15s --total-duration 45s
-```
-
-### With JFR events enabled (subset)
-
-```bash
-./run-benchmark.sh --mode netty_scheduler --jfr --jfr-events NettyRunIo,VirtualThreadTaskRuns
 ```
 
 ### Rate-limited test with wrk2
 
 ```bash
-./run-benchmark.sh --rate 10000 --connections 200 --total-duration 60s --warmup 15s
+./run-benchmark.sh --mode NETTY_SCHEDULER --threads 4 \
+  --server-cpuset "4-7" --mock-cpuset "2-3" --load-cpuset "0-1" \
+  --rate 120000 --connections 10000 --total-duration 60s --warmup 15s
+```
+
+### With JFR events
+
+```bash
+./run-benchmark.sh --mode NETTY_SCHEDULER --threads 4 \
+  --server-cpuset "4-7" --mock-cpuset "2-3" --load-cpuset "0-1" \
+  --jfr --jfr-events NettyRunIo,VirtualThreadTaskRuns
 ```
 
 ### Mixed: CLI flags + env vars
 
 ```bash
-SERVER_JVM_ARGS="-XX:+PrintGCDetails" ./run-benchmark.sh --mode virtual_netty --threads 2
+SERVER_JVM_ARGS="-XX:+PrintGCDetails" ./run-benchmark.sh --mode VIRTUAL_NETTY --threads 2
 ```
 
 ## Output
