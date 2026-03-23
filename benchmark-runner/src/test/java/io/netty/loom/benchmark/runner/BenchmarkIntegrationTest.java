@@ -36,8 +36,15 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>
  * Tests cover:
  * <ul>
- * <li>NIO I/O with virtual Netty mode</li>
+ * <li>NIO I/O with virtual Netty mode (mock server)</li>
+ * <li>NIO I/O with non-virtual Netty mode (mock server)</li>
+ * <li>NIO I/O with virtual Netty mode (mockless)</li>
+ * <li>NIO I/O with non-virtual Netty mode (mockless)</li>
  * </ul>
+ * <p>
+ * Note: NETTY_SCHEDULER mode requires
+ * {@code -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler}
+ * and is therefore not covered here.
  */
 class BenchmarkIntegrationTest {
 
@@ -50,11 +57,18 @@ class BenchmarkIntegrationTest {
 
 	static Stream<Arguments> serverConfigurations() {
 		return Stream.of(
-				// IO type, mode, description
-				Arguments.of(HandoffHttpServer.IO.NIO, HandoffHttpServer.Mode.VIRTUAL_NETTY, "NIO with Netty on FJ"));
+				// IO type, mode, mockless, description
+				Arguments.of(HandoffHttpServer.IO.NIO, HandoffHttpServer.Mode.VIRTUAL_NETTY, false,
+						"NIO with Netty on FJ"),
+				Arguments.of(HandoffHttpServer.IO.NIO, HandoffHttpServer.Mode.NON_VIRTUAL_NETTY, false,
+						"NIO with platform IO + VT blocking"),
+				Arguments.of(HandoffHttpServer.IO.NIO, HandoffHttpServer.Mode.VIRTUAL_NETTY, true,
+						"NIO with Netty on FJ (mockless)"),
+				Arguments.of(HandoffHttpServer.IO.NIO, HandoffHttpServer.Mode.NON_VIRTUAL_NETTY, true,
+						"NIO with platform IO + VT blocking (mockless)"));
 	}
 
-	void startServers(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode) throws Exception {
+	void startServers(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless) throws Exception {
 		// Use unique ports for each test to avoid conflicts
 		mockPort = PORT_COUNTER.getAndIncrement();
 		handoffPort = PORT_COUNTER.getAndIncrement();
@@ -74,7 +88,7 @@ class BenchmarkIntegrationTest {
 
 		// Start handoff server with specified configuration
 		handoffServer = new HandoffHttpServer(handoffPort, "http://localhost:" + mockPort + "/fruits", 1, ioType, true,
-				false, mode);
+				mockless, mode);
 		handoffServer.start();
 
 		// Wait for handoff server to be ready
@@ -99,64 +113,64 @@ class BenchmarkIntegrationTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void mockServerHealthEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, String description)
-			throws Exception {
-		startServers(ioType, mode);
+	void mockServerHealthEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless,
+			String description) throws Exception {
+		startServers(ioType, mode, mockless);
 		given().port(mockPort).when().get("/health").then().statusCode(200).body(equalTo("OK"));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void mockServerFruitsEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, String description)
-			throws Exception {
-		startServers(ioType, mode);
+	void mockServerFruitsEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless,
+			String description) throws Exception {
+		startServers(ioType, mode, mockless);
 		given().port(mockPort).when().get("/fruits").then().statusCode(200).contentType(ContentType.JSON)
 				.body("fruits", hasSize(10)).body("fruits[0].name", equalTo("Apple"))
 				.body("fruits[0].color", equalTo("Red")).body("fruits[0].price", equalTo(1.20f));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServerHealthEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, String description)
-			throws Exception {
-		startServers(ioType, mode);
+	void handoffServerHealthEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless,
+			String description) throws Exception {
+		startServers(ioType, mode, mockless);
 		given().port(handoffPort).when().get("/health").then().statusCode(200).body(equalTo("OK"));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServerFruitsEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, String description)
-			throws Exception {
-		startServers(ioType, mode);
+	void handoffServerFruitsEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless,
+			String description) throws Exception {
+		startServers(ioType, mode, mockless);
 		given().port(handoffPort).when().get("/fruits").then().statusCode(200).contentType(ContentType.JSON)
 				.body("fruits", hasSize(10)).body("fruits[0].name", equalTo("Apple"))
 				.body("fruits[0].color", equalTo("Red"));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServerRootEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, String description)
-			throws Exception {
-		startServers(ioType, mode);
+	void handoffServerRootEndpoint(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless,
+			String description) throws Exception {
+		startServers(ioType, mode, mockless);
 		given().port(handoffPort).when().get("/").then().statusCode(200).contentType(ContentType.JSON).body("fruits",
 				hasSize(10));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServer404ForUnknownPath(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, String description)
-			throws Exception {
-		startServers(ioType, mode);
+	void handoffServer404ForUnknownPath(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless,
+			String description) throws Exception {
+		startServers(ioType, mode, mockless);
 		given().port(handoffPort).when().get("/unknown").then().statusCode(404);
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void handoffServerReturnsAllFruits(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, String description)
-			throws Exception {
-		startServers(ioType, mode);
+	void handoffServerReturnsAllFruits(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless,
+			String description) throws Exception {
+		startServers(ioType, mode, mockless);
 
 		List<String> fruitNames = given().port(handoffPort).when().get("/fruits").then().statusCode(200).extract()
 				.jsonPath().getList("fruits.name", String.class);
@@ -167,11 +181,11 @@ class BenchmarkIntegrationTest {
 		assertTrue(fruitNames.contains("Kiwi"));
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
 	void handoffServerHandlesMultipleRequests(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode,
-			String description) throws Exception {
-		startServers(ioType, mode);
+			boolean mockless, String description) throws Exception {
+		startServers(ioType, mode, mockless);
 
 		// Send multiple requests to verify server handles concurrent load
 		for (int i = 0; i < 10; i++) {
@@ -179,15 +193,16 @@ class BenchmarkIntegrationTest {
 		}
 	}
 
-	@ParameterizedTest(name = "{2}")
+	@ParameterizedTest(name = "{3}")
 	@MethodSource("serverConfigurations")
-	void verifyEndToEndJsonParsing(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, String description)
-			throws Exception {
-		startServers(ioType, mode);
+	void verifyEndToEndJsonParsing(HandoffHttpServer.IO ioType, HandoffHttpServer.Mode mode, boolean mockless,
+			String description) throws Exception {
+		startServers(ioType, mode, mockless);
 
 		// This test verifies the complete flow:
 		// 1. HandoffHttpServer receives request
-		// 2. Makes blocking call to MockHttpServer
+		// 2. In non-mockless mode: makes blocking call to MockHttpServer
+		//    In mockless mode: uses cached JSON bytes directly
 		// 3. Parses JSON with Jackson into Fruit objects
 		// 4. Re-encodes and returns
 
