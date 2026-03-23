@@ -49,46 +49,45 @@ The `run-benchmark.sh` script will automatically build the JAR if missing.
 
 ## Configuration
 
-All configuration is via environment variables:
+Configuration via CLI flags (preferred) or environment variables (fallback). CLI flags take precedence.
+
+Run `./run-benchmark.sh --help` for the full list.
+
+### Server
+| CLI flag | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `--mode` | `SERVER_MODE` | NON_VIRTUAL_NETTY | Mode: NON_VIRTUAL_NETTY, REACTIVE, VIRTUAL_NETTY, NETTY_SCHEDULER |
+| `--threads` | `SERVER_THREADS` | 2 | Number of event loop threads |
+| `--mockless` | `SERVER_MOCKLESS` | false | Skip mock server; do Jackson work inline |
+| `--io` | `SERVER_IO` | epoll | I/O type: epoll, nio, io_uring |
+| `--poller-mode` | `SERVER_POLLER_MODE` | | jdk.pollerMode: 1, 2, or 3 |
+| `--fj-parallelism` | `SERVER_FJ_PARALLELISM` | | ForkJoinPool parallelism |
+| `--fj-affinity` | `SERVER_FJ_AFFINITY` | false | FJ scheduler affinity |
+| `--server-cpuset` | `SERVER_CPUSET` | 2,3 | CPU pinning |
+| `--jvm-args` | `SERVER_JVM_ARGS` | | Additional JVM arguments |
 
 ### Mock Server
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MOCK_PORT` | 8080 | Mock server port |
-| `MOCK_THINK_TIME_MS` | 1 | Simulated processing delay (ms) |
-| `MOCK_THREADS` | auto | Number of Netty threads (empty = available processors) |
-| `MOCK_TASKSET` | 4,5,6,7 | CPU affinity (e.g., "0-1") |
-
-### Handoff Server
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SERVER_PORT` | 8081 | Server port |
-| `SERVER_THREADS` | 2 | Number of event loop threads |
-| `SERVER_REACTIVE` | false | Use reactive handler with Reactor |
-| `SERVER_USE_CUSTOM_SCHEDULER` | false | Use custom Netty scheduler |
-| `SERVER_IO` | epoll | I/O type: epoll, nio, or io_uring |
-| `SERVER_NO_TIMEOUT` | false | Disable HTTP client timeout |
-| `SERVER_TASKSET` | 2,3 | CPU affinity (e.g., "2-5") |
-| `SERVER_JVM_ARGS` | | Additional JVM arguments |
-| `SERVER_POLLER_MODE` | 3 | jdk.pollerMode value: 1, 2, or 3 |
-| `SERVER_FJ_PARALLELISM` | | ForkJoinPool parallelism (empty = JVM default) |
+| CLI flag | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `--mock-port` | `MOCK_PORT` | 8080 | Mock server port |
+| `--mock-think-time` | `MOCK_THINK_TIME_MS` | 1 | Simulated processing delay (ms) |
+| `--mock-threads` | `MOCK_THREADS` | 1 | Number of Netty threads |
+| `--mock-cpuset` | `MOCK_CPUSET` | 4,5 | CPU pinning |
 
 ### Load Generator
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LOAD_GEN_CONNECTIONS` | 100 | Number of connections |
-| `LOAD_GEN_THREADS` | 2 | Number of threads |
-| `LOAD_GEN_RATE` | | Target rate (empty = max throughput with wrk) |
-| `LOAD_GEN_TASKSET` | 0,1 | CPU affinity (e.g., "6-7") |
-| `LOAD_GEN_URL` | http://localhost:8081/fruits | Target URL |
+| CLI flag | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `--connections` | `LOAD_GEN_CONNECTIONS` | 100 | Number of connections |
+| `--load-threads` | `LOAD_GEN_THREADS` | 2 | Number of threads |
+| `--duration` | `LOAD_GEN_DURATION` | 30s | Test duration |
+| `--rate` | `LOAD_GEN_RATE` | | Target rate for wrk2 (omit for max throughput) |
+| `--load-cpuset` | `LOAD_GEN_CPUSET` | 0,1 | CPU pinning |
 
 ### Timing
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WARMUP_DURATION` | 10s | Warmup duration (no profiling) |
-| `TOTAL_DURATION` | 30s | Total test duration (steady-state must be >= 20s) |
-| `PROFILING_DELAY_SECONDS` | 5 | Delay before starting profiling/perf/JFR |
-| `PROFILING_DURATION_SECONDS` | 10 | Profiling/perf/JFR duration in seconds |
+| CLI flag | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `--warmup` | `WARMUP_DURATION` | 10s | Warmup duration |
+| `--total-duration` | `TOTAL_DURATION` | 30s | Total test duration (steady-state >= 20s) |
 
 ### Profiling
 | Variable | Default | Description |
@@ -153,73 +152,47 @@ perf stat uses `PROFILING_DELAY_SECONDS` and `PROFILING_DURATION_SECONDS`.
 
 ## Example Runs
 
-### Basic comparison: custom vs default scheduler
+### Basic comparison: modes
 
 ```bash
-# With custom scheduler
-JAVA_HOME=/path/to/jdk \
-SERVER_USE_CUSTOM_SCHEDULER=true \
-./run-benchmark.sh
+# Custom scheduler mode
+./run-benchmark.sh --mode netty_scheduler
 
-# With default scheduler  
-JAVA_HOME=/path/to/jdk \
-SERVER_USE_CUSTOM_SCHEDULER=false \
-./run-benchmark.sh
+# Virtual Netty mode, mockless
+./run-benchmark.sh --mode virtual_netty --threads 2 --mockless
 ```
 
 ### With CPU pinning
 
 ```bash
-JAVA_HOME=/path/to/jdk \
-MOCK_TASKSET="0" \
-SERVER_TASKSET="1-4" \
-LOAD_GEN_TASKSET="5-7" \
-SERVER_THREADS=4 \
-SERVER_USE_CUSTOM_SCHEDULER=true \
-./run-benchmark.sh
+./run-benchmark.sh --mode netty_scheduler --threads 4 \
+  --server-cpuset 1-4 --mock-cpuset 0 --load-cpuset 5-7
 ```
 
 ### With profiling
 
 ```bash
-JAVA_HOME=/path/to/jdk \
-ENABLE_PROFILER=true \
-ASYNC_PROFILER_PATH=/path/to/async-profiler \
-PROFILER_EVENT=cpu \
-SERVER_USE_CUSTOM_SCHEDULER=true \
-WARMUP_DURATION=15s \
-TOTAL_DURATION=45s \
-./run-benchmark.sh
+./run-benchmark.sh --mode netty_scheduler \
+  --profiler --profiler-path /path/to/async-profiler \
+  --warmup 15s --total-duration 45s
 ```
 
 ### With JFR events enabled (subset)
 
 ```bash
-JAVA_HOME=/path/to/jdk \
-ENABLE_JFR=true \
-JFR_EVENTS=NettyRunIo,VirtualThreadTaskRuns \
-SERVER_USE_CUSTOM_SCHEDULER=true \
-./run-benchmark.sh
+./run-benchmark.sh --mode netty_scheduler --jfr --jfr-events NettyRunIo,VirtualThreadTaskRuns
 ```
 
 ### Rate-limited test with wrk2
 
 ```bash
-JAVA_HOME=/path/to/jdk \
-LOAD_GEN_RATE=10000 \
-LOAD_GEN_CONNECTIONS=200 \
-TOTAL_DURATION=60s \
-WARMUP_DURATION=15s \
-./run-benchmark.sh
+./run-benchmark.sh --rate 10000 --connections 200 --total-duration 60s --warmup 15s
 ```
 
-### With pidstat monitoring
+### Mixed: CLI flags + env vars
 
 ```bash
-JAVA_HOME=/path/to/jdk \
-ENABLE_PIDSTAT=true \
-PIDSTAT_INTERVAL=1 \
-./run-benchmark.sh
+SERVER_JVM_ARGS="-XX:+PrintGCDetails" ./run-benchmark.sh --mode virtual_netty --threads 2
 ```
 
 ## Output
@@ -260,7 +233,7 @@ java -cp benchmark-runner/target/benchmark-runner.jar \
   8080 1    # port, thinkTimeMs (threads defaults to available processors)
 ```
 
-### Handoff Server (with custom scheduler)
+### Handoff Server (custom scheduler mode)
 
 ```bash
 java \
@@ -275,11 +248,11 @@ java \
   --port 8081 \
   --mock-url http://localhost:8080/fruits \
   --threads 2 \
-  --use-custom-scheduler true \
+  --mode netty_scheduler \
   --io epoll
 ```
 
-### Handoff Server (with default scheduler)
+### Handoff Server (default split topology)
 
 ```bash
 java \
@@ -292,6 +265,5 @@ java \
   --port 8081 \
   --mock-url http://localhost:8080/fruits \
   --threads 2 \
-  --use-custom-scheduler false \
   --io epoll
 ```
