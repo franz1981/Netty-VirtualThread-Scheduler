@@ -720,7 +720,11 @@ print_config() {
     log "  Mode:           $SERVER_MODE"
     log "  Mockless:       $SERVER_MOCKLESS"
     log "  I/O Type:       $SERVER_IO"
-    log "  Poller Mode:    $SERVER_POLLER_MODE"
+    local effective_poller="$SERVER_POLLER_MODE"
+    if [[ -z "$effective_poller" && "$SERVER_MODE" == "NETTY_SCHEDULER" ]]; then
+        effective_poller="3 (default for NETTY_SCHEDULER)"
+    fi
+    log "  Poller Mode:    ${effective_poller:-<JVM default>}"
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
     log "  CPU Affinity:   ${SERVER_CPUSET:-<none>}"
     log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
