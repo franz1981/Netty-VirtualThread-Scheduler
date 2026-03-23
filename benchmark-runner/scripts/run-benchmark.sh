@@ -25,22 +25,22 @@ JAVA_OPTS="${JAVA_OPTS:--Xms1g -Xmx1g}"
 MOCK_PORT="${MOCK_PORT:-8080}"
 MOCK_THINK_TIME_MS="${MOCK_THINK_TIME_MS:-1}"
 MOCK_THREADS="${MOCK_THREADS:-1}"
-MOCK_TASKSET="${MOCK_TASKSET:-4,5}"  # CPUs for mock server
+MOCK_CPUSET="${MOCK_CPUSET:-4,5}"  # CPUs for mock server
 
 # Handoff server configuration
 SERVER_PORT="${SERVER_PORT:-8081}"
 SERVER_THREADS="${SERVER_THREADS:-2}"
-SERVER_USE_CUSTOM_SCHEDULER="${SERVER_USE_CUSTOM_SCHEDULER:-false}"
 SERVER_IO="${SERVER_IO:-epoll}"
-SERVER_TASKSET="${SERVER_TASKSET:-2,3}"  # CPUs for handoff server
+SERVER_CPUSET="${SERVER_CPUSET:-2,3}"  # CPUs for handoff server
 SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
-SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-3}"  # jdk.pollerMode value (1, 2, or 3)
+SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-}"  # jdk.pollerMode value (1, 2, or 3); empty = JVM default, NETTY_SCHEDULER defaults to 3
 SERVER_FJ_PARALLELISM="${SERVER_FJ_PARALLELISM:-}"  # ForkJoinPool parallelism (empty = JVM default)
-SERVER_NO_TIMEOUT="${SERVER_NO_TIMEOUT:-false}"  # Disable HTTP client timeout
-SERVER_REACTIVE="${SERVER_REACTIVE:-false}"  # Use reactive handler with Project Reactor
+SERVER_FJ_AFFINITY="${SERVER_FJ_AFFINITY:-false}"  # ForkJoinPool virtual thread scheduler affinity
+SERVER_MODE="${SERVER_MODE:-NON_VIRTUAL_NETTY}"  # Server mode: NON_VIRTUAL_NETTY, REACTIVE, VIRTUAL_NETTY
+SERVER_MOCKLESS="${SERVER_MOCKLESS:-false}"  # Skip mock server; do Jackson work inline
 
 # Load generator configuration
-LOAD_GEN_TASKSET="${LOAD_GEN_TASKSET:-0,1}"  # CPUs for load generator
+LOAD_GEN_CPUSET="${LOAD_GEN_CPUSET:-0,1}"  # CPUs for load generator
 LOAD_GEN_CONNECTIONS="${LOAD_GEN_CONNECTIONS:-100}"
 LOAD_GEN_THREADS="${LOAD_GEN_THREADS:-2}"
 LOAD_GEN_DURATION="${LOAD_GEN_DURATION:-30s}"
@@ -57,6 +57,7 @@ PROFILING_DURATION_SECONDS="${PROFILING_DURATION_SECONDS:-10}"
 # Profiling configuration
 ENABLE_PROFILER="${ENABLE_PROFILER:-false}"
 PROFILER_EVENT="${PROFILER_EVENT:-cpu}"
+PROFILER_FORMAT="${PROFILER_FORMAT:-flamegraph}"  # Output format: flamegraph, collapsed, jfr
 PROFILER_OUTPUT="${PROFILER_OUTPUT:-profile.html}"
 ASYNC_PROFILER_PATH="${ASYNC_PROFILER_PATH:-}"  # Path to async-profiler
 
@@ -346,7 +347,7 @@ build_jars() {
 start_mock_server() {
     log "Starting mock HTTP server..."
 
-    local taskset_cmd=$(build_taskset_cmd "$MOCK_TASKSET")
+    local taskset_cmd=$(build_taskset_cmd "$MOCK_CPUSET")
     local java_cmd="$JAVA_HOME/bin/java"
 
     local mock_threads_arg=""
@@ -373,7 +374,7 @@ start_mock_server() {
 start_handoff_server() {
     log "Starting handoff HTTP server..."
 
-    local taskset_cmd=$(build_taskset_cmd "$SERVER_TASKSET")
+    local taskset_cmd=$(build_taskset_cmd "$SERVER_CPUSET")
     local java_cmd="$JAVA_HOME/bin/java"
 
     # Build JVM args
@@ -382,14 +383,26 @@ start_handoff_server() {
     jvm_args="$jvm_args -XX:-DoJVMTIVirtualThreadTransitions"
     jvm_args="$jvm_args -Djdk.trackAllThreads=false"
 
-    if [[ "$SERVER_USE_CUSTOM_SCHEDULER" == "true" ]]; then
-        jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"
-        jvm_args="$jvm_args -Djdk.pollerMode=$SERVER_POLLER_MODE"
+    # Mode-specific JVM args
+    local poller_mode="$SERVER_POLLER_MODE"
+    case "$SERVER_MODE" in
+        NETTY_SCHEDULER)
+            jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"
+            # Default pollerMode to 3 for custom scheduler if not explicitly set
+            poller_mode="${poller_mode:-3}"
+            ;;
+    esac
+
+    # Apply pollerMode if set (explicitly or via mode default)
+    if [[ -n "$poller_mode" ]]; then
+        jvm_args="$jvm_args -Djdk.pollerMode=$poller_mode"
     fi
 
     if [[ -n "$SERVER_FJ_PARALLELISM" ]]; then
         jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=$SERVER_FJ_PARALLELISM"
     fi
+
+    jvm_args="$jvm_args -Djdk.virtualThreadScheduler.affinity=$SERVER_FJ_AFFINITY"
 
     # Add debug non-safepoints if profiling is enabled
     if [[ "$ENABLE_PROFILER" == "true" ]]; then
@@ -402,15 +415,19 @@ start_handoff_server() {
         jvm_args="$jvm_args $SERVER_JVM_ARGS"
     fi
 
+    local mockless_flag=""
+    if [[ "$SERVER_MOCKLESS" == "true" ]]; then
+        mockless_flag="--mockless"
+    fi
+
     local cmd="$taskset_cmd $java_cmd $JAVA_OPTS $jvm_args -cp $RUNNER_JAR \
         io.netty.loom.benchmark.runner.HandoffHttpServer \
         --port $SERVER_PORT \
         --mock-url http://localhost:$MOCK_PORT/fruits \
         --threads $SERVER_THREADS \
-        --use-custom-scheduler $SERVER_USE_CUSTOM_SCHEDULER \
         --io $SERVER_IO \
-        --no-timeout $SERVER_NO_TIMEOUT \
-        --reactive $SERVER_REACTIVE \
+        --mode $SERVER_MODE \
+        $mockless_flag \
         --silent"
 
     log "Handoff server command: $cmd"
@@ -435,7 +452,7 @@ run_warmup() {
 
     log "Running warmup for $WARMUP_DURATION..."
 
-    local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_TASKSET")
+    local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_CPUSET")
 
     # Use wrk for warmup (no rate limiting)
     $taskset_cmd jbang wrk@hyperfoil \
@@ -467,7 +484,8 @@ start_profiler() {
 
     (
         sleep "$PROFILING_DELAY_SECONDS"
-        "$asprof" --threads -e "$PROFILER_EVENT" -o flamegraph -d "$PROFILING_DURATION_SECONDS" -f "$output_file" "$SERVER_PID"
+        # --record-cpu
+        "$asprof" --threads -e "$PROFILER_EVENT" -o "$PROFILER_FORMAT" -d "$PROFILING_DURATION_SECONDS" -f "$output_file" "$SERVER_PID"
     ) &
     PROFILER_PID=$!
 
@@ -637,7 +655,7 @@ run_load_test() {
 
     log "Running load test for ${test_secs}s..."
 
-    local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_TASKSET")
+    local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_CPUSET")
     local output_file="$OUTPUT_DIR/wrk-results.txt"
 
     if [[ -n "$LOAD_GEN_RATE" ]]; then
@@ -695,25 +713,25 @@ print_config() {
     log "  Port:           $MOCK_PORT"
     log "  Think Time:     ${MOCK_THINK_TIME_MS}ms"
     log "  Threads:        ${MOCK_THREADS:-<auto>}"
-    log "  CPU Affinity:   ${MOCK_TASKSET:-<none>}"
+    log "  CPU Affinity:   ${MOCK_CPUSET:-<none>}"
     log ""
     log "Handoff Server:"
     log "  Port:           $SERVER_PORT"
     log "  Threads:        $SERVER_THREADS"
-    log "  Reactive:       $SERVER_REACTIVE"
-    log "  Custom Sched:   $SERVER_USE_CUSTOM_SCHEDULER"
+    log "  Mode:           $SERVER_MODE"
+    log "  Mockless:       $SERVER_MOCKLESS"
     log "  I/O Type:       $SERVER_IO"
-    log "  No Timeout:     $SERVER_NO_TIMEOUT"
     log "  Poller Mode:    $SERVER_POLLER_MODE"
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
-    log "  CPU Affinity:   ${SERVER_TASKSET:-<none>}"
+    log "  FJ Affinity:    $SERVER_FJ_AFFINITY"
+    log "  CPU Affinity:   ${SERVER_CPUSET:-<none>}"
     log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
     log ""
     log "Load Generator:"
     log "  Connections:    $LOAD_GEN_CONNECTIONS"
     log "  Threads:        $LOAD_GEN_THREADS"
     log "  Rate:           ${LOAD_GEN_RATE:-<max throughput>}"
-    log "  CPU Affinity:   ${LOAD_GEN_TASKSET:-<none>}"
+    log "  CPU Affinity:   ${LOAD_GEN_CPUSET:-<none>}"
     log ""
     log "Timing:"
     log "  Warmup:         $WARMUP_DURATION"
@@ -766,120 +784,126 @@ print_config() {
 # ============================================================================
 
 main() {
-    # Parse command line arguments
+    # Parse command line arguments (override env vars)
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            # Server
+            --mode)             SERVER_MODE="$2"; shift 2 ;;
+            --threads)          SERVER_THREADS="$2"; shift 2 ;;
+            --mockless)         SERVER_MOCKLESS=true; shift ;;
+            --io)               SERVER_IO="$2"; shift 2 ;;
+            --poller-mode)      SERVER_POLLER_MODE="$2"; shift 2 ;;
+            --fj-parallelism)   SERVER_FJ_PARALLELISM="$2"; shift 2 ;;
+            --fj-affinity)      SERVER_FJ_AFFINITY=true; shift ;;
+            --server-cpuset)    SERVER_CPUSET="$2"; shift 2 ;;
+            --jvm-args)         SERVER_JVM_ARGS="$2"; shift 2 ;;
+            # Mock
+            --mock-port)        MOCK_PORT="$2"; shift 2 ;;
+            --mock-think-time)  MOCK_THINK_TIME_MS="$2"; shift 2 ;;
+            --mock-threads)     MOCK_THREADS="$2"; shift 2 ;;
+            --mock-cpuset)      MOCK_CPUSET="$2"; shift 2 ;;
+            # Load generator
+            --connections)      LOAD_GEN_CONNECTIONS="$2"; shift 2 ;;
+            --load-threads)     LOAD_GEN_THREADS="$2"; shift 2 ;;
+            --duration)         LOAD_GEN_DURATION="$2"; shift 2 ;;
+            --rate)             LOAD_GEN_RATE="$2"; shift 2 ;;
+            --load-cpuset)      LOAD_GEN_CPUSET="$2"; shift 2 ;;
+            # Timing
+            --warmup)           WARMUP_DURATION="$2"; shift 2 ;;
+            --total-duration)   TOTAL_DURATION="$2"; shift 2 ;;
+            # Profiling
+            --profiler)         ENABLE_PROFILER=true; shift ;;
+            --profiler-path)    ASYNC_PROFILER_PATH="$2"; shift 2 ;;
+            --profiler-event)   PROFILER_EVENT="$2"; shift 2 ;;
+            --jfr)              ENABLE_JFR=true; shift ;;
+            --jfr-events)       JFR_EVENTS="$2"; shift 2 ;;
+            --perf-stat)        ENABLE_PERF_STAT=true; shift ;;
+            --perf-stat-args)   PERF_STAT_ARGS="$2"; shift 2 ;;
+            --no-pidstat)       ENABLE_PIDSTAT=false; shift ;;
+            # Output
+            --output-dir)       OUTPUT_DIR="$2"; shift 2 ;;
+            # Help
             --help|-h)
                 cat << 'EOF'
 Benchmark Runner Script
 
 Usage: ./run-benchmark.sh [OPTIONS]
 
-Environment Variables (can also be set via command line options):
+All options can also be set via environment variables (shown in parentheses).
+CLI flags take precedence over environment variables.
+
+Server:
+  --mode <mode>             Server mode (SERVER_MODE, default: NON_VIRTUAL_NETTY)
+                            Modes: NON_VIRTUAL_NETTY, REACTIVE, VIRTUAL_NETTY, NETTY_SCHEDULER
+  --threads <n>             Event loop threads (SERVER_THREADS, default: 2)
+  --mockless                Skip mock server, inline Jackson work (SERVER_MOCKLESS)
+  --io <type>               I/O type: epoll, nio, io_uring (SERVER_IO, default: epoll)
+  --poller-mode <n>         jdk.pollerMode: 1, 2, or 3 (SERVER_POLLER_MODE)
+  --fj-parallelism <n>      ForkJoinPool parallelism (SERVER_FJ_PARALLELISM)
+  --fj-affinity             Enable FJ scheduler affinity (SERVER_FJ_AFFINITY)
+  --server-cpuset <cpus>    Server CPU pinning, e.g. "2,3" (SERVER_CPUSET, default: 2,3)
+  --jvm-args <args>         Additional JVM arguments (SERVER_JVM_ARGS)
 
 Mock Server:
-  MOCK_PORT                 Mock server port (default: 8080)
-  MOCK_THINK_TIME_MS        Response delay in ms (default: 1)
-  MOCK_THREADS              Number of threads (default: auto = available processors)
-  MOCK_TASKSET              CPU affinity range (default: "4,5,6,7")
-
-Handoff Server:
-  SERVER_PORT               Server port (default: 8081)
-  SERVER_THREADS            Number of event loop threads (default: 2)
-  SERVER_REACTIVE           Use reactive handler with Reactor (default: false)
-  SERVER_USE_CUSTOM_SCHEDULER  Use custom Netty scheduler (default: false)
-  SERVER_IO                 I/O type: epoll, nio, or io_uring (default: epoll)
-  SERVER_NO_TIMEOUT         Disable HTTP client timeout (default: false)
-  SERVER_TASKSET            CPU affinity range (default: "2,3")
-  SERVER_JVM_ARGS           Additional JVM arguments
-  SERVER_POLLER_MODE        jdk.pollerMode value: 1, 2, or 3 (default: 3)
-  SERVER_FJ_PARALLELISM     ForkJoinPool parallelism (empty = JVM default)
+  --mock-port <port>        Mock server port (MOCK_PORT, default: 8080)
+  --mock-think-time <ms>    Response delay in ms (MOCK_THINK_TIME_MS, default: 1)
+  --mock-threads <n>        Number of threads (MOCK_THREADS, default: 1)
+  --mock-cpuset <cpus>      Mock server CPU pinning (MOCK_CPUSET, default: 4,5)
 
 Load Generator:
-  LOAD_GEN_CONNECTIONS      Number of connections (default: 100)
-  LOAD_GEN_THREADS          Number of threads (default: 2)
-  LOAD_GEN_DURATION         Test duration (default: 30s)
-  LOAD_GEN_RATE             Target rate for wrk2 (empty = use wrk)
-  LOAD_GEN_TASKSET          CPU affinity range (default: "0,1")
+  --connections <n>         Number of connections (LOAD_GEN_CONNECTIONS, default: 100)
+  --load-threads <n>        Number of threads (LOAD_GEN_THREADS, default: 2)
+  --duration <dur>          Test duration (LOAD_GEN_DURATION, default: 30s)
+  --rate <n>                Target rate for wrk2; omit for max throughput (LOAD_GEN_RATE)
+  --load-cpuset <cpus>      Load generator CPU pinning (LOAD_GEN_CPUSET, default: 0,1)
 
 Timing:
-  WARMUP_DURATION           Warmup duration (default: 10s)
-  TOTAL_DURATION            Total test duration (default: 30s, must keep steady state >= 20s)
-  PROFILING_DELAY_SECONDS   Profiling start delay in seconds (default: 5)
-  PROFILING_DURATION_SECONDS Profiling duration in seconds (default: 10)
+  --warmup <dur>            Warmup duration (WARMUP_DURATION, default: 10s)
+  --total-duration <dur>    Total test duration (TOTAL_DURATION, default: 30s)
 
 Profiling:
-  ENABLE_PROFILER           Enable async-profiler (default: false)
-  ASYNC_PROFILER_PATH       Path to async-profiler installation
-  PROFILER_EVENT            Profiler event type (default: cpu)
-  PROFILER_OUTPUT           Profiler output file (default: profile.html)
-  Note: profiling uses PROFILING_DELAY_SECONDS and PROFILING_DURATION_SECONDS.
+  --profiler                Enable async-profiler (ENABLE_PROFILER)
+  --profiler-path <path>    Path to async-profiler (ASYNC_PROFILER_PATH)
+  --profiler-event <event>  Profiler event type (PROFILER_EVENT, default: cpu)
+  --jfr                     Enable JFR events (ENABLE_JFR)
+  --jfr-events <events>     Comma-separated JFR events or "all" (JFR_EVENTS, default: all)
+  --perf-stat               Enable perf stat (ENABLE_PERF_STAT)
+  --perf-stat-args <args>   Extra perf stat arguments (PERF_STAT_ARGS)
+  --no-pidstat              Disable pidstat collection (ENABLE_PIDSTAT)
 
-JFR:
-  ENABLE_JFR                Enable Netty Loom JFR events (default: false)
-  JFR_EVENTS                Comma-separated event list or "all" (default: all)
-                           Options: NettyRunIo, NettyRunTasks,
-                                    VirtualThreadTaskRuns, VirtualThreadTaskRun,
-                                    VirtualThreadTaskSubmit
-  JFR_SETTINGS_FILE         Path to a JFR settings (.jfc) file (default: auto)
-  JFR_OUTPUT                JFR output file (default: netty-loom.jfr)
-  JFR_RECORDING_NAME        JFR recording name (default: netty-loom-benchmark)
-  JFR_TIMELINE_OUTPUT       Timeline output file (default: netty-loom-timeline.jsonl, empty = skip export)
-  Note: JFR uses PROFILING_DELAY_SECONDS and PROFILING_DURATION_SECONDS.
+Output:
+  --output-dir <dir>        Output directory (OUTPUT_DIR, default: ./benchmark-results)
 
-pidstat:
-  ENABLE_PIDSTAT            Enable pidstat collection (default: true)
-  PIDSTAT_INTERVAL          Collection interval in seconds (default: 1)
-  PIDSTAT_OUTPUT            Output file (default: pidstat.log)
-  PIDSTAT_MOCK_OUTPUT       Mock server output file (default: pidstat-mock.log)
-  PIDSTAT_LOAD_GEN_OUTPUT   Load generator output file (default: pidstat-loadgen.log)
-  PIDSTAT_HANDOFF_DETAILED  Include per-thread detail for handoff server (default: true)
-
-perf stat:
-  ENABLE_PERF_STAT          Enable perf stat collection (default: false)
-  PERF_STAT_OUTPUT          Output file (default: perf-stat.txt)
-  PERF_STAT_ARGS            Extra perf stat arguments (default: empty)
-
-General:
+Environment-only settings:
   JAVA_HOME                 Path to Java installation (required)
-  OUTPUT_DIR                Output directory (default: ./benchmark-results)
-  CONFIG_OUTPUT             Configuration output filename (default: benchmark-config.txt)
+  JAVA_OPTS                 JVM options (default: -Xms1g -Xmx1g)
+  PROFILING_DELAY_SECONDS   Profiling start delay (default: 10)
+  PROFILING_DURATION_SECONDS Profiling duration (default: 10)
 
 Examples:
 
-  # Basic run with custom scheduler
-  JAVA_HOME=/path/to/jdk SERVER_USE_CUSTOM_SCHEDULER=true ./run-benchmark.sh
+  # Virtual Netty mode, mockless
+  ./run-benchmark.sh --mode virtual_netty --threads 2 --mockless
 
-  # Run with CPU pinning and profiling
-  JAVA_HOME=/path/to/jdk \
-  MOCK_TASKSET="0" \
-  SERVER_TASKSET="1-2" \
-  LOAD_GEN_TASKSET="3" \
-  ENABLE_PROFILER=true \
-  ASYNC_PROFILER_PATH=/path/to/async-profiler \
-  ./run-benchmark.sh
+  # With CPU pinning
+  ./run-benchmark.sh --mode netty_scheduler --threads 4 \
+    --server-cpuset 2,3 --mock-cpuset 4,5 --load-cpuset 0,1
 
-  # Rate-limited test with wrk2
-  JAVA_HOME=/path/to/jdk \
-  LOAD_GEN_RATE=10000 \
-  TOTAL_DURATION=60s \
-  WARMUP_DURATION=15s \
-  ./run-benchmark.sh
+  # With profiling
+  ./run-benchmark.sh --mode netty_scheduler --profiler --profiler-path /path/to/ap
 
-  # Reactive handler test
-  JAVA_HOME=/path/to/jdk \
-  SERVER_REACTIVE=true \
-  SERVER_THREADS=2 \
-  ./run-benchmark.sh
+  # Rate-limited test
+  ./run-benchmark.sh --rate 10000 --total-duration 60s --warmup 15s
 
+  # JVM args override
+  ./run-benchmark.sh --mode virtual_netty --jvm-args "-XX:+PrintGCDetails"
 EOF
                 exit 0
                 ;;
             *)
-                error "Unknown option: $1"
+                error "Unknown option: $1. Use --help for usage."
                 ;;
         esac
-        shift
     done
 
     # Validate configuration
@@ -898,7 +922,11 @@ EOF
     build_jars
 
     # Start servers
-    start_mock_server
+    if [[ "$SERVER_MOCKLESS" != "true" ]]; then
+        start_mock_server
+    else
+        log "Mockless mode: skipping mock server"
+    fi
     start_handoff_server
 
     # Run warmup (no profiling/pidstat)
