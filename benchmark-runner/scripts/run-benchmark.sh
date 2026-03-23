@@ -581,14 +581,16 @@ start_pidstat() {
 
     log "pidstat running (PID: $PIDSTAT_PID)"
 
-    log "Starting pidstat for mock server (PID: $MOCK_PID)..."
+    if [[ -n "${MOCK_PID:-}" ]]; then
+        log "Starting pidstat for mock server (PID: $MOCK_PID)..."
 
-    local mock_output_file="$OUTPUT_DIR/$PIDSTAT_MOCK_OUTPUT"
+        local mock_output_file="$OUTPUT_DIR/$PIDSTAT_MOCK_OUTPUT"
 
-    pidstat -p "$MOCK_PID" "$PIDSTAT_INTERVAL" > "$mock_output_file" 2>&1 &
-    PIDSTAT_MOCK_PID=$!
+        pidstat -p "$MOCK_PID" "$PIDSTAT_INTERVAL" > "$mock_output_file" 2>&1 &
+        PIDSTAT_MOCK_PID=$!
 
-    log "pidstat running for mock server (PID: $PIDSTAT_MOCK_PID)"
+        log "pidstat running for mock server (PID: $PIDSTAT_MOCK_PID)"
+    fi
 }
 
 stop_pidstat() {
