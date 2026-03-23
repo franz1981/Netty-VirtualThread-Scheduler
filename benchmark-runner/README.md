@@ -62,7 +62,6 @@ Run `./run-benchmark.sh --help` for the full list.
 | `--io` | `SERVER_IO` | epoll | I/O type: epoll, nio, io_uring |
 | `--poller-mode` | `SERVER_POLLER_MODE` | | jdk.pollerMode: 1, 2, or 3 |
 | `--fj-parallelism` | `SERVER_FJ_PARALLELISM` | | ForkJoinPool parallelism |
-| `--fj-affinity` | `SERVER_FJ_AFFINITY` | false | FJ scheduler affinity |
 | `--server-cpuset` | `SERVER_CPUSET` | 2,3 | CPU pinning |
 | `--jvm-args` | `SERVER_JVM_ARGS` | | Additional JVM arguments |
 
