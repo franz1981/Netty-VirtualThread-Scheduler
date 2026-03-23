@@ -37,8 +37,8 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
-import io.netty.loom.EventLoopSchedulerType;
 import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
+import io.netty.loom.VirtualMultithreadManualIoEventLoopGroup;
 import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
 import org.apache.hc.client5.http.ConnectionKeepAliveStrategy;
@@ -72,7 +72,6 @@ import java.util.function.Supplier;
  * <p>
  * Usage: java -cp benchmark-runner.jar
  * io.netty.loom.benchmark.runner.HandoffHttpServer \ --port 8081 \ --mock-url
- * http://localhost:8080/fruits \ --threads 2 \ --use-custom-scheduler true \
  * --io epoll
  */
 public class HandoffHttpServer {
@@ -81,54 +80,53 @@ public class HandoffHttpServer {
 		EPOLL, NIO, IO_URING
 	}
 
+	public enum Mode {
+		NON_VIRTUAL_NETTY, REACTIVE, VIRTUAL_NETTY, NETTY_SCHEDULER
+	}
+
 	private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 	private static final ByteBuf HEALTH_RESPONSE = Unpooled
 			.unreleasableBuffer(Unpooled.copiedBuffer("OK", CharsetUtil.UTF_8));
 
+	// Same JSON as MockHttpServer.CACHED_RESPONSE — used in mockless mode
+	private static final byte[] CACHED_JSON_BYTES = """
+			{
+			  "fruits": [
+			    {"name": "Apple", "color": "Red", "price": 1.20},
+			    {"name": "Banana", "color": "Yellow", "price": 0.50},
+			    {"name": "Orange", "color": "Orange", "price": 0.80},
+			    {"name": "Grape", "color": "Purple", "price": 2.00},
+			    {"name": "Mango", "color": "Yellow", "price": 1.50},
+			    {"name": "Strawberry", "color": "Red", "price": 3.00},
+			    {"name": "Blueberry", "color": "Blue", "price": 4.00},
+			    {"name": "Pineapple", "color": "Yellow", "price": 2.50},
+			    {"name": "Watermelon", "color": "Green", "price": 5.00},
+			    {"name": "Kiwi", "color": "Brown", "price": 1.00}
+			  ]
+			}
+			""".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
 	private final int port;
 	private final String mockUrl;
 	private final int threads;
-	private final boolean useCustomScheduler;
 	private final IO io;
 	private final boolean silent;
-	private final boolean noTimeout;
-	private final boolean useReactive;
-	private final EventLoopSchedulerType schedulerType;
+	private final boolean mockless;
+	private final Mode mode;
 
 	private MultiThreadIoEventLoopGroup workerGroup;
 	private Channel serverChannel;
 	private Supplier<ThreadFactory> threadFactorySupplier;
 
-	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io) {
-		this(port, mockUrl, threads, useCustomScheduler, io, false, false, false);
-	}
-
-	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent) {
-		this(port, mockUrl, threads, useCustomScheduler, io, silent, false, false);
-	}
-
-	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
-			boolean noTimeout) {
-		this(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout, false);
-	}
-
-	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
-			boolean noTimeout, boolean useReactive) {
-		this(port, mockUrl, threads, useCustomScheduler, io, silent, noTimeout, useReactive,
-				EventLoopSchedulerType.FIFO);
-	}
-
-	public HandoffHttpServer(int port, String mockUrl, int threads, boolean useCustomScheduler, IO io, boolean silent,
-			boolean noTimeout, boolean useReactive, EventLoopSchedulerType schedulerType) {
+	public HandoffHttpServer(int port, String mockUrl, int threads, IO io, boolean silent, boolean mockless,
+			Mode mode) {
 		this.port = port;
 		this.mockUrl = mockUrl;
 		this.threads = threads;
-		this.useCustomScheduler = useCustomScheduler;
 		this.io = io;
 		this.silent = silent;
-		this.noTimeout = noTimeout;
-		this.useReactive = useReactive;
-		this.schedulerType = schedulerType == null ? EventLoopSchedulerType.FIFO : schedulerType;
+		this.mockless = mockless;
+		this.mode = mode;
 	}
 
 	public void start() throws InterruptedException {
@@ -138,26 +136,48 @@ public class HandoffHttpServer {
 			case IO_URING -> IoUringIoHandler.newFactory();
 		};
 
-		Class<? extends ServerSocketChannel> serverChannelClass = switch (io) {
-			case NIO -> NioServerSocketChannel.class;
-			case EPOLL -> EpollServerSocketChannel.class;
-			case IO_URING -> IoUringServerSocketChannel.class;
-		};
+		final Class<? extends ServerSocketChannel> serverChannelClass;
+		final Class<? extends io.netty.channel.socket.SocketChannel> clientChannelClass;
 
-		Class<? extends io.netty.channel.socket.SocketChannel> clientChannelClass = switch (io) {
-			case NIO -> io.netty.channel.socket.nio.NioSocketChannel.class;
-			case EPOLL -> io.netty.channel.epoll.EpollSocketChannel.class;
-			case IO_URING -> io.netty.channel.uring.IoUringSocketChannel.class;
-		};
-
-		if (useCustomScheduler) {
-			var group = new VirtualMultithreadIoEventLoopGroup(threads, ioHandlerFactory, schedulerType);
-			threadFactorySupplier = group::vThreadFactory;
-			workerGroup = group;
-		} else {
-			workerGroup = new MultiThreadIoEventLoopGroup(threads, ioHandlerFactory);
-			var defaultFactory = Thread.ofVirtual().factory();
-			threadFactorySupplier = () -> defaultFactory;
+		switch (mode) {
+			case VIRTUAL_NETTY -> {
+				var group = new VirtualMultithreadManualIoEventLoopGroup(threads, NioIoHandler.newFactory());
+				workerGroup = group;
+				var defaultFactory = Thread.ofVirtual().factory();
+				threadFactorySupplier = () -> defaultFactory;
+				serverChannelClass = NioServerSocketChannel.class;
+				clientChannelClass = io.netty.channel.socket.nio.NioSocketChannel.class;
+			}
+			case NETTY_SCHEDULER -> {
+				serverChannelClass = switch (io) {
+					case NIO -> NioServerSocketChannel.class;
+					case EPOLL -> EpollServerSocketChannel.class;
+					case IO_URING -> IoUringServerSocketChannel.class;
+				};
+				clientChannelClass = switch (io) {
+					case NIO -> io.netty.channel.socket.nio.NioSocketChannel.class;
+					case EPOLL -> io.netty.channel.epoll.EpollSocketChannel.class;
+					case IO_URING -> io.netty.channel.uring.IoUringSocketChannel.class;
+				};
+				var group = new VirtualMultithreadIoEventLoopGroup(threads, ioHandlerFactory);
+				threadFactorySupplier = group::vThreadFactory;
+				workerGroup = group;
+			}
+			default -> {
+				serverChannelClass = switch (io) {
+					case NIO -> NioServerSocketChannel.class;
+					case EPOLL -> EpollServerSocketChannel.class;
+					case IO_URING -> IoUringServerSocketChannel.class;
+				};
+				clientChannelClass = switch (io) {
+					case NIO -> io.netty.channel.socket.nio.NioSocketChannel.class;
+					case EPOLL -> io.netty.channel.epoll.EpollSocketChannel.class;
+					case IO_URING -> io.netty.channel.uring.IoUringSocketChannel.class;
+				};
+				workerGroup = new MultiThreadIoEventLoopGroup(threads, ioHandlerFactory);
+				var defaultFactory = Thread.ofVirtual().factory();
+				threadFactorySupplier = () -> defaultFactory;
+			}
 		}
 		ServerBootstrap b = new ServerBootstrap();
 		b.group(workerGroup).channel(serverChannelClass).childOption(ChannelOption.TCP_NODELAY, true)
@@ -167,8 +187,8 @@ public class HandoffHttpServer {
 						ChannelPipeline p = ch.pipeline();
 						p.addLast(new HttpServerCodec());
 						p.addLast(new HttpObjectAggregator(65536));
-						if (useReactive) {
-							p.addLast(new ReactiveHandoffHandler(mockUrl, noTimeout, clientChannelClass));
+						if (mode == Mode.REACTIVE) {
+							p.addLast(new ReactiveHandoffHandler(mockUrl, clientChannelClass));
 						} else {
 							p.addLast(new HandoffHandler());
 						}
@@ -178,17 +198,18 @@ public class HandoffHttpServer {
 		serverChannel = b.bind(port).sync().channel();
 		if (!silent) {
 			System.out.printf("Handoff HTTP Server started on port %d%n", port);
-			System.out.printf("  Mode: %s%n", useReactive ? "Reactive (Project Reactor)" : "Virtual Thread");
-			System.out.printf("  Mock URL: %s%n", mockUrl);
-			System.out.printf("  Threads: %d%n", threads);
-			if (!useReactive) {
-				System.out.printf("  Custom Scheduler: %s%n", useCustomScheduler);
-				if (useCustomScheduler) {
-					System.out.printf("  Scheduler Type: %s%n", schedulerType);
-				}
+			System.out.printf("  Mode: %s%n", switch (mode) {
+				case NON_VIRTUAL_NETTY -> "Non-Virtual Netty (platform IO + VT blocking)";
+				case REACTIVE -> "Reactive (pure async, no VTs)";
+				case VIRTUAL_NETTY -> "Virtual Netty (IO loops as VTs on ForkJoinPool)";
+				case NETTY_SCHEDULER -> "Netty Scheduler (platform IO + Netty VT scheduler)";
+			});
+			System.out.printf("  Mockless: %s%n", mockless);
+			if (!mockless) {
+				System.out.printf("  Mock URL: %s%n", mockUrl);
 			}
-			System.out.printf("  I/O: %s%n", io);
-			System.out.printf("  No Timeout: %s%n", noTimeout);
+			System.out.printf("  Threads: %d%n", threads);
+			System.out.printf("  I/O: %s%n", mode == Mode.VIRTUAL_NETTY ? "NIO (forced)" : io);
 		}
 	}
 
@@ -218,12 +239,16 @@ public class HandoffHttpServer {
 		private ExecutorService orderedExecutorService;
 
 		HandoffHandler() {
-			ConnectionKeepAliveStrategy keepAliveStrategy = (HttpResponse response,
-					HttpContext context) -> TimeValue.NEG_ONE_MILLISECOND;
-			BasicHttpClientConnectionManager cm = new BasicHttpClientConnectionManager();
-			RequestConfig requestConfig = noTimeout ? NO_TIMEOUT_HTTP_REQUEST_CONFIG : RequestConfig.DEFAULT;
-			httpClient = HttpClientBuilder.create().setConnectionManager(cm).setDefaultRequestConfig(requestConfig)
-					.setConnectionManagerShared(false).setKeepAliveStrategy(keepAliveStrategy).build();
+			if (mockless) {
+				httpClient = null;
+			} else {
+				ConnectionKeepAliveStrategy keepAliveStrategy = (HttpResponse response,
+						HttpContext context) -> TimeValue.NEG_ONE_MILLISECOND;
+				BasicHttpClientConnectionManager cm = new BasicHttpClientConnectionManager();
+				httpClient = HttpClientBuilder.create().setConnectionManager(cm)
+						.setDefaultRequestConfig(NO_TIMEOUT_HTTP_REQUEST_CONFIG).setConnectionManagerShared(false)
+						.setKeepAliveStrategy(keepAliveStrategy).build();
+			}
 		}
 
 		@Override
@@ -244,10 +269,16 @@ public class HandoffHttpServer {
 			}
 
 			if (uri.equals("/") || uri.startsWith("/fruits")) {
-				// Hand off to virtual thread for blocking processing
-				orderedExecutorService.execute(() -> {
-					doBlockingProcessing(ctx, eventLoop, keepAlive);
-				});
+				// Hand off to virtual thread for processing
+				if (mockless) {
+					orderedExecutorService.execute(() -> {
+						doMocklessProcessing(ctx, eventLoop, keepAlive);
+					});
+				} else {
+					orderedExecutorService.execute(() -> {
+						doBlockingProcessing(ctx, eventLoop, keepAlive);
+					});
+				}
 				return;
 			}
 
@@ -294,6 +325,28 @@ public class HandoffHttpServer {
 			}
 		}
 
+		private void doMocklessProcessing(ChannelHandlerContext ctx, IoEventLoop eventLoop, boolean keepAlive) {
+			try {
+				// Same Jackson work as doBlockingProcessing, without the HTTP call
+				FruitsResponse fruitsResponse = OBJECT_MAPPER.readValue(CACHED_JSON_BYTES, FruitsResponse.class);
+				byte[] responseBytes = OBJECT_MAPPER.writeValueAsBytes(fruitsResponse);
+				eventLoop.execute(() -> {
+					ByteBuf content = Unpooled.wrappedBuffer(responseBytes);
+					sendResponse(ctx, content, HttpHeaderValues.APPLICATION_JSON, keepAlive);
+				});
+			} catch (Throwable e) {
+				eventLoop.execute(() -> {
+					ByteBuf content = Unpooled.copiedBuffer("{\"error\":\"" + e.getMessage() + "\"}",
+							CharsetUtil.UTF_8);
+					FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
+							HttpResponseStatus.INTERNAL_SERVER_ERROR, content);
+					response.headers().set(HttpHeaderNames.CONTENT_TYPE, HttpHeaderValues.APPLICATION_JSON);
+					response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
+					ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+				});
+			}
+		}
+
 		private void sendResponse(ChannelHandlerContext ctx, ByteBuf content, AsciiString contentType,
 				boolean keepAlive) {
 			FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK,
@@ -319,7 +372,9 @@ public class HandoffHttpServer {
 			try {
 				orderedExecutorService.execute(() -> {
 					try {
-						httpClient.close();
+						if (httpClient != null) {
+							httpClient.close();
+						}
 					} catch (IOException e) {
 					} finally {
 						orderedExecutorService.shutdown();
@@ -332,28 +387,23 @@ public class HandoffHttpServer {
 	}
 
 	public static void main(String[] args) throws InterruptedException {
-		// Parse arguments
 		int port = 8081;
 		String mockUrl = "http://localhost:8080/fruits";
 		int threads = 1;
-		boolean useCustomScheduler = false;
 		IO io = IO.EPOLL;
 		boolean silent = false;
-		boolean noTimeout = false;
-		boolean useReactive = false;
-		EventLoopSchedulerType schedulerType = EventLoopSchedulerType.FIFO;
+		boolean mockless = false;
+		Mode mode = Mode.NON_VIRTUAL_NETTY;
 
 		for (int i = 0; i < args.length; i++) {
 			switch (args[i]) {
 				case "--port" -> port = Integer.parseInt(args[++i]);
 				case "--mock-url" -> mockUrl = args[++i];
 				case "--threads" -> threads = Integer.parseInt(args[++i]);
-				case "--use-custom-scheduler" -> useCustomScheduler = Boolean.parseBoolean(args[++i]);
-				case "--scheduler-type" -> schedulerType = EventLoopSchedulerType.valueOf(args[++i].toUpperCase());
 				case "--io" -> io = IO.valueOf(args[++i].toUpperCase());
 				case "--silent" -> silent = true;
-				case "--no-timeout" -> noTimeout = Boolean.parseBoolean(args[++i]);
-				case "--reactive" -> useReactive = Boolean.parseBoolean(args[++i]);
+				case "--mockless" -> mockless = true;
+				case "--mode" -> mode = Mode.valueOf(args[++i].toUpperCase());
 				case "--help" -> {
 					printUsage();
 					return;
@@ -361,8 +411,7 @@ public class HandoffHttpServer {
 			}
 		}
 
-		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, useCustomScheduler, io, silent,
-				noTimeout, useReactive, schedulerType);
+		HandoffHttpServer server = new HandoffHttpServer(port, mockUrl, threads, io, silent, mockless, mode);
 		server.start();
 
 		// Shutdown hook
@@ -372,25 +421,24 @@ public class HandoffHttpServer {
 	}
 
 	private static void printUsage() {
-		System.out.println(
-				"""
-						Usage: java -cp benchmark-runner.jar io.netty.loom.benchmark.runner.HandoffHttpServer [options]
+		System.out.println("""
+				Usage: java -cp benchmark-runner.jar io.netty.loom.benchmark.runner.HandoffHttpServer [options]
 
-						Options:
-						  --port <port>                  HTTP port (default: 8081)
-						  --mock-url <url>               Mock server URL (default: http://localhost:8080/fruits)
-						  --threads <n>                  Number of event loop threads (default: 1)
-						  --use-custom-scheduler <bool>  Use custom Netty scheduler (default: false, ignored if --reactive is true)
-						  --scheduler-type <fifo>        Scheduler type for custom scheduler (default: fifo)
-						  --io <epoll|nio|io_uring>      I/O type (default: epoll)
-						  --no-timeout <true|false>      Disable HTTP client timeout (default: false)
-						  --reactive <true|false>        Use reactive handler with Reactor (default: false)
-						  --silent                       Suppress output messages
-						  --help                         Show this help
+				Options:
+				  --port <port>                  HTTP port (default: 8081)
+				  --mock-url <url>               Mock server URL (default: http://localhost:8080/fruits)
+				  --threads <n>                  Number of event loop threads (default: 1)
+				  --io <epoll|nio|io_uring>      I/O type (default: epoll)
+				  --mockless                     Skip mock server; do Jackson work inline (default: off)
+				  --mode <mode>                  Server mode (default: virtual_thread)
+				  --silent                       Suppress output messages
+				  --help                         Show this help
 
-						Modes:
-						  Virtual Thread (default): Uses virtual threads with blocking Apache HttpClient
-						  Reactive (--reactive true): Uses Project Reactor with non-blocking Reactor Netty HTTP client
-						""");
+				Modes:
+				  NON_VIRTUAL_NETTY (default): Platform thread IO + virtual thread blocking work
+				  REACTIVE: Pure Netty async, no virtual threads
+				  VIRTUAL_NETTY: Netty IO event loops as VTs on ForkJoinPool
+				  NETTY_SCHEDULER: Platform thread IO + Netty custom VT scheduler
+				""");
 	}
 }

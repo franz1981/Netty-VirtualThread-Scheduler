@@ -40,13 +40,11 @@ import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
-import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
 
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Pure Netty non-blocking HTTP handler.
@@ -67,8 +65,6 @@ public class ReactiveHandoffHandler extends SimpleChannelInboundHandler<FullHttp
 	private final String mockUrl;
 	private final URI parsedUri;
 	private final Class<? extends SocketChannel> channelClass;
-	private final boolean noTimeout;
-
 	// This handler owns exactly ONE client channel
 	private Channel clientChannel;
 
@@ -76,10 +72,9 @@ public class ReactiveHandoffHandler extends SimpleChannelInboundHandler<FullHttp
 	// atomic)
 	private ResponseCallback pendingCallback;
 
-	public ReactiveHandoffHandler(String mockUrl, boolean noTimeout, Class<? extends SocketChannel> channelClass) {
+	public ReactiveHandoffHandler(String mockUrl, Class<? extends SocketChannel> channelClass) {
 		this.mockUrl = mockUrl;
 		this.channelClass = channelClass;
-		this.noTimeout = noTimeout;
 		try {
 			this.parsedUri = new URI(mockUrl);
 		} catch (Exception e) {
@@ -104,15 +99,10 @@ public class ReactiveHandoffHandler extends SimpleChannelInboundHandler<FullHttp
 		Bootstrap bootstrap = new Bootstrap().group(eventLoop) // Critical: use the SAME event loop
 				.channel(channelClass) // Use same channel type as server
 				.option(ChannelOption.SO_KEEPALIVE, true).option(ChannelOption.TCP_NODELAY, true)
-				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, noTimeout ? 0 : 30000)
-				.handler(new ChannelInitializer<SocketChannel>() {
+				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 0).handler(new ChannelInitializer<SocketChannel>() {
 					@Override
 					protected void initChannel(SocketChannel ch) {
 						ChannelPipeline p = ch.pipeline();
-						// Add read timeout handler if timeout is enabled
-						if (!noTimeout) {
-							p.addLast(new ReadTimeoutHandler(30, TimeUnit.SECONDS));
-						}
 						p.addLast(new HttpClientCodec());
 						p.addLast(new HttpObjectAggregator(65536));
 						// Add permanent response handler
