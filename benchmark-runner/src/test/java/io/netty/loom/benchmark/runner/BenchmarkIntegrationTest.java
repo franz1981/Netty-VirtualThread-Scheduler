@@ -36,9 +36,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>
  * Tests cover:
  * <ul>
- * <li>NIO I/O with affinity mode</li>
- * <li>NIO I/O with manual (no affinity) mode</li>
- * <li>NIO I/O with inherit locality mode</li>
+ * <li>NIO I/O with virtual Netty mode</li>
  * </ul>
  */
 class BenchmarkIntegrationTest {

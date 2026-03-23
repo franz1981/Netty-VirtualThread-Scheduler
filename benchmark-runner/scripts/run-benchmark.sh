@@ -35,7 +35,6 @@ SERVER_CPUSET="${SERVER_CPUSET:-2,3}"  # CPUs for handoff server
 SERVER_JVM_ARGS="${SERVER_JVM_ARGS:-}"
 SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-}"  # jdk.pollerMode value (1, 2, or 3); empty = JVM default, NETTY_SCHEDULER defaults to 3
 SERVER_FJ_PARALLELISM="${SERVER_FJ_PARALLELISM:-}"  # ForkJoinPool parallelism (empty = JVM default)
-SERVER_FJ_AFFINITY="${SERVER_FJ_AFFINITY:-false}"  # ForkJoinPool virtual thread scheduler affinity
 SERVER_MODE="${SERVER_MODE:-NON_VIRTUAL_NETTY}"  # Server mode: NON_VIRTUAL_NETTY, REACTIVE, VIRTUAL_NETTY
 SERVER_MOCKLESS="${SERVER_MOCKLESS:-false}"  # Skip mock server; do Jackson work inline
 
@@ -402,8 +401,6 @@ start_handoff_server() {
         jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=$SERVER_FJ_PARALLELISM"
     fi
 
-    jvm_args="$jvm_args -Djdk.virtualThreadScheduler.affinity=$SERVER_FJ_AFFINITY"
-
     # Add debug non-safepoints if profiling is enabled
     if [[ "$ENABLE_PROFILER" == "true" ]]; then
         jvm_args="$jvm_args -XX:+UnlockDiagnosticVMOptions"
@@ -723,7 +720,6 @@ print_config() {
     log "  I/O Type:       $SERVER_IO"
     log "  Poller Mode:    $SERVER_POLLER_MODE"
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
-    log "  FJ Affinity:    $SERVER_FJ_AFFINITY"
     log "  CPU Affinity:   ${SERVER_CPUSET:-<none>}"
     log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
     log ""
@@ -794,7 +790,6 @@ main() {
             --io)               SERVER_IO="$2"; shift 2 ;;
             --poller-mode)      SERVER_POLLER_MODE="$2"; shift 2 ;;
             --fj-parallelism)   SERVER_FJ_PARALLELISM="$2"; shift 2 ;;
-            --fj-affinity)      SERVER_FJ_AFFINITY=true; shift ;;
             --server-cpuset)    SERVER_CPUSET="$2"; shift 2 ;;
             --jvm-args)         SERVER_JVM_ARGS="$2"; shift 2 ;;
             # Mock
@@ -840,7 +835,6 @@ Server:
   --io <type>               I/O type: epoll, nio, io_uring (SERVER_IO, default: epoll)
   --poller-mode <n>         jdk.pollerMode: 1, 2, or 3 (SERVER_POLLER_MODE)
   --fj-parallelism <n>      ForkJoinPool parallelism (SERVER_FJ_PARALLELISM)
-  --fj-affinity             Enable FJ scheduler affinity (SERVER_FJ_AFFINITY)
   --server-cpuset <cpus>    Server CPU pinning, e.g. "2,3" (SERVER_CPUSET, default: 2,3)
   --jvm-args <args>         Additional JVM arguments (SERVER_JVM_ARGS)
 
