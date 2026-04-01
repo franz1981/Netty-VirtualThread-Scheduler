@@ -328,13 +328,16 @@ trap cleanup EXIT
 build_jars() {
     log "Building project JARs..."
 
-    cd "$PROJECT_ROOT"
-
+    # Temporarily switch context to build the project
+    pushd "$PROJECT_ROOT"
 
     if [[ ! -f "$RUNNER_JAR" ]]; then
         log "Building benchmark-runner module..."
         JAVA_HOME="$JAVA_HOME" mvn package -pl benchmark-runner -am -DskipTests -q
     fi
+
+    # Restore original working directory
+    popd
 
     log "JARs ready"
 }
