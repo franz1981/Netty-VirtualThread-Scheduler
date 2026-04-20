@@ -12,3 +12,4 @@ target/
 
 # Mac
 .DS_Store
+benchmark-runner/scripts/benchmark-results/
