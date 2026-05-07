@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import io.netty.channel.IoEventLoop;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.loom.spi.NettyScheduler;
 
 public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGroup {
 
@@ -47,7 +48,7 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 	private static void validateNettyAvailability() {
 		if (!NettyScheduler.isAvailable()) {
 			throw new IllegalStateException(
-					"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler is required to use VirtualMultithreadIoEventLoopGroup");
+					"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler is required to use VirtualMultithreadIoEventLoopGroup");
 		}
 	}
 

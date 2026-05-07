@@ -319,7 +319,7 @@ java \
   -XX:+UnlockExperimentalVMOptions \
   -XX:-DoJVMTIVirtualThreadTransitions \
   -Djdk.trackAllThreads=false \
-  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler \
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler \
   -Djdk.pollerMode=3 \
   -cp benchmark-runner/target/benchmark-runner.jar \
   io.netty.loom.benchmark.runner.HandoffHttpServer \

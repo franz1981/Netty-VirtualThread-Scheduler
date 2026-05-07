@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.netty.loom</groupId>
+        <artifactId>netty-virtualthread-parent</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>netty-virtualthread-bootstrap</artifactId>
+
+    <!-- No dependencies: this module must stay JDK-only so it can sit on the
+         system classpath without pulling in Netty or any other library. -->
+
+</project>

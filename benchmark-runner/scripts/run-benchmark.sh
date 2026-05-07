@@ -386,7 +386,7 @@ start_handoff_server() {
     local poller_mode="$SERVER_POLLER_MODE"
     case "$SERVER_MODE" in
         NETTY_SCHEDULER)
-            jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler"
+            jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler"
             # Default pollerMode to 3 for custom scheduler if not explicitly set
             poller_mode="${poller_mode:-3}"
             ;;

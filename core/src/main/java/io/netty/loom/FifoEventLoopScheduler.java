@@ -23,6 +23,7 @@ import io.netty.channel.IoEventLoopGroup;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
 import io.netty.loom.jfr.VirtualThreadTaskSubmitEvent;
+import io.netty.loom.spi.NettyScheduler;
 import io.netty.util.concurrent.FastThreadLocalThread;
 
 final class FifoEventLoopScheduler implements EventLoopScheduler {
@@ -73,7 +74,7 @@ final class FifoEventLoopScheduler implements EventLoopScheduler {
 		// enabling
 		// work-stealing to change it for both
 		var unstartedBuilder = Thread.ofVirtual();
-		NettyScheduler scheduler = NettyScheduler.INSTANCE;
+		NettyScheduler scheduler = NettyScheduler.instance();
 		return runnable -> {
 			var schedulingContext = new SchedulingContext(sharedRef);
 			var vTask = scheduler.newThread(unstartedBuilder, null,

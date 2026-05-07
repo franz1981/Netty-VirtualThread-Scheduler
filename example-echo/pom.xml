@@ -40,7 +40,7 @@
                     <systemProperties>
                         <systemProperty>
                             <key>jdk.virtualThreadScheduler.implClass</key>
-                            <value>io.netty.loom.NettyScheduler</value>
+                            <value>io.netty.loom.spi.NettyScheduler</value>
                         </systemProperty>
                     </systemProperties>
                     <cleanupDaemonThreads>false</cleanupDaemonThreads>
