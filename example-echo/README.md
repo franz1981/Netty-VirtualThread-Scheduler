@@ -31,7 +31,7 @@ The shade plugin in `example-echo/pom.xml` creates an executable jar in
 
 ```bash
 "$JAVA_HOME/bin/java" --enable-preview \
-  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler \
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler \
   -jar example-echo/target/example-echo-1.0-SNAPSHOT.jar &
 
 # note the PID in $!

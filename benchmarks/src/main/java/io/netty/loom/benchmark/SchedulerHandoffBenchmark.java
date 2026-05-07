@@ -141,7 +141,7 @@ public class SchedulerHandoffBenchmark {
 	@Benchmark
 	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
 			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
-			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3",
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler", "-Djdk.pollerMode=3",
 			"-DelThreads=1"})
 	public void customScheduler(Blackhole bh) throws InterruptedException {
 		doRequest(bh);
@@ -150,7 +150,7 @@ public class SchedulerHandoffBenchmark {
 	@Benchmark
 	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
 			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
-			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler", "-Djdk.pollerMode=3",
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler", "-Djdk.pollerMode=3",
 			"-DelThreads=2"})
 	public void customSchedulerTwoEL(Blackhole bh) throws InterruptedException {
 		doRequest(bh);

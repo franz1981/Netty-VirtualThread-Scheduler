@@ -38,6 +38,7 @@ import io.netty.channel.*;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.local.LocalIoHandler;
 import io.netty.channel.epoll.EpollIoHandler;
+import io.netty.loom.spi.NettyScheduler;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 
 import io.netty.channel.uring.IoUring;

@@ -10,6 +10,7 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>bootstrap</module>
         <module>core</module>
         <module>benchmarks</module>
         <module>benchmark-runner</module>
@@ -120,7 +121,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
+                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
                             </configuration>
                         </execution>
                         <execution>
@@ -130,7 +131,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
+                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
                             </configuration>
                         </execution>
                     </executions>

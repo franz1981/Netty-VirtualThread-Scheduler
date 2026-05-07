@@ -14,6 +14,7 @@
  */
 package io.netty.loom;
 
+import io.netty.loom.spi.NettyScheduler;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;

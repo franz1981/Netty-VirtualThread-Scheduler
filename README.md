@@ -16,7 +16,7 @@ This allows code that must block (for example, blocking I/O or synchronous libra
 - Call `group.vThreadFactory()` to obtain a `ThreadFactory` that creates virtual threads tied to an `EventLoopScheduler` of the group. When those virtual threads block, the scheduler parks them and resumes them later using the carrier thread.
 - Virtual threads created via the group's `vThreadFactory()` will attempt to inherit the scheduler and run with low-overhead handoffs back to the event loop when continuing work.
 - Virtual threads created with `Thread.ofVirtual().factory()` (the JVM default factory) do NOT automatically inherit the group's scheduler.
-- The library requires a custom global virtual thread scheduler implementation to be installed: set `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler` (or use the convenience helpers in the code/tests that set up the scheduler).
+- The library requires a custom global virtual thread scheduler implementation to be installed: set `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler` (or use the convenience helpers in the code/tests that set up the scheduler).
 - Blocking I/O support that relies on per-carrier pollers currently depends on the JVM poller mode (the code checks `jdk.pollerMode==3`). See notes below.
 
 ## When to use this
@@ -92,7 +92,7 @@ mvn clean install
 
 ## Integration tips and runtime flags
 - Install the Netty scheduler as the JVM virtual-thread scheduler with:
-  `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler`
+  `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler`
 
 - Some blocking I/O integrations rely on per-carrier pollers. The code checks `jdk.pollerMode` and expects value `3` for per-carrier pollers. This can be controlled via JVM flags or defaults depending on your JVM version.
 
@@ -131,7 +131,7 @@ java -jar target/benchmarks.jar
 ## Prerequisites
 - Maven 3.6+
 - To use the `VirtualMultithreadIoEventLoopGroup` set the JVM property to install the Netty scheduler:
-  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.NettyScheduler
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler
 
 ## References
 - Project Loom (OpenJDK): https://openjdk.org/projects/loom/
