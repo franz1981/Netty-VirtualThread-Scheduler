@@ -47,8 +47,14 @@ public class VirtualMultithreadIoEventLoopGroup extends MultiThreadIoEventLoopGr
 
 	private static void validateNettyAvailability() {
 		if (!NettyScheduler.isAvailable()) {
+			if (!NettyScheduler.isInstalled()) {
+				throw new IllegalStateException(
+						"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler is required to use VirtualMultithreadIoEventLoopGroup");
+			}
 			throw new IllegalStateException(
-					"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler is required to use VirtualMultithreadIoEventLoopGroup");
+					"NettyScheduler bootstrap is installed but no NettySchedulerSpi provider was found. "
+							+ "Ensure the core module JAR is visible to the thread-context class loader "
+							+ "and META-INF/services/io.netty.loom.spi.NettySchedulerSpi is present.");
 		}
 	}
 
