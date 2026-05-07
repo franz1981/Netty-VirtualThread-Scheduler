@@ -104,4 +104,8 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 		var instance = ensureInstalled();
 		return instance != null && instance.provider != null;
 	}
+
+	public static boolean isInstalled() {
+		return ensureInstalled() != null;
+	}
 }

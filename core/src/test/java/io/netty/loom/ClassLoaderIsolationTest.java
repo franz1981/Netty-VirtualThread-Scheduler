@@ -81,15 +81,15 @@ public class ClassLoaderIsolationTest {
 	 * implementation even though the parent class loader blocks it.
 	 */
 	@Test
-	public void serviceLoaderFindsProviderThroughChildFirstClassLoader() {
+	public void serviceLoaderFindsProviderThroughChildFirstClassLoader() throws Exception {
 		ClassLoader blocked = new BlockingParentClassLoader(getClass().getClassLoader());
 
 		URL[] urls = getClasspathUrls();
-		URLClassLoader childFirst = new ChildFirstClassLoader(urls, blocked);
-
-		ServiceLoader<NettySchedulerSpi> loader = ServiceLoader.load(NettySchedulerSpi.class, childFirst);
-		var provider = loader.findFirst();
-		assertTrue(provider.isPresent(), "ServiceLoader should discover NettySchedulerProviderImpl via child CL");
+		try (URLClassLoader childFirst = new ChildFirstClassLoader(urls, blocked)) {
+			ServiceLoader<NettySchedulerSpi> loader = ServiceLoader.load(NettySchedulerSpi.class, childFirst);
+			var provider = loader.findFirst();
+			assertTrue(provider.isPresent(), "ServiceLoader should discover NettySchedulerProviderImpl via child CL");
+		}
 	}
 
 	private URL[] getClasspathUrls() {
