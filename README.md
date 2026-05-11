@@ -100,6 +100,134 @@ mvn clean install
 
 - If you need the virtual thread to inherit the scheduler when forking tasks via StructuredTaskScope, pass the group's `vThreadFactory()` to the scope's `withThreadFactory(...)`.
 
+## Classloader requirements for fat JARs and application servers
+
+The JVM loads the custom virtual-thread scheduler via the **system classloader**
+(`ClassLoader.getSystemClassLoader()`). Many frameworks — Spring Boot, OpenLiberty,
+WildFly, and others — use isolated classloaders that hide application JARs from
+the system classloader. If you deploy this library inside such a framework, the
+JVM will fail to find `NettyScheduler` at startup.
+
+The library is split into two modules to handle this:
+
+| Module | Contains | Must be visible to |
+|---|---|---|
+| `netty-virtualthread-bootstrap` | `NettyScheduler` shim + `NettySchedulerSpi` interface (no dependencies) | System classloader |
+| `netty-virtualthread-core` | Real scheduling logic (`NettySchedulerProviderImpl`) | Thread-context classloader (TCCL) |
+
+`NettyScheduler` discovers the real implementation at runtime via `ServiceLoader`
+using the TCCL — the same pattern JDBC uses to discover drivers. As long as the
+bootstrap classes are on the system classpath and the core JAR is visible to the
+TCCL, discovery works regardless of classloader hierarchy.
+
+### Plain classpath (shade plugin, flat classpath)
+
+No special configuration needed. Both modules are on the same classpath.
+
+### Spring Boot fat JAR
+
+Spring Boot packages dependencies under `BOOT-INF/lib/`, invisible to the system
+classloader. Use Multi-Release JAR (MRJAR) entries to place the bootstrap classes
+at the outer level of the fat JAR:
+
+```xml
+<!-- 1. Mark the JAR as Multi-Release -->
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-jar-plugin</artifactId>
+    <configuration>
+        <archive>
+            <manifestEntries>
+                <Multi-Release>true</Multi-Release>
+            </manifestEntries>
+        </archive>
+    </configuration>
+</plugin>
+
+<!-- 2. Unpack bootstrap classes into META-INF/versions/27/ -->
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-dependency-plugin</artifactId>
+    <executions>
+        <execution>
+            <id>unpack-bootstrap-scheduler</id>
+            <phase>prepare-package</phase>
+            <goals>
+                <goal>unpack</goal>
+            </goals>
+            <configuration>
+                <artifactItems>
+                    <artifactItem>
+                        <groupId>io.netty.loom</groupId>
+                        <artifactId>netty-virtualthread-bootstrap</artifactId>
+                        <version>${netty-loom.version}</version>
+                        <type>jar</type>
+                        <includes>io/netty/loom/spi/**</includes>
+                        <outputDirectory>${project.build.outputDirectory}/META-INF/versions/27</outputDirectory>
+                    </artifactItem>
+                </artifactItems>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+
+<!-- 3. Exclude bootstrap from BOOT-INF/lib/ to avoid duplicate class definitions -->
+<plugin>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-maven-plugin</artifactId>
+    <configuration>
+        <excludes>
+            <exclude>
+                <groupId>io.netty.loom</groupId>
+                <artifactId>netty-virtualthread-bootstrap</artifactId>
+            </exclude>
+        </excludes>
+    </configuration>
+</plugin>
+```
+
+The resulting JAR layout:
+
+```
+app.jar
+├── META-INF/MANIFEST.MF          (Multi-Release: true)
+├── META-INF/versions/27/
+│   └── io/netty/loom/spi/
+│       ├── NettyScheduler.class
+│       └── NettySchedulerSpi.class
+└── BOOT-INF/lib/
+    └── netty-virtualthread-core-*.jar
+```
+
+On Java 27+, the system classloader sees the bootstrap classes via MRJAR. The
+core implementation is discovered via ServiceLoader through Spring Boot's
+`LaunchedClassLoader` (which is set as the TCCL).
+
+Credit: [dreamlike-ocean](https://github.com/dreamlike-ocean) for identifying and
+fixing this issue.
+
+### OpenLiberty, WildFly, and other application servers
+
+The same principle applies: the bootstrap JAR must be visible to the system
+classloader. The mechanism varies by server:
+
+- **OpenLiberty**: configure the bootstrap JAR as a
+  [shared library](https://openliberty.io/docs/latest/class-loader-library-config.html)
+  at server scope, or add it via `jvm.options`:
+  ```
+  -Xbootclasspath/a:/path/to/netty-virtualthread-bootstrap.jar
+  ```
+- **WildFly**: register the bootstrap JAR as a
+  [global module](https://docs.wildfly.org/latest/Developer_Guide.html#global-modules),
+  or add it to `JBOSS_MODULEPATH`.
+- **Generic**: place the bootstrap JAR on the JVM's `-classpath` or
+  `-Xbootclasspath/a:` separately from the application archive. The core JAR
+  stays inside the application's deployment unit.
+
+In all cases, `netty-virtualthread-core` should be packaged inside the
+application (WAR/EAR) as a normal dependency — the TCCL will be the application
+classloader at the point when `NettyScheduler` discovers it.
+
 ## JFR events
 Netty Loom publishes custom Java Flight Recorder events (disabled by default) for scheduler activity:
 
