@@ -1,6 +1,6 @@
 # example-echo
 
-A tiny HTTP example that shows how to use VirtualMultithreadIoEventLoopGroup and its
+A tiny HTTP example that shows how to use VirtualIoPollerEventLoopGroup and its
 `vThreadFactory()` to spawn virtual threads from Netty handlers.
 
 Prerequisites

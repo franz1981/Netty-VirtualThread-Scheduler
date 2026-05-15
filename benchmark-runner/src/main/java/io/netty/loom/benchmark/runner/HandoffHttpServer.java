@@ -37,8 +37,8 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
-import io.netty.loom.VirtualMultithreadIoEventLoopGroup;
-import io.netty.loom.VirtualMultithreadManualIoEventLoopGroup;
+import io.netty.loom.VirtualIoPollerEventLoopGroup;
+import io.netty.loom.VirtualIoEventLoopGroup;
 import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
 import org.apache.hc.client5.http.ConnectionKeepAliveStrategy;
@@ -141,7 +141,8 @@ public class HandoffHttpServer {
 
 		switch (mode) {
 			case VIRTUAL_NETTY -> {
-				var group = new VirtualMultithreadManualIoEventLoopGroup(threads, NioIoHandler.newFactory());
+				var group = new VirtualIoEventLoopGroup(threads, NioIoHandler.newFactory(),
+						Thread.ofVirtual().factory());
 				workerGroup = group;
 				var defaultFactory = Thread.ofVirtual().factory();
 				threadFactorySupplier = () -> defaultFactory;
@@ -159,7 +160,7 @@ public class HandoffHttpServer {
 					case EPOLL -> io.netty.channel.epoll.EpollSocketChannel.class;
 					case IO_URING -> io.netty.channel.uring.IoUringSocketChannel.class;
 				};
-				var group = new VirtualMultithreadIoEventLoopGroup(threads, ioHandlerFactory);
+				var group = new VirtualIoPollerEventLoopGroup(ioHandlerFactory);
 				threadFactorySupplier = group::vThreadFactory;
 				workerGroup = group;
 			}

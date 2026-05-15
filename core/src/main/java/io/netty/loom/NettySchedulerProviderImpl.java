@@ -49,6 +49,7 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 	@Override
 	public void init(Thread.VirtualThreadScheduler jdkBuiltinScheduler) {
 		this.jdkBuiltinScheduler = jdkBuiltinScheduler;
+		EventLoopSchedulerGroup.init();
 	}
 
 	@Override
@@ -59,7 +60,7 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 	@Override
 	public void onStart(Thread.VirtualThreadTask virtualThreadTask) {
 		if (virtualThreadTask.attachment() instanceof EventLoopScheduler.SchedulingContext context) {
-			var eventLoop = context.schedulerRef.get();
+			var eventLoop = context.eventLoopScheduler;
 			if (eventLoop != null && eventLoop.execute(virtualThreadTask)) {
 				return;
 			}
@@ -67,12 +68,12 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 		} else {
 			if (perCarrierPollers) {
 				if (Thread.currentThread().isVirtual()) {
-					var schedulerRef = EventLoopScheduler.currentThreadSchedulerContext().scheduler();
-					if (schedulerRef != null) {
-						var scheduler = schedulerRef.get();
-						if (scheduler != null && virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
-							virtualThreadTask.attach(new EventLoopScheduler.SchedulingContext(
-									virtualThreadTask.thread().threadId(), schedulerRef, true));
+					var scheduler = EventLoopScheduler.currentThreadSchedulerContext().scheduler();
+					if (scheduler != null) {
+						if (virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
+							virtualThreadTask.attach(
+									new EventLoopScheduler.SchedulingContext(virtualThreadTask.thread().threadId(),
+											scheduler, EventLoopScheduler.VThreadType.JDK_POLLER));
 							if (scheduler.execute(virtualThreadTask)) {
 								return;
 							}
@@ -88,7 +89,7 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 	@Override
 	public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
 		if (virtualThreadTask.attachment() instanceof EventLoopScheduler.SchedulingContext context) {
-			var eventLoop = context.schedulerRef.get();
+			var eventLoop = context.eventLoopScheduler;
 			if (eventLoop != null && eventLoop.execute(virtualThreadTask)) {
 				return;
 			}
