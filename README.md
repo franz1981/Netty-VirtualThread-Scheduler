@@ -1,137 +1,303 @@
 # Netty VirtualThread Scheduler
 
-## Introduction
-This project provides an integration between Java Virtual Threads (Project Loom) and Netty's event loop, enabling low-overhead execution of blocking or CPU-bound work started from the Netty event loop without the usual extra thread hand-offs.
+A locality-first virtual thread scheduler for the JVM. Virtual threads that work together run on the same carrier thread, reducing context switches and improving cache locality.
 
-At a high level:
-- Each Netty event loop is backed by a virtual thread (the "event loop virtual thread").
-- Each such virtual thread is executed on a dedicated carrier platform thread.
-- Virtual threads created from the event-loop-specific ThreadFactory returned by the group will be associated with the same EventLoopScheduler and, when possible, will run on the same carrier platform thread as the event loop.
-- You can select FIFO scheduling when constructing the group by passing `EventLoopSchedulerType` (default is FIFO).
+## Why
 
-This allows code that must block (for example, blocking I/O or synchronous library calls) to be executed without moving work between unrelated threads, reducing wake-ups and improving cache locality compared to offloading to an external thread pool.
+**You want locality.** The default ForkJoinPool scatters virtual threads across carriers randomly. When a Netty handler spawns a VT for blocking work, it runs on a different thread; when it posts back, that's a wakeup and a cache miss. This scheduler keeps related work on the same carrier — fewer context switches, better cache hit rates, less CPU wasted on handoffs. See [Netty with NIO](#netty-with-nio) or [without Netty](#locality-first-scheduling-without-netty).
 
-## Key behavior (user-facing)
-- Create a `VirtualMultithreadIoEventLoopGroup` like any other Netty `EventLoopGroup`. It behaves like a `MultiThreadIoEventLoopGroup` from the Netty API, but the event loops are driven by virtual threads and coordinated with carrier platform threads by a per-event-loop `EventLoopScheduler` (FIFO).
-- Call `group.vThreadFactory()` to obtain a `ThreadFactory` that creates virtual threads tied to an `EventLoopScheduler` of the group. When those virtual threads block, the scheduler parks them and resumes them later using the carrier thread.
-- Virtual threads created via the group's `vThreadFactory()` will attempt to inherit the scheduler and run with low-overhead handoffs back to the event loop when continuing work.
-- Virtual threads created with `Thread.ofVirtual().factory()` (the JVM default factory) do NOT automatically inherit the group's scheduler.
-- The library requires a custom global virtual thread scheduler implementation to be installed: set `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler` (or use the convenience helpers in the code/tests that set up the scheduler).
-- Blocking I/O support that relies on per-carrier pollers currently depends on the JVM poller mode (the code checks `jdk.pollerMode==3`). See notes below.
+**You need native transports.** Kernel I/O calls (epoll_wait, io_uring_enter) pin the virtual thread to its carrier. On ForkJoinPool, each native poller permanently occupies a shared carrier thread. This scheduler gives each native poller its own dedicated carrier, so pinning doesn't starve the rest of the system. See [Netty with native transport](#netty-with-native-transport-epoll--io_uring).
 
-## When to use this
-- You have code that must perform blocking operations from a Netty handler and you want to avoid an extra thread hand-off.
-- You want fewer CPU wake-ups and better cache locality by keeping related work on the same carrier platform thread.
+**You want control.** The scheduler exposes a simple API to register your own I/O pollers, get per-carrier thread factories, and decide exactly which virtual threads share a carrier. No black-box scheduling decisions — you control the topology. See [writing a custom pinned poller](#writing-a-custom-pinned-poller).
 
-Caveats:
-- This project leverages experimental JVM features (Project Loom) and assumes recent Java versions (Java 21+ recommended).
-- You must install the Netty-specific scheduler (see above) for `VirtualMultithreadIoEventLoopGroup` to be usable.
+**This scheduler doesn't replace ForkJoinPool** — it runs alongside it. `Thread.ofVirtual()` still creates virtual threads on the default FJP, and third-party libraries that create their own virtual threads are unaffected. You choose which work runs on which scheduler:
 
-## Usage example (simple)
+```java
+var group = new VirtualIoPollerEventLoopGroup(EpollIoHandler.newFactory());
+var schedulerFactory = group.vThreadFactory();
 
-See the runnable example and step-by-step instructions in the example module:
+schedulerFactory.newThread(() -> {
+    // scope with our factory → forked tasks stay on the same carrier
+    try (var scope = StructuredTaskScope.open(allSuccessfulOrThrow(),
+            cf -> cf.withThreadFactory(schedulerFactory))) {
+        scope.fork(() -> fetchFromCache());
+        scope.join();
+    }
 
-- [`example-echo/README.md`](example-echo/README.md)
-
-(That README contains the minimal build and run commands, including how to start the example server and run a quick curl smoke test.)
-
-## About the Loom build used
-
-This work targets Project Loom features and was developed and tested against very recent OpenJDK / Loom builds. 
-
-### Option 1: Dev Containers (Recommended for local development)
-
-The easiest way to get started is using the provided dev container configuration, which uses the same Shipilev Loom container image as our CI.
-
-#### Using with VS Code
-
-1. Install [Docker](https://www.docker.com/products/docker-desktop) and [VS Code](https://code.visualstudio.com/)
-2. Install the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) in VS Code
-3. Open this repository in VS Code
-4. When prompted, click "Reopen in Container" (or run the command "Dev Containers: Reopen in Container")
-
-#### Using with IntelliJ IDEA
-
-1. Install [Docker](https://www.docker.com/products/docker-desktop) and [IntelliJ IDEA](https://www.jetbrains.com/idea/)
-2. Open this repository in IntelliJ IDEA
-3. IDEA will detect the `.devcontainer/devcontainer.json` configuration
-4. Click "Create Dev Container and Mount Sources" when prompted (or go to **File > Remote Development > Dev Containers**)
-
-#### What the dev container provides
-
-The dev container will automatically:
-- Use the `shipilev/openjdk:loom` Docker image with a fresh Loom build
-- Install Maven and other dependencies
-- Configure the Java environment (JAVA_HOME set to `/opt/jdk`)
-- Forward port 8080 for the example-echo server
-
-No need to download or build JDK manually!
-
-### Option 2: Manual Loom JDK Setup
-
-If you don't want to use dev containers, you can manually set up a Loom JDK. A convenient set of prebuilt Loom-enabled JDK images is available from Shipilev's builds:
-
-- https://builds.shipilev.net/openjdk-jdk-loom/
-
-Follow that site to download a suitable JDK image for your platform and point `JAVA_HOME` to the JDK image before running the project. Example:
-
-```sh
-export JAVA_HOME=/path/to/loom/build/linux-x86_64-server-release/jdk/
+    // scope without factory → forked tasks run on default FJP
+    try (var scope = StructuredTaskScope.open(allSuccessfulOrThrow())) {
+        scope.fork(() -> callThirdPartyLibrary());
+        scope.join();
+    }
+}).start();
 ```
 
-If you prefer to build from the OpenJDK `loom` repository yourself, the upstream source is:
+**Split topology (default)** — 8 OS threads for 4 cores, every arrow is a handoff:
 
-- https://github.com/openjdk/loom
-
-If you have a local build of the latest Loom-enabled OpenJDK, point `JAVA_HOME` to that build before running tests and benchmarks. Example:
-
-```sh
-export JAVA_HOME=/path/to/your/loom/build/linux-x86_64-server-release/jdk/
-mvn clean install
+```mermaid
+graph LR
+    subgraph Netty I/O threads
+        IO0[IO thread 0]
+        IO1[IO thread 1]
+        IO2[IO thread 2]
+        IO3[IO thread 3]
+    end
+    subgraph ForkJoinPool
+        FJ0[FJP carrier 0]
+        FJ1[FJP carrier 1]
+        FJ2[FJP carrier 2]
+        FJ3[FJP carrier 3]
+    end
+    IO0 -- handoff --> FJ0
+    IO1 -- handoff --> FJ1
+    IO2 -- handoff --> FJ2
+    IO3 -- handoff --> FJ3
+    FJ0 -. wakeup .-> IO0
+    FJ1 -. wakeup .-> IO1
+    FJ2 -. wakeup .-> IO2
+    FJ3 -. wakeup .-> IO3
 ```
 
-## Integration tips and runtime flags
-- Install the Netty scheduler as the JVM virtual-thread scheduler with:
-  `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler`
+**Unified topology (this scheduler)** — 4 OS threads, no cross-pool handoffs:
 
-- Some blocking I/O integrations rely on per-carrier pollers. The code checks `jdk.pollerMode` and expects value `3` for per-carrier pollers. This can be controlled via JVM flags or defaults depending on your JVM version.
+```mermaid
+graph TB
+    subgraph EventLoopSchedulerGroup
+        subgraph Carrier 0
+            P0[I/O poller VT]
+            V0[handler VTs]
+        end
+        subgraph Carrier 1
+            P1[I/O poller VT]
+            V1[handler VTs]
+        end
+        subgraph Carrier 2
+            P2[I/O poller VT]
+            V2[handler VTs]
+        end
+        subgraph Carrier 3
+            P3[I/O poller VT]
+            V3[handler VTs]
+        end
+    end
+```
 
-- Use `group.vThreadFactory()` from inside Netty handlers if you want the spawned virtual thread to be associated with the same event loop scheduler as the handler's event loop.
+This scheduler runs I/O and virtual threads on the same carrier threads. No oversubscription, no cross-pool handoffs, and native pollers get their own dedicated carrier.
 
-- If you need the virtual thread to inherit the scheduler when forking tasks via StructuredTaskScope, pass the group's `vThreadFactory()` to the scope's `withThreadFactory(...)`.
+For the full analysis with benchmarks, see the [talk at Devoxx](https://youtu.be/Oy005l5vHtE?si=5epV66hc6PTPdDSB) and [slides](https://speakerdeck.com/franz1981/reactive-loom-a-forbidden-love-story).
 
-## Classloader requirements for fat JARs and application servers
+## What it provides
 
-The JVM loads the custom virtual-thread scheduler via the **system classloader**
-(`ClassLoader.getSystemClassLoader()`). Many frameworks — Spring Boot, OpenLiberty,
-WildFly, and others — use isolated classloaders that hide application JARs from
-the system classloader. If you deploy this library inside such a framework, the
-JVM will fail to find `NettyScheduler` at startup.
+1. **A carrier-affinity scheduler** (`EventLoopSchedulerGroup`) — a global pool of permanent carrier threads, each with its own MPSC queue. Virtual threads created from a carrier's factory have affinity to that carrier.
+2. **Netty integration** — drop-in event loop groups that run Netty I/O on the scheduler's carriers, so handler-spawned virtual threads stay on the same carrier as the event loop that received the request.
 
-The library is split into two modules to handle this:
+## Quick guide
 
-| Module | Contains | Must be visible to |
+| Transport | Class | Pinned poller? |
 |---|---|---|
-| `netty-virtualthread-bootstrap` | `NettyScheduler` shim + `NettySchedulerSpi` interface (no dependencies) | System classloader |
-| `netty-virtualthread-core` | Real scheduling logic (`NettySchedulerProviderImpl`) | Thread-context classloader (TCCL) |
+| NIO / LOCAL | `VirtualIoEventLoopGroup` | No — NIO parks via Loom, carrier is freed |
+| EPOLL / IO_URING | `VirtualIoPollerEventLoopGroup` | Yes — one per carrier, does kernel I/O |
+| No Netty | `EventLoopSchedulerGroup` | Optional — `registerPinnedPoller()` |
 
-`NettyScheduler` discovers the real implementation at runtime via `ServiceLoader`
-using the TCCL — the same pattern JDBC uses to discover drivers. As long as the
-bootstrap classes are on the system classpath and the core JAR is visible to the
-TCCL, discovery works regardless of classloader hierarchy.
+## Architecture
 
-### Plain classpath (shade plugin, flat classpath)
+```
+EventLoopSchedulerGroup (global singleton, N carriers)
+ ├── EventLoopScheduler[0]
+ │    ├── carrier thread (permanent, daemon)
+ │    ├── MPSC run queue
+ │    └── virtualThreadFactory() → VTs with affinity to this carrier
+ ├── EventLoopScheduler[1]
+ │    └── ...
+ └── EventLoopScheduler[N-1]
+```
 
-No special configuration needed. Both modules are on the same classpath.
+**Carrier threads** run forever (like ForkJoinPool workers). They drain the run queue and execute virtual thread continuations. When idle, they park.
 
-### Spring Boot fat JAR
+**Virtual threads** created via a scheduler's `virtualThreadFactory()` are scheduled on that carrier. When they block, they park (freeing the carrier); when they resume, the continuation goes back into the same carrier's run queue.
 
-Spring Boot packages dependencies under `BOOT-INF/lib/`, invisible to the system
-classloader. Use Multi-Release JAR (MRJAR) entries to place the bootstrap classes
-at the outer level of the fat JAR:
+A carrier can optionally host a **pinned poller** — a long-running virtual thread dedicated to kernel I/O (epoll_wait, io_uring_enter). It runs as a VT (not directly on the carrier thread) to avoid deadlocking the carrier: all carrier-to-VT coordination goes through lock-free structures. The scheduler coordinates preemption: when external VTs have work queued, the poller yields; when nothing is pending, the poller can block in kernel I/O.
+
+## Prerequisites
+
+- A Loom-enabled JDK (Java 27+, [builds.shipilev.net](https://builds.shipilev.net/openjdk-jdk-loom/) or build from [openjdk/loom](https://github.com/openjdk/loom))
+- JVM flag: `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler`
+- Maven 3.6+
+
+## Usage
+
+### Netty with NIO
+
+Use `VirtualIoEventLoopGroup`. NIO parks via Loom (carrier is freed), so no pinned poller is needed — the event loop just gets VT affinity to a carrier for locality.
+
+```java
+var group = new VirtualIoEventLoopGroup(4, NioIoHandler.newFactory());
+
+new ServerBootstrap()
+    .group(group)
+    .channel(NioServerSocketChannel.class)
+    .childHandler(/* ... */)
+    .bind(8080).sync();
+```
+
+### Netty with native transport (EPOLL / IO_URING)
+
+Use `VirtualIoPollerEventLoopGroup`. It registers a pinned poller on each carrier — a virtual thread that runs the Netty event loop and does kernel I/O (epoll_wait, io_uring_enter) with affinity to that carrier.
+
+```java
+var group = new VirtualIoPollerEventLoopGroup(EpollIoHandler.newFactory());
+
+new ServerBootstrap()
+    .group(group)
+    .channel(EpollServerSocketChannel.class)
+    .childHandler(new ChannelInitializer<SocketChannel>() {
+        @Override
+        protected void initChannel(SocketChannel ch) {
+            ch.pipeline().addLast(new MyHandler(group));
+        }
+    })
+    .bind(8080).sync();
+```
+
+Spawn virtual threads from a handler — they run on the same carrier as the event loop:
+
+```java
+class MyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
+    private final VirtualIoPollerEventLoopGroup group;
+
+    @Override
+    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
+        group.vThreadFactory().newThread(() -> {
+            // blocking work here — same carrier as the event loop
+            byte[] result = blockingHttpCall();
+            ctx.channel().eventLoop().execute(() -> writeResponse(ctx, result));
+        }).start();
+    }
+}
+```
+
+### Locality-first scheduling without Netty
+
+Use the scheduler directly. No Netty dependency needed — just the core module.
+
+```java
+var group = EventLoopSchedulerGroup.instance();
+var scheduler = group.scheduler(0);
+
+// all VTs from this factory have affinity to carrier 0
+ThreadFactory tf = scheduler.virtualThreadFactory();
+tf.newThread(() -> {
+    // runs on carrier 0
+    doWork();
+}).start();
+```
+
+Round-robin across all carriers:
+
+```java
+var group = EventLoopSchedulerGroup.instance();
+for (int i = 0; i < tasks; i++) {
+    var scheduler = group.scheduler(i % group.size());
+    scheduler.virtualThreadFactory().newThread(() -> doWork()).start();
+}
+```
+
+### Writing a custom pinned poller
+
+Register your own I/O poller on a carrier via `registerPinnedPoller`. The poller runs as a virtual thread with affinity to the carrier (not directly on the carrier thread — this avoids deadlocks by keeping all coordination lock-free). The returned `CompletionStage` completes when the poller exits and the slot is freed.
+
+```java
+var scheduler = EventLoopSchedulerGroup.instance().scheduler(0);
+
+CompletionStage<Void> termination = scheduler.registerPinnedPoller(
+    () -> { /* empty — no blocking, no wakeup needed */ },
+    () -> {
+        while (!shutdown) {
+            int events = doPollNonBlocking();
+            scheduler.maybeYield();
+            processTasks();
+            scheduler.maybeYield();
+        }
+    }
+);
+```
+
+That's the simplest correct poller — non-blocking poll, yield between phases, no wakeup coordination needed. The scheduler handles the rest.
+
+A pinned poller has three responsibilities:
+
+1. **Yield CPU time to the scheduler.** Call `maybeYield()` between phases — it yields the carrier if external VTs have work queued, letting the carrier loop drain them before the poller resumes.
+
+2. **Terminate.** The poller slot is freed when the body `Runnable` returns (via try-finally internally). The returned `CompletionStage` completes after cleanup, so callers can wait for the slot to be available again.
+
+3. **Never miss a wakeup — if you choose to block.** The simple poller above never blocks, so it doesn't need wakeup coordination. But if you want to block in kernel I/O when idle (to save CPU), the blocking path introduces a coordination problem.
+
+   The blocking decision must be made **inside your transport** — the transport must advertise it's about to sleep (store a flag) before checking `canBlock()` (a load), with a StoreLoad barrier between the two so the load cannot slip before the advertisement. This is the [Seastar sleep/wakeup pattern](https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/): the symmetric store-barrier-load on both producer and consumer sides ensures at least one side always sees the other's store.
+
+   This is how our Netty integration works: `canBlock()` is [injected into the ManualIoEventLoop](core/src/main/java/io/netty/loom/VirtualIoPollerEventLoopGroup.java) via override, the transport advertises sleep via a volatile write (`pollerRunning.set(false)`) before reading `canBlock()`, and the wakeup is the transport's own `eventLoop::wakeup` (see [netty#15922](https://github.com/netty/netty/issues/15922)):
+
+   ```java
+   // inject canBlock into the transport
+   var eventLoop = new ManualIoEventLoop(parent, null, handlerFactory) {
+       @Override
+       public boolean canBlock() {
+           return scheduler.canBlock();
+       }
+   };
+
+   scheduler.registerPinnedPoller(
+       eventLoop::wakeup,   // transport's own wakeup mechanism
+       () -> {
+           while (!eventLoop.isShuttingDown()) {
+               eventLoop.run();      // transport checks canBlock() internally
+               scheduler.maybeYield();
+           }
+       }
+   );
+   ```
+
+   Between `canBlock()` returning true and the transport entering its blocking syscall, work may arrive and the scheduler calls `wakeup()`. That signal must not be lost. Two approaches:
+
+   **Permit-based (lock-free):** The transport's wakeup is sticky — if called before the blocking call starts, the blocking call returns immediately. Examples: `eventfd` (stays readable until consumed), `Selector.wakeup()` (sets a flag), `LockSupport.unpark()` (stores a permit). This is what Netty's transports use.
+
+   **Lock-based (rendezvous):** The `canBlock()` check and the blocking wait happen inside a lock shared with `wakeup()`. The signal cannot slip between the check and the wait. Note: `Condition.signal()` is **not** sticky — if it arrives before `Condition.await()`, it's lost. The queue-empty check must be inside the locked region.
+
+   For background on why this coordination is subtle, see:
+   - [Seastar's memory barrier approach](https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/) — the symmetric store-barrier-load pattern between producer and consumer
+   - [Mechanical-sympathy discussion](https://groups.google.com/g/mechanical-sympathy/c/yKQNVFAjui0/m/NAhfyjT-BAAJ) — why `Condition.signal()` deadlocks when it arrives before `Condition.await()`, and why permit-based mechanisms (`LockSupport.park`/`unpark`) don't have this problem
+   - [Viktor Klang's actor](https://gist.github.com/viktorklang/2557678) — the atomic-flag-with-recheck pattern
+
+Additional constraints:
+- `canBlock()` is a snapshot — it can go stale immediately. Never cache the result.
+- One poller per carrier. `registerPinnedPoller` throws if a poller is already registered.
+
+For a deeper look at the store-barrier-load protocol, JCStress proofs that the guard prevents missed wakeups (and that removing it causes 94% signal loss), and the [`BlockingPollGuard`](concurrency-tests/src/main/java/io/netty/loom/concurrent/BlockingPollGuard.java) utility that encapsulates it, see [`concurrency-tests/README.md`](concurrency-tests/README.md).
+
+## Configuration
+
+| Property | Default | Description |
+|---|---|---|
+| `io.netty.loom.schedulers` | `availableProcessors()` | Number of carrier threads |
+| `io.netty.loom.yield.us` | `10` | Yield duration in microseconds |
+| `io.netty.loom.resumed.continuations` | `1024` | Initial MPSC queue capacity |
+
+## Module structure
+
+| Module | Description |
+|---|---|
+| `netty-virtualthread-bootstrap` | JDK-only shim (`NettyScheduler` + `NettySchedulerSpi`). Must be on the system classloader. |
+| `netty-virtualthread-core` | Scheduler + Netty integration. Discovered via ServiceLoader (TCCL). |
+
+## Fat JAR / application server deployment
+
+The JVM loads the scheduler via the system classloader. Frameworks like Spring Boot use isolated classloaders. The bootstrap module must be visible to the system classloader; the core module is discovered via ServiceLoader through the TCCL.
+
+### Spring Boot
+
+Use Multi-Release JAR entries to expose bootstrap classes to the system classloader:
 
 ```xml
-<!-- 1. Mark the JAR as Multi-Release -->
+<!-- Mark as Multi-Release -->
 <plugin>
     <groupId>org.apache.maven.plugins</groupId>
     <artifactId>maven-jar-plugin</artifactId>
@@ -144,7 +310,7 @@ at the outer level of the fat JAR:
     </configuration>
 </plugin>
 
-<!-- 2. Unpack bootstrap classes into META-INF/versions/27/ -->
+<!-- Unpack bootstrap into META-INF/versions/27/ -->
 <plugin>
     <groupId>org.apache.maven.plugins</groupId>
     <artifactId>maven-dependency-plugin</artifactId>
@@ -152,9 +318,7 @@ at the outer level of the fat JAR:
         <execution>
             <id>unpack-bootstrap-scheduler</id>
             <phase>prepare-package</phase>
-            <goals>
-                <goal>unpack</goal>
-            </goals>
+            <goals><goal>unpack</goal></goals>
             <configuration>
                 <artifactItems>
                     <artifactItem>
@@ -171,7 +335,7 @@ at the outer level of the fat JAR:
     </executions>
 </plugin>
 
-<!-- 3. Exclude bootstrap from BOOT-INF/lib/ to avoid duplicate class definitions -->
+<!-- Exclude bootstrap from BOOT-INF/lib/ -->
 <plugin>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-maven-plugin</artifactId>
@@ -186,90 +350,25 @@ at the outer level of the fat JAR:
 </plugin>
 ```
 
-The resulting JAR layout:
+### Application servers (OpenLiberty, WildFly)
 
-```
-app.jar
-├── META-INF/MANIFEST.MF          (Multi-Release: true)
-├── META-INF/versions/27/
-│   └── io/netty/loom/spi/
-│       ├── NettyScheduler.class
-│       └── NettySchedulerSpi.class
-└── BOOT-INF/lib/
-    └── netty-virtualthread-core-*.jar
-```
+Place the bootstrap JAR on the system classpath or `-Xbootclasspath/a:`. The core JAR stays inside the application deployment (WAR/EAR).
 
-On Java 27+, the system classloader sees the bootstrap classes via MRJAR. The
-core implementation is discovered via ServiceLoader through Spring Boot's
-`LaunchedClassLoader` (which is set as the TCCL).
+## Dev container
 
-Credit: [dreamlike-ocean](https://github.com/dreamlike-ocean) for identifying and
-fixing this issue.
+The easiest way to get started is the provided dev container (`.devcontainer/`), which uses `shipilev/openjdk:loom`.
 
-### OpenLiberty, WildFly, and other application servers
+Works with VS Code (Dev Containers extension) and IntelliJ IDEA (File > Remote Development > Dev Containers).
 
-The same principle applies: the bootstrap JAR must be visible to the system
-classloader. The mechanism varies by server:
-
-- **OpenLiberty**: configure the bootstrap JAR as a
-  [shared library](https://openliberty.io/docs/latest/class-loader-library-config.html)
-  at server scope, or add it via `jvm.options`:
-  ```
-  -Xbootclasspath/a:/path/to/netty-virtualthread-bootstrap.jar
-  ```
-- **WildFly**: register the bootstrap JAR as a
-  [global module](https://docs.wildfly.org/latest/Developer_Guide.html#global-modules),
-  or add it to `JBOSS_MODULEPATH`.
-- **Generic**: place the bootstrap JAR on the JVM's `-classpath` or
-  `-Xbootclasspath/a:` separately from the application archive. The core JAR
-  stays inside the application's deployment unit.
-
-In all cases, `netty-virtualthread-core` should be packaged inside the
-application (WAR/EAR) as a normal dependency — the TCCL will be the application
-classloader at the point when `NettyScheduler` discovers it.
-
-## JFR events
-Netty Loom publishes custom Java Flight Recorder events (disabled by default) for scheduler activity:
-
-- `io.netty.loom.NettyRunIo`
-- `io.netty.loom.NettyRunTasks`
-- `io.netty.loom.VirtualThreadTaskRuns`
-- `io.netty.loom.VirtualThreadTaskRun`
-- `io.netty.loom.VirtualThreadTaskSubmit`
-
-The benchmark runner can enable these events selectively via `ENABLE_JFR=true` and `JFR_EVENTS=...`. See `benchmark-runner/README.md` for details.
-
-## Build and Run
-This project uses Maven for build and dependency management.
-
-1. Build the project:
+## Build
 
 ```sh
+export JAVA_HOME=/path/to/loom-jdk
 mvn clean install
 ```
-
-2. Run the benchmarks (optional):
-
-```sh
-cd benchmarks
-mvn clean install
-java -jar target/benchmarks.jar
-```
-
-## Prerequisites
-- Maven 3.6+
-- To use the `VirtualMultithreadIoEventLoopGroup` set the JVM property to install the Netty scheduler:
-  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler
-
-## References
-- Project Loom (OpenJDK): https://openjdk.org/projects/loom/
-- Netty Project: https://netty.io/
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+Apache License 2.0 — see [LICENSE](LICENSE).
 
-All source files include the Apache License header, and license compliance is enforced via the Spotless Maven plugin during the build process.
-
----
-For more details, see the source code and benchmark results in the respective modules.
+Credit: [dreamlike-ocean](https://github.com/dreamlike-ocean) for identifying and fixing the fat-JAR classloader issue.

@@ -22,6 +22,11 @@
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+            <version>4.0.3</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -29,6 +34,18 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Multi-Release>true</Multi-Release>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
@@ -47,25 +64,52 @@
                 </configuration>
             </plugin>
 
-            <!-- Shade plugin to produce an executable fat jar -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.2</version>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
                 <executions>
                     <execution>
-                        <phase>package</phase>
+                        <id>unpack-bootstrap-scheduler</id>
+                        <phase>prepare-package</phase>
                         <goals>
-                            <goal>shade</goal>
+                            <goal>unpack</goal>
                         </goals>
                         <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>io.netty.loom.example.EchoServer</mainClass>
-                                </transformer>
-                            </transformers>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>io.netty.loom</groupId>
+                                    <artifactId>netty-virtualthread-bootstrap</artifactId>
+                                    <version>${project.version}</version>
+                                    <type>jar</type>
+                                    <includes>io/netty/loom/spi/**</includes>
+                                    <outputDirectory>${project.build.outputDirectory}/META-INF/versions/${java.version}</outputDirectory>
+                                </artifactItem>
+                            </artifactItems>
+                            <overWriteSnapshots>true</overWriteSnapshots>
                         </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>4.0.3</version>
+                <configuration>
+                    <mainClass>io.netty.loom.example.Main</mainClass>
+                    <excludes>
+                        <exclude>
+                            <groupId>io.netty.loom</groupId>
+                            <artifactId>netty-virtualthread-bootstrap</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
                     </execution>
                 </executions>
             </plugin>

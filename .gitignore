@@ -12,3 +12,7 @@ target/
 
 # Mac
 .DS_Store
+
+# Benchmark and JCStress results
+benchmark-results*/
+results/

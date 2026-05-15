@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 The Netty VirtualThread Scheduler Project
+ * Copyright 2026 The Netty VirtualThread Scheduler Project
  *
  * The Netty VirtualThread Scheduler Project licenses this file to you under the Apache License,
  * version 2.0 (the "License"); you may not use this file except in compliance with the
@@ -12,8 +12,22 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom;
+package io.netty.loom.example;
 
-public enum EventLoopSchedulerType {
-	FIFO
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class Main implements CommandLineRunner {
+
+	public static void main(String[] args) {
+		System.setProperty("jdk.virtualThreadScheduler.implClass", "io.netty.loom.spi.NettyScheduler");
+		SpringApplication.run(Main.class, args);
+	}
+
+	@Override
+	public void run(String... args) throws Exception {
+		EchoServer.startServer(args);
+	}
 }

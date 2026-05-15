@@ -15,6 +15,7 @@
         <module>benchmarks</module>
         <module>benchmark-runner</module>
         <module>example-echo</module>
+        <module>concurrency-tests</module>
     </modules>
 
     <properties>
@@ -22,6 +23,7 @@
         <netty.version>4.2.12.Final</netty.version>
         <junit.version>6.0.3</junit.version>
         <jmh.version>1.37</jmh.version>
+        <jcstress.version>0.16</jcstress.version>
         <java.version>27</java.version>
     </properties>
 
@@ -121,7 +123,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
+                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=2 --add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
                             </configuration>
                         </execution>
                         <execution>
@@ -131,7 +133,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler -Djdk.traceVirtualThreadLocals=false --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
+                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=2 --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
                             </configuration>
                         </execution>
                     </executions>
