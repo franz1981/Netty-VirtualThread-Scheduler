@@ -129,7 +129,6 @@ resolve_jfr_events() {
         "io.netty.loom.VirtualThreadTaskRuns"
         "io.netty.loom.VirtualThreadTaskRun"
         "io.netty.loom.VirtualThreadTaskSubmit"
-        "io.netty.loom.WorkSteal"
     )
     local -A event_map=(
         ["NettyRunIo"]="io.netty.loom.NettyRunIo"
@@ -137,13 +136,11 @@ resolve_jfr_events() {
         ["VirtualThreadTaskRuns"]="io.netty.loom.VirtualThreadTaskRuns"
         ["VirtualThreadTaskRun"]="io.netty.loom.VirtualThreadTaskRun"
         ["VirtualThreadTaskSubmit"]="io.netty.loom.VirtualThreadTaskSubmit"
-        ["WorkSteal"]="io.netty.loom.WorkSteal"
         ["io.netty.loom.NettyRunIo"]="io.netty.loom.NettyRunIo"
         ["io.netty.loom.NettyRunTasks"]="io.netty.loom.NettyRunTasks"
         ["io.netty.loom.VirtualThreadTaskRuns"]="io.netty.loom.VirtualThreadTaskRuns"
         ["io.netty.loom.VirtualThreadTaskRun"]="io.netty.loom.VirtualThreadTaskRun"
         ["io.netty.loom.VirtualThreadTaskSubmit"]="io.netty.loom.VirtualThreadTaskSubmit"
-        ["io.netty.loom.WorkSteal"]="io.netty.loom.WorkSteal"
     )
     local -a resolved=()
 
@@ -455,7 +452,7 @@ run_warmup() {
     local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_CPUSET")
 
     # Use wrk for warmup (no rate limiting)
-    $taskset_cmd jbang wrk \
+    $taskset_cmd jbang wrk@hyperfoil \
         -t "$LOAD_GEN_THREADS" \
         -c "$LOAD_GEN_CONNECTIONS" \
         -d "$WARMUP_DURATION" \
@@ -664,7 +661,7 @@ run_load_test() {
         # Use wrk2 with rate limiting
         log "Using wrk2 with rate: $LOAD_GEN_RATE req/s"
 
-        $taskset_cmd jbang wrk2 \
+        $taskset_cmd jbang wrk2@hyperfoil \
             -t "$LOAD_GEN_THREADS" \
             -c "$LOAD_GEN_CONNECTIONS" \
             -d "${test_secs}s" \
@@ -675,7 +672,7 @@ run_load_test() {
         # Use wrk for max throughput
         log "Using wrk for max throughput"
 
-        $taskset_cmd jbang wrk \
+        $taskset_cmd jbang wrk@hyperfoil \
             -t "$LOAD_GEN_THREADS" \
             -c "$LOAD_GEN_CONNECTIONS" \
             -d "${test_secs}s" \
