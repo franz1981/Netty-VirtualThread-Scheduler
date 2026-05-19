@@ -21,7 +21,6 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
 import org.jctools.queues.MpscUnboundedArrayQueue;
@@ -257,6 +256,7 @@ public final class EventLoopScheduler {
 	 *            call; false if idle
 	 */
 	public boolean maybeYield(boolean hadIoWork) {
+		assert isValidPinnedPoller();
 		touchHeartbeat(System.nanoTime());
 		if (hasRunnableContinuations()) {
 			Thread.yield();
@@ -267,6 +267,13 @@ public final class EventLoopScheduler {
 			return true;
 		}
 		return false;
+	}
+
+	private boolean isValidPinnedPoller() {
+		SchedulingContext ctx;
+		return Thread.currentThread().isVirtual()
+				&& ((ctx = currentThreadSchedulerContext()).type == VThreadType.PINNED_POLLER
+						&& ctx.eventLoopScheduler == this);
 	}
 
 	private void virtualThreadSchedulerLoop() {
@@ -305,6 +312,7 @@ public final class EventLoopScheduler {
 	 * handle this race (see {@link #registerPinnedPoller} for details).
 	 */
 	public boolean canBlock() {
+		assert isValidPinnedPoller();
 		return !hasRunnableContinuations();
 	}
 
@@ -404,6 +412,7 @@ public final class EventLoopScheduler {
 		boolean submitEventEnabled = VirtualThreadTaskSubmitEvent.isEventEnabled();
 		boolean pinnedTask = false;
 		if (isPinnedPoller(task) && pinnedContinuationToRun == null) {
+			assert (task.attachment() instanceof SchedulingContext ctx) && ctx.eventLoopScheduler == this;
 			pinnedContinuationToRun = task;
 			pinnedTask = true;
 		}
