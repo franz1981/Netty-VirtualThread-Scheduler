@@ -43,11 +43,4 @@ public interface NettySchedulerSpi {
 	 */
 	void onContinue(Thread.VirtualThreadTask task);
 
-	/**
-	 * Whether this provider expects the JVM to run with per-carrier pollers
-	 * ({@code jdk.pollerMode=3}).
-	 */
-	default boolean expectsPerCarrierPollers() {
-		return false;
-	}
 }

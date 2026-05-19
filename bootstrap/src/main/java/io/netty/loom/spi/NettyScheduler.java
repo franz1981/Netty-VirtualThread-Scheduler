@@ -34,12 +34,10 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
 	private final Thread.VirtualThreadScheduler jdkBuiltinScheduler;
 	private final NettySchedulerSpi provider;
-	private final boolean perCarrierPollers;
 
 	public NettyScheduler(Thread.VirtualThreadScheduler jdkBuiltinScheduler) {
 		INSTANCE = this;
 		this.jdkBuiltinScheduler = jdkBuiltinScheduler;
-		this.perCarrierPollers = Integer.getInteger("jdk.pollerMode", -1) == 3;
 
 		ClassLoader tccl = Thread.currentThread().getContextClassLoader();
 		if (tccl == null) {
@@ -55,14 +53,6 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
 	public static NettyScheduler instance() {
 		return ensureInstalled();
-	}
-
-	public Thread.VirtualThreadScheduler jdkBuiltinScheduler() {
-		return jdkBuiltinScheduler;
-	}
-
-	public boolean expectsPerCarrierPollers() {
-		return perCarrierPollers;
 	}
 
 	@Override
@@ -88,10 +78,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 		if (instance != null) {
 			return instance;
 		}
-		Thread.ofVirtual().unstarted(new Runnable() {
-			@Override
-			public void run() {
-			}
+		Thread.ofVirtual().unstarted(() -> {
 		});
 		return INSTANCE;
 	}

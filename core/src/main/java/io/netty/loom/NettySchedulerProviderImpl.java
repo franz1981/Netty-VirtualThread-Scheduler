@@ -49,12 +49,6 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 	@Override
 	public void init(Thread.VirtualThreadScheduler jdkBuiltinScheduler) {
 		this.jdkBuiltinScheduler = jdkBuiltinScheduler;
-		EventLoopSchedulerGroup.init();
-	}
-
-	@Override
-	public boolean expectsPerCarrierPollers() {
-		return perCarrierPollers;
 	}
 
 	@Override

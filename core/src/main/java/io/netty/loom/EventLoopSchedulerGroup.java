@@ -32,40 +32,45 @@ public class EventLoopSchedulerGroup {
 	private static final int RESUMED_CONTINUATIONS_EXPECTED_COUNT = Integer
 			.getInteger("io.netty.loom.resumed.continuations", 1024);
 
-	private static volatile EventLoopSchedulerGroup INSTANCE;
+	private static final EventLoopSchedulerGroup INSTANCE;
+	private static final Throwable UNAVAILABILITY_CAUSE;
 
-	/** Returns the global singleton, creating it on first access. */
-	public static EventLoopSchedulerGroup instance() {
-		var instance = INSTANCE;
-		if (instance == null) {
-			synchronized (EventLoopSchedulerGroup.class) {
-				instance = INSTANCE;
-				if (instance == null) {
-					instance = new EventLoopSchedulerGroup(DEFAULT_SIZE);
-					INSTANCE = instance;
-				}
+	static {
+		EventLoopSchedulerGroup group = null;
+		Throwable cause = null;
+		try {
+			if (!io.netty.loom.spi.NettyScheduler.isAvailable()) {
+				cause = new IllegalStateException(
+						"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler is required");
+			} else {
+				group = new EventLoopSchedulerGroup(DEFAULT_SIZE);
 			}
+		} catch (Throwable t) {
+			cause = t;
 		}
-		return instance;
+		INSTANCE = group;
+		UNAVAILABILITY_CAUSE = cause;
 	}
 
-	static void init() {
-		instance();
+	private static void ensureAvailability() {
+		if (UNAVAILABILITY_CAUSE != null) {
+			throw new IllegalStateException("EventLoopSchedulerGroup is not available", UNAVAILABILITY_CAUSE);
+		}
+	}
+
+	/** Returns the global singleton. */
+	public static EventLoopSchedulerGroup instance() {
+		ensureAvailability();
+		return INSTANCE;
 	}
 
 	private final EventLoopScheduler[] schedulers;
 
-	EventLoopSchedulerGroup(int size) {
-		this(size, null);
-	}
-
-	EventLoopSchedulerGroup(int size, ThreadFactory carrierThreadFactory) {
+	private EventLoopSchedulerGroup(int size) {
 		if (size <= 0) {
 			throw new IllegalArgumentException("size must be > 0");
 		}
-		if (carrierThreadFactory == null) {
-			carrierThreadFactory = Thread.ofPlatform().daemon(true).factory();
-		}
+		var carrierThreadFactory = Thread.ofPlatform().daemon(true).factory();
 		schedulers = new EventLoopScheduler[size];
 		for (int i = 0; i < size; i++) {
 			schedulers[i] = new EventLoopScheduler(i, carrierThreadFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT);
