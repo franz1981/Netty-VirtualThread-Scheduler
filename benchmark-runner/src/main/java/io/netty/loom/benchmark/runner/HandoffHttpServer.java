@@ -37,7 +37,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
-import io.netty.loom.EventLoopScheduler;
 import io.netty.loom.VirtualIoPollerEventLoopGroup;
 import io.netty.loom.VirtualIoEventLoopGroup;
 import io.netty.util.AsciiString;
