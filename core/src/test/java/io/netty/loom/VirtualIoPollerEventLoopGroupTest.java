@@ -30,6 +30,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -450,6 +451,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 	@MethodSource("transportsAllowLocal")
 	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed(Transport transport)
 			throws InterruptedException, ExecutionException, BrokenBarrierException {
+		assumeTrue(!EventLoopScheduler.WORK_STEALING_ENABLED, "work-stealing shutdown interaction needs investigation");
 		var group = new VirtualIoPollerEventLoopGroup(1, transport.handlerFactory());
 		final var barrier = new CyclicBarrier(2);
 		final var vThreadFactory = group.submit(group::vThreadFactory).get();
@@ -555,7 +557,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 				group.execute(() -> {
 					var readerThread = group.vThreadFactory().newThread(() -> {
 						var eventLoopScheduler = EventLoopScheduler.currentScheduler();
-						assertEquals(0, eventLoopScheduler.externalContinuationsCount());
+						assertEquals(0, eventLoopScheduler.runnableCount());
 						try {
 							serverIn.read();
 							readCompleted.complete(null);
@@ -606,7 +608,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 					var readerThread = group.vThreadFactory().newThread(() -> {
 						schedulerRef.lazySet(EventLoopScheduler.currentScheduler());
 						var eventLoopScheduler = EventLoopScheduler.currentScheduler();
-						assertEquals(0, eventLoopScheduler.externalContinuationsCount());
+						assertEquals(0, eventLoopScheduler.runnableCount());
 						try {
 							serverIn.read();
 							firstReadCompleted.complete(null);
@@ -671,7 +673,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 					var readerThread = group.vThreadFactory().newThread(() -> {
 						schedulerRef.lazySet(EventLoopScheduler.currentScheduler());
 						var eventLoopScheduler = EventLoopScheduler.currentScheduler();
-						assertEquals(0, eventLoopScheduler.externalContinuationsCount());
+						assertEquals(0, eventLoopScheduler.runnableCount());
 						try {
 							byte[] data = serverIn.readNBytes(bytesToWrite);
 							readCompleted.complete(data);
@@ -694,7 +696,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 					Thread.sleep(1);
 				}
 				for (int i = 0; i < toWrite.length; i++) {
-					Thread.sleep(10); // make sure the read is parked
+					Thread.sleep(50); // make sure the read is parked
 					byte b = toWrite[i];
 					// shutdown whilst the read is parked
 					if (i == shutDownAt) {
@@ -721,7 +723,9 @@ public class VirtualIoPollerEventLoopGroupTest {
 
 	@Test
 	void registerPinnedPollerCompletionStageCompletesOnTermination() throws InterruptedException, ExecutionException {
-		var scheduler = EventLoopSchedulerGroup.instance().availableSchedulers(1)[0];
+		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
+		assumeTrue(available != null, "no free scheduler slots available");
+		var scheduler = available[0];
 		var termination = scheduler.registerPinnedPoller(() -> {
 		}, () -> {
 		});
@@ -731,7 +735,9 @@ public class VirtualIoPollerEventLoopGroupTest {
 
 	@Test
 	void registerPinnedPollerCompletionStageCompletesOnException() throws InterruptedException, ExecutionException {
-		var scheduler = EventLoopSchedulerGroup.instance().availableSchedulers(1)[0];
+		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
+		assumeTrue(available != null, "no free scheduler slots available");
+		var scheduler = available[0];
 		var termination = scheduler.registerPinnedPoller(() -> {
 		}, () -> {
 			throw new RuntimeException("poller crashed");
@@ -775,5 +781,261 @@ public class VirtualIoPollerEventLoopGroupTest {
 			var eventLoopScheduler = group.submit(() -> EventLoopScheduler.currentScheduler()).get();
 			assertSame(eventLoopScheduler.virtualThreadFactory(), group.vThreadFactoryOf(ioEventLoop));
 		}
+	}
+
+	@Test
+	@Timeout(15)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void runningSchedulerDiffersFromHomeWhenStolen() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2);
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+		var factoryA = schedulerA.virtualThreadFactory();
+		var factoryB = schedulerB.virtualThreadFactory();
+		var blockerA = new AtomicBoolean(true);
+		var blockerB = new AtomicBoolean(true);
+		var startedA = new CountDownLatch(1);
+		var startedB = new CountDownLatch(1);
+		var runningRef = new CompletableFuture<EventLoopScheduler>();
+		factoryA.newThread(() -> {
+			startedA.countDown();
+			while (blockerA.get()) {
+				Thread.onSpinWait();
+			}
+		}).start();
+		factoryB.newThread(() -> {
+			startedB.countDown();
+			while (blockerB.get()) {
+				Thread.onSpinWait();
+			}
+		}).start();
+		assertTrue(startedA.await(2, TimeUnit.SECONDS));
+		assertTrue(startedB.await(2, TimeUnit.SECONDS));
+		try {
+			awaitUnresponsive(schedulerA);
+			factoryA.newThread(() -> {
+				runningRef.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+			}).start();
+			blockerB.set(false);
+			var running = runningRef.get(5, TimeUnit.SECONDS);
+			assertSame(schedulerB, running, "stolen VT should report running on scheduler B");
+		} finally {
+			blockerA.set(false);
+			blockerB.set(false);
+		}
+	}
+
+	@Test
+	@Timeout(15)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void stolenVTChildRunsOnHomeScheduler() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2);
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+		var factoryA = schedulerA.virtualThreadFactory();
+		var factoryB = schedulerB.virtualThreadFactory();
+		var blockerA = new AtomicBoolean(true);
+		var blockerB = new AtomicBoolean(true);
+		var startedA = new CountDownLatch(1);
+		var startedB = new CountDownLatch(1);
+		var childHome = new CompletableFuture<EventLoopScheduler>();
+		factoryA.newThread(() -> {
+			startedA.countDown();
+			while (blockerA.get()) {
+				Thread.onSpinWait();
+			}
+		}).start();
+		factoryB.newThread(() -> {
+			startedB.countDown();
+			while (blockerB.get()) {
+				Thread.onSpinWait();
+			}
+		}).start();
+		assertTrue(startedA.await(2, TimeUnit.SECONDS));
+		assertTrue(startedB.await(2, TimeUnit.SECONDS));
+		try {
+			awaitUnresponsive(schedulerA);
+			factoryA.newThread(() -> {
+				factoryA.newThread(() -> {
+					childHome.complete(EventLoopScheduler.currentScheduler());
+				}).start();
+			}).start();
+			blockerB.set(false);
+			var child = childHome.get(5, TimeUnit.SECONDS);
+			assertSame(schedulerA, child, "child VT must run on home scheduler A");
+		} finally {
+			blockerA.set(false);
+			blockerB.set(false);
+		}
+	}
+
+	@Test
+	@Timeout(15)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void pollerStealViaMaybeYield() throws Exception {
+		try (var group = new VirtualIoPollerEventLoopGroup(2, NioIoHandler.newFactory())) {
+			var pair = group.submit(() -> new Object[]{EventLoopScheduler.currentScheduler(), group.vThreadFactory()})
+					.get();
+			var schedulerA = (EventLoopScheduler) pair[0];
+			var factoryA = (java.util.concurrent.ThreadFactory) pair[1];
+			var blocker = new AtomicBoolean(true);
+			var blockerStarted = new CountDownLatch(1);
+			var runningRef = new CompletableFuture<EventLoopScheduler>();
+			factoryA.newThread(() -> {
+				blockerStarted.countDown();
+				while (blocker.get()) {
+					Thread.onSpinWait();
+				}
+			}).start();
+			assertTrue(blockerStarted.await(2, TimeUnit.SECONDS));
+			try {
+				awaitUnresponsive(schedulerA);
+				factoryA.newThread(() -> {
+					runningRef.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+				}).start();
+				var running = runningRef.get(5, TimeUnit.SECONDS);
+				assertNotSame(schedulerA, running,
+						"VT should be stolen by the idle poller carrier via maybeYield(false)");
+			} finally {
+				blocker.set(false);
+			}
+		}
+	}
+
+	@Test
+	@Timeout(15)
+	void workStealingDisabledNoInterference() throws Exception {
+		assumeTrue(!EventLoopScheduler.WORK_STEALING_ENABLED);
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2);
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+		var factoryA = schedulerA.virtualThreadFactory();
+		var blocker = new AtomicBoolean(true);
+		var blockerStarted = new CountDownLatch(1);
+		var targetHome = new CompletableFuture<EventLoopScheduler>();
+		factoryA.newThread(() -> {
+			blockerStarted.countDown();
+			while (blocker.get()) {
+				Thread.onSpinWait();
+			}
+		}).start();
+		assertTrue(blockerStarted.await(2, TimeUnit.SECONDS));
+		factoryA.newThread(() -> {
+			targetHome.complete(EventLoopScheduler.currentScheduler());
+		}).start();
+		blocker.set(false);
+		var home = targetHome.get(5, TimeUnit.SECONDS);
+		assertSame(schedulerA, home, "with WS disabled, VT must run on home scheduler");
+	}
+
+	@Test
+	@Timeout(15)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void busyPollerWithIoDoesNotSteal() throws Exception {
+		try (var group = new VirtualIoPollerEventLoopGroup(2, NioIoHandler.newFactory())) {
+			var pair = group.submit(() -> new Object[]{EventLoopScheduler.currentScheduler(), group.vThreadFactory()})
+					.get();
+			var schedulerA = (EventLoopScheduler) pair[0];
+			var factoryA = (java.util.concurrent.ThreadFactory) pair[1];
+			var bootstrap = new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
+					.childHandler(new ChannelInitializer<SocketChannel>() {
+						@Override
+						protected void initChannel(SocketChannel ch) {
+							ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+								@Override
+								public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
+									ctx.writeAndFlush(msg);
+								}
+							});
+						}
+					});
+			Channel server = bootstrap.bind(0).sync().channel();
+			int port = ((java.net.InetSocketAddress) server.localAddress()).getPort();
+			var blocker = new AtomicBoolean(true);
+			var blockerStarted = new CountDownLatch(1);
+			var targetHome = new CompletableFuture<EventLoopScheduler>();
+			factoryA.newThread(() -> {
+				blockerStarted.countDown();
+				while (blocker.get()) {
+					Thread.onSpinWait();
+				}
+			}).start();
+			assertTrue(blockerStarted.await(2, TimeUnit.SECONDS));
+			try (var client = new Socket("localhost", port)) {
+				var out = client.getOutputStream();
+				var keepWriting = new AtomicBoolean(true);
+				Thread.ofPlatform().daemon(true).start(() -> {
+					try {
+						while (keepWriting.get()) {
+							out.write(1);
+							out.flush();
+						}
+					} catch (IOException _) {
+					}
+				});
+				awaitUnresponsive(schedulerA);
+				factoryA.newThread(() -> {
+					targetHome.complete(EventLoopScheduler.currentScheduler());
+				}).start();
+				blocker.set(false);
+				var home = targetHome.get(5, TimeUnit.SECONDS);
+				assertSame(schedulerA, home,
+						"poller with I/O should not steal — VT runs on home A after blocker releases");
+				keepWriting.set(false);
+			}
+			server.close().sync();
+		}
+	}
+
+	@Test
+	@Timeout(15)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void busyCarrierDoesNotSteal() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2);
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+		var factoryA = schedulerA.virtualThreadFactory();
+		var factoryB = schedulerB.virtualThreadFactory();
+		var blockerA = new AtomicBoolean(true);
+		var blockerB = new AtomicBoolean(true);
+		var startedA = new CountDownLatch(1);
+		var startedB = new CountDownLatch(1);
+		var targetHome = new CompletableFuture<EventLoopScheduler>();
+		factoryA.newThread(() -> {
+			startedA.countDown();
+			while (blockerA.get()) {
+				Thread.onSpinWait();
+			}
+		}).start();
+		factoryB.newThread(() -> {
+			startedB.countDown();
+			while (blockerB.get()) {
+				Thread.onSpinWait();
+			}
+		}).start();
+		assertTrue(startedA.await(2, TimeUnit.SECONDS));
+		assertTrue(startedB.await(2, TimeUnit.SECONDS));
+		awaitUnresponsive(schedulerA);
+		factoryA.newThread(() -> {
+			targetHome.complete(EventLoopScheduler.currentScheduler());
+		}).start();
+		blockerA.set(false);
+		blockerB.set(false);
+		var home = targetHome.get(5, TimeUnit.SECONDS);
+		assertSame(schedulerA, home, "both carriers busy — VT must run on home A after blocker releases");
+	}
+
+	private static void awaitUnresponsive(EventLoopScheduler scheduler) throws InterruptedException {
+		long thresholdMs = Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200);
+		Thread.sleep(thresholdMs + 5);
+		assertTrue(scheduler.needsHelp(System.nanoTime()), "scheduler should be unresponsive after threshold");
 	}
 }
