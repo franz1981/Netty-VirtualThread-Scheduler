@@ -214,9 +214,9 @@ CompletionStage<Void> termination = scheduler.registerPinnedPoller(
     () -> {
         while (!shutdown) {
             int events = doPollNonBlocking();
-            scheduler.maybeYield();
+            scheduler.maybeYield(events > 0);  // report I/O activity
             processTasks();
-            scheduler.maybeYield();
+            scheduler.maybeYield(events > 0);
         }
     }
 );
@@ -226,7 +226,12 @@ That's the simplest correct poller — non-blocking poll, yield between phases, 
 
 A pinned poller has three responsibilities:
 
-1. **Yield CPU time to the scheduler.** Call `maybeYield()` between phases — it yields the carrier if external VTs have work queued, letting the carrier loop drain them before the poller resumes.
+1. **Yield CPU time and report I/O activity.** Call `maybeYield(hadIoWork)` between phases. The boolean argument tells the scheduler whether the poller processed I/O events since the last call:
+
+   - **`hadIoWork=true`**: the poller has I/O to process. The scheduler only yields for local VT preemption — no work stealing, because the carrier is doing useful work.
+   - **`hadIoWork=false`**: the poller is idle. The scheduler may attempt to steal work from an overloaded sibling (if [work stealing](#work-stealing-experimental) is enabled), helping reduce tail latency when load is uneven.
+
+   The `hadIoWork` parameter also controls the scheduler heartbeat. Passing `false` when idle allows the scheduler to accurately detect which carriers are available to help others. Passing `true` incorrectly would prevent the carrier from ever stealing, while passing `false` incorrectly would make the carrier steal when it should be doing I/O. **Get this right** — it's the feedback loop between the poller and the scheduler.
 
 2. **Terminate.** The poller slot is freed when the body `Runnable` returns (via try-finally internally). The returned `CompletionStage` completes after cleanup, so callers can wait for the slot to be available again.
 
@@ -248,9 +253,15 @@ A pinned poller has three responsibilities:
    scheduler.registerPinnedPoller(
        eventLoop::wakeup,   // transport's own wakeup mechanism
        () -> {
+           boolean canBlock = false;
            while (!eventLoop.isShuttingDown()) {
-               eventLoop.run();      // transport checks canBlock() internally
-               scheduler.maybeYield();
+               int events = canBlock
+                   ? eventLoop.run(MAX_WAIT_NS, YIELD_NS)
+                   : eventLoop.runNow(YIELD_NS);
+               boolean hadVtWork = scheduler.maybeYield(events > 0);
+               int tasks = eventLoop.runNonBlockingTasks(YIELD_NS);
+               hadVtWork |= scheduler.maybeYield(events > 0 || tasks > 0);
+               canBlock = events == 0 && tasks == 0 && !hadVtWork;
            }
        }
    );
@@ -280,6 +291,225 @@ For a deeper look at the store-barrier-load protocol, JCStress proofs that the g
 | `io.netty.loom.schedulers` | `availableProcessors()` | Number of carrier threads |
 | `io.netty.loom.yield.us` | `10` | Yield duration in microseconds |
 | `io.netty.loom.resumed.continuations` | `1024` | Initial MPSC queue capacity |
+| `io.netty.loom.workstealing.enabled` | `false` | Enable work stealing (experimental) |
+| `io.netty.loom.workstealing.unresponsive.ms` | `200` | Time without a scheduling checkpoint before a carrier is considered unresponsive |
+| `io.netty.loom.workstealing.overload.queue` | `10` | Queue depth threshold for overload detection |
+
+## Work stealing (experimental)
+
+Work stealing allows idle carriers to help overloaded siblings by taking virtual
+threads from their run queues. It is **opt-in** and designed around a
+**locality-first** principle.
+
+Enable with `-Dio.netty.loom.workstealing.enabled=true`.
+
+### Locality-first principle
+
+Each virtual thread has a **home carrier** — the carrier whose factory created it.
+The VT's I/O (sockets, channels) is registered on the home carrier's event loop.
+Running the VT on its home carrier means I/O completions arrive on the same carrier
+with no cross-carrier wakeups, no cache misses, and no eventfd writes.
+
+**Stealing violates locality.** A stolen VT runs on a foreign carrier. When it
+completes and calls `channel.writeAndFlush()`, the write goes to the home carrier's
+event loop task queue — a cross-carrier hop. When the VT yields or blocks, its
+continuation routes back to the home carrier's MPSC queue (non-sticky stealing).
+
+This is why stealing is **reluctant**:
+- Only steal from carriers that are genuinely not making progress (unresponsive >200ms
+  or queue depth >10) — never from a carrier that's actively draining its own work.
+- Only steal when idle (no local VTs, no I/O work) — never interrupt useful work to
+  help a sibling.
+- Power-of-2 random probing — O(1), no scan, minimal sibling interaction on the hot path.
+
+The design is **topology-ready**: when CPU topology awareness is added (NUMA nodes,
+LLC groups), the siblings array can be ordered by proximity. `tryStealing()` and
+`wakeIdleSibling()` would naturally prefer nearby carriers — steal from the closest
+overloaded sibling first, wake the closest idle sibling.
+
+This contrasts with Go and ForkJoinPool, which signal on **every** goroutine/task
+creation (see [sibling wake research](#queue-order-fifo-everywhere)). Their tasks have
+no home — they run anywhere with equal efficiency. Our VTs have carrier affinity,
+so aggressive stealing would trade locality for load balance. We only trade when
+the carrier genuinely cannot help itself.
+
+### Why power-of-2 choices
+
+Victim selection for both stealing and sibling waking uses **power-of-2 random
+probing**: pick 2 random siblings, choose the better candidate. This gives
+near-optimal selection with O(1) cost — no scanning, no shared data structure,
+no contention between concurrent stealers.
+
+From a scalability perspective (Neil Gunther's Universal Scalability Law), the
+coherency penalty grows with the number of parties contending on shared state.
+Scanning all N siblings on every steal attempt means N volatile reads per attempt
+× M concurrent stealers = O(N×M) coherency traffic. With 128 carriers, this
+dominates. Power-of-2 reduces it to O(1) per attempt — two reads, no shared
+counter, no CAS on a central structure. ForkJoinPool avoids scanning with a
+Treiber stack (O(1) CAS pop), but requires a shared atomic. Power-of-2 has
+**zero shared contention** — each stealer reads two independent sibling queues.
+
+The approach is validated by Danny Thomas's
+[virtual-threads-cluster-aware](https://github.com/DanielThomas/virtual-threads-cluster-aware)
+experiments on the [loom-dev mailing list](https://mail.openjdk.org/pipermail/loom-dev/2024-September/007161.html)
+(September 2024). His `CHOOSE_TWO` placement strategy — power-of-2 choices for
+selecting the least loaded cluster — delivered ~29% more throughput than the default
+FJP scheduler while using significantly less CPU on an AMD EPYC 9R14 (CCX-clustered
+L3 caches). The results demonstrate that topology-aware power-of-2 selection is a
+practical, low-overhead alternative to full scanning or centralized queue structures.
+
+### How it works
+
+```mermaid
+sequenceDiagram
+    participant A as Carrier A (overloaded)
+    participant Q as A's MPSC Queue
+    participant B as Carrier B (idle)
+
+    Note over A: Poller busy with I/O
+    A->>A: maybeYield(hadIoWork=true)
+    Note over A: Skip steal — has I/O work
+
+    Note over B: Poller idle — no I/O events
+    B->>B: maybeYield(hadIoWork=false)
+    B->>Q: tryStealing() — probe 2 random siblings
+    Note over Q: [vt1, vt2, vt3]
+    Q-->>B: steal vt1 (ticket lock CAS)
+    B->>B: offer vt1 to local queue
+    B->>B: Thread.yield() → carrier drains vt1
+    Note over B: vt1 runs on B, routes back to A on yield
+```
+
+The scheduler checkpoint is `maybeYield(hadIoWork)`. The pinned poller calls it
+between I/O phases and reports whether it processed events:
+
+- **`hadIoWork=true`**: the poller has I/O to process. Only yields for local VT
+  preemption. No stealing — the carrier is doing useful work.
+- **`hadIoWork=false`**: the poller is idle. The scheduler checks siblings for
+  stealable work via power-of-2 random probing (O(1), no scan).
+
+A sibling qualifies as a steal victim when `needsHelp()` returns true:
+- **Unresponsive**: no scheduling checkpoint reached in >200ms (last
+  checkpoint). The carrier is stuck running a long VT or deep I/O batch.
+- **Overloaded**: the run queue exceeds the threshold (default 10). A burst of VT
+  submissions is piling up faster than the carrier can drain.
+
+Stolen tasks go to the stealer's local queue. The poller yields naturally via
+`hasRunnableContinuations()` and the carrier drains the stolen VT.
+
+### What "unresponsive" means
+
+Each carrier maintains a **scheduler heartbeat** — a nanosecond timestamp updated
+via `setOpaque` at every scheduling checkpoint:
+
+- At the start of `drainContinuations()` (before draining VTs)
+- After each VT continuation completes (inside the drain loop)
+- At every `maybeYield(hadIoWork)` call (the poller's scheduling checkpoint)
+
+A carrier is **unresponsive** when `System.nanoTime() - heartbeat > threshold`
+(default 200ms). This means the carrier hasn't reached any scheduling checkpoint
+in that time. Three cases:
+
+- **Stuck on a long VT**: the carrier is inside `task.run()` for a VT that runs
+  for >200ms without yielding. No checkpoint is reachable because the carrier
+  is inside `task.run()`.
+- **Blocking in kernel I/O**: the poller entered `epoll_wait` (idle, no events).
+  The heartbeat was updated when the poller last called `maybeYield()`, but no
+  further checkpoints occur while sleeping. After 200ms the carrier becomes
+  unresponsive. Note: a blocking carrier always has an empty queue
+  (`canBlock()` requires it), so nothing can be stolen FROM it. But it
+  can be woken via `tryWakeup()` to help steal from others.
+- **Carrier parked** (no poller): same pattern — the heartbeat was updated at
+  the last `drainContinuations()` call, no further checkpoints while parked.
+
+### Submission paths and when help is requested
+
+Virtual thread continuations arrive in `execute()` from two sources:
+
+**External submissions** (from a different carrier or a platform thread):
+- The submitter's `runningScheduler()` differs from the target → `wakeup()` fires
+  to interrupt the target's blocking I/O or unpark its carrier.
+- If the target `needsHelp()` (unresponsive or overloaded) → `wakeIdleSibling()`
+  wakes a random idle sibling to come steal.
+
+**Internal submissions** (a VT running on this carrier submits to the same carrier):
+- The submitter's `runningScheduler()` matches → no self-wakeup needed.
+- If the carrier `needsHelp()` → `wakeIdleSibling()` still fires. This covers the
+  case where a VT monopolizes a carrier and spawns many children: the carrier is
+  stuck running the parent VT while children pile up in the queue. An idle sibling
+  is woken to help drain them.
+
+`wakeIdleSibling()` uses power-of-2 random probing: pick 2 random siblings, try
+`tryWakeup()` on the first — if it was actually idle (poller blocking or carrier
+parked), the wakeup fires and returns true. If the first was busy, try the second.
+This avoids scanning all siblings (O(1) regardless of carrier count).
+
+### Ticket lock: biased consumer coordination
+
+The MPSC queue (jctools `MpscUnboundedArrayQueue`) is single-consumer by design.
+Work stealing introduces a second consumer (the stealer). A **ticket lock**
+coordinates access with asymmetric paths:
+
+**Carrier (owner)** — `acquireConsumer()` / `releaseConsumer(ticket)`:
+uses `XADD` (atomic increment) on `consumerTicket`, then spins on `consumerServing`
+until its ticket is served. Wait-free in the common case (no stealer active).
+When a stealer is mid-poll, the carrier spins briefly via `Thread.onSpinWait()`.
+
+**Stealer** — `tryStealOne()`:
+uses `CAS` on `consumerTicket`. If the carrier or another stealer holds the lock,
+the CAS fails immediately and the stealer gives up (returns null). No spinning,
+no blocking — best-effort only.
+
+This is intentionally **biased toward the carrier**: the owner always succeeds
+(XADD), the stealer gives up on contention (CAS failure). The carrier's drain
+throughput is never degraded by steal attempts. An `isEmpty()` fast-path before
+`acquireConsumer()` avoids the XADD entirely on empty polls.
+
+### Queue order: FIFO everywhere
+
+Both the carrier and the stealer consume from the same MPSC queue head (FIFO).
+The oldest virtual thread continuation is processed first, regardless of whether
+it's drained locally or stolen.
+
+This differs from classical work stealing (Cilk, ForkJoinPool in compute mode):
+
+| Runtime | Local execution | Steal order | Why |
+|---------|----------------|-------------|-----|
+| **Cilk / FJP (compute)** | LIFO (newest first) | FIFO (oldest first) | Cache locality: newest task has hot data in L1. Stealer takes cold oldest task — minimizes cache interference. Optimal for recursive fork-join parallelism. |
+| **FJP with Loom (asyncMode)** | FIFO | FIFO | Fairness: virtual threads are I/O-bound continuations, not recursive tasks. FIFO prevents starvation of VTs waiting to resume after I/O. |
+| **Go runtime** | FIFO (256-slot ring) + 1-slot LIFO (`runnext`) | FIFO | Hybrid: `runnext` gives the most recent goroutine priority (producer-consumer locality), everything else is FIFO for fairness. |
+| **This scheduler** | FIFO (MPSC queue) | FIFO (same queue) | Same rationale as Loom: VTs are I/O continuations. FIFO ensures fair drain order. The MPSC queue is single-ended — no deque, no LIFO option. |
+
+Go's `runnext` slot is notable: the goroutine that just unblocked (e.g., channel
+receive) runs immediately before the FIFO queue. This gives producer-consumer
+chains low latency. Our scheduler achieves similar behavior through the pinned
+poller's `maybeYield(hadIoWork)` — when a VT completes and its continuation arrives, the
+poller yields immediately to drain it.
+
+### Observability
+
+Enable the `io.netty.loom.WorkSteal` JFR event to trace steals:
+
+```
+jcmd <pid> JFR.start settings=netty-loom.jfc
+```
+
+Each event records:
+- `virtualThread`: the stolen VT
+- `sourceCarrier` / `stealerCarrier`: which carrier lost/gained the VT
+- `sourceQueueDepth`: how deep the victim's queue was
+- `prePark`: `true` if the stealer was about to park (no poller), `false` if
+  the poller was idle between I/O cycles
+
+### What to expect
+
+- **Balanced load** (uniform connection distribution): minimal steals. Both carriers
+  drain their own queues. No latency improvement, no regression.
+- **Uneven load** (hot connections, burst patterns): idle carriers help overloaded
+  siblings. Tail latency improves for VTs that would otherwise wait on a stuck carrier.
+- **Max throughput**: zero overhead when enabled. The `isEmpty()` fast-path in the
+  ticket lock avoids atomic operations on empty polls. The heartbeat update in
+  `maybeYield` costs one `System.nanoTime()` per checkpoint (~25ns).
 
 ## Module structure
 

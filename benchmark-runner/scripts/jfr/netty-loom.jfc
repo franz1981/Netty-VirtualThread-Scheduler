@@ -15,4 +15,7 @@
   <event name="io.netty.loom.VirtualThreadTaskSubmit">
     <setting name="enabled">true</setting>
   </event>
+  <event name="io.netty.loom.WorkSteal">
+    <setting name="enabled">true</setting>
+  </event>
 </configuration>

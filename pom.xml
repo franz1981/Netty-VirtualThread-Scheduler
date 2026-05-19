@@ -20,7 +20,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <netty.version>4.2.12.Final</netty.version>
+        <netty.version>4.2.13.Final</netty.version>
         <junit.version>6.0.3</junit.version>
         <jmh.version>1.37</jmh.version>
         <jcstress.version>0.16</jcstress.version>
@@ -134,6 +134,18 @@
                             </goals>
                             <configuration>
                                 <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=2 --add-opens=java.base/java.lang=ALL-UNNAMED -Djdk.pollerMode=3</argLine>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>workStealing-test</id>
+                            <phase>test</phase>
+                            <goals>
+                                <goal>test</goal>
+                            </goals>
+                            <configuration>
+                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=2 --add-opens=java.base/java.lang=ALL-UNNAMED -Dio.netty.loom.workstealing.enabled=true -Dio.netty.loom.workstealing.unresponsive.ms=5 -Djdk.trackAllThreads=true</argLine>
+                                <forkedProcessTimeoutInSeconds>120</forkedProcessTimeoutInSeconds>
+                                <forkedProcessExitTimeoutInSeconds>30</forkedProcessExitTimeoutInSeconds>
                             </configuration>
                         </execution>
                     </executions>
