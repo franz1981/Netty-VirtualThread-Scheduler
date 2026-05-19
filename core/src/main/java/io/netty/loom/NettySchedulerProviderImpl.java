@@ -68,7 +68,7 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 		} else {
 			if (perCarrierPollers) {
 				if (Thread.currentThread().isVirtual()) {
-					var scheduler = EventLoopScheduler.currentThreadSchedulerContext().scheduler();
+					var scheduler = EventLoopScheduler.currentThreadSchedulerContext().runningScheduler();
 					if (scheduler != null) {
 						if (virtualThreadTask.thread().getName().endsWith("-Read-Poller")) {
 							virtualThreadTask.attach(

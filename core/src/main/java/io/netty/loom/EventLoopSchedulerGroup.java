@@ -70,6 +70,18 @@ public class EventLoopSchedulerGroup {
 		for (int i = 0; i < size; i++) {
 			schedulers[i] = new EventLoopScheduler(i, carrierThreadFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT);
 		}
+		if (EventLoopScheduler.WORK_STEALING_ENABLED && size > 1) {
+			for (int i = 0; i < size; i++) {
+				var siblings = new EventLoopScheduler[size - 1];
+				int idx = 0;
+				for (int j = 0; j < size; j++) {
+					if (j != i) {
+						siblings[idx++] = schedulers[j];
+					}
+				}
+				schedulers[i].setSiblings(siblings);
+			}
+		}
 	}
 
 	/** Returns the number of carriers in the pool. */
@@ -86,7 +98,7 @@ public class EventLoopSchedulerGroup {
 	 * Returns {@code count} schedulers that have no registered pinned poller, or
 	 * {@code null} if not enough are available.
 	 */
-	public EventLoopScheduler[] availableSchedulers(int count) {
+	EventLoopScheduler[] availableSchedulers(int count) {
 		var result = new EventLoopScheduler[count];
 		int found = 0;
 		for (int i = 0; i < schedulers.length && found < count; i++) {

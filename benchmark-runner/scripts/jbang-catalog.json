@@ -1,0 +1,16 @@
+{
+  "aliases": {
+    "wrk2": {
+      "script-ref": "io.hyperfoil:hyperfoil-cli:0.28.0",
+      "dependencies": [
+        "io.hyperfoil:hyperfoil-all:0.28.0@pom",
+        "io.hyperfoil:hyperfoil-api:0.28.0",
+        "io.hyperfoil:hyperfoil-clustering:0.28.0",
+        "io.hyperfoil:hyperfoil-controller-api:0.28.0",
+        "io.hyperfoil:hyperfoil-core:0.28.0",
+        "io.hyperfoil:hyperfoil-http:0.28.0"
+      ],
+      "main": "io.hyperfoil.cli.commands.Wrk2"
+    }
+  }
+}

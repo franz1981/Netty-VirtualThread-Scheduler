@@ -123,6 +123,7 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 	private static PollerResult createNettyPoller(EventLoopScheduler scheduler, VirtualIoPollerEventLoopGroup parent,
 			IoHandlerFactory ioHandlerFactory) {
 		var pollerRunning = new AtomicBoolean(false);
+		scheduler.setPollerRunningFlag(pollerRunning);
 
 		var eventLoop = new ManualIoEventLoop(parent, null,
 				ioExecutor -> new AwakeAwareIoHandler(pollerRunning, ioHandlerFactory.newHandler(ioExecutor))) {
@@ -149,14 +150,14 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 		boolean canBlock = false;
 		while (!ioEventLoop.isShuttingDown()) {
 			int ioEvents = runIO(scheduler, ioEventLoop, canBlock, pollerRunning);
-			scheduler.maybeYield();
+			boolean hadVtWork = scheduler.maybeYield(ioEvents > 0);
 			int tasks = runNonBlockingTasks(scheduler, ioEventLoop, EventLoopScheduler.YIELD_DURATION_NS);
-			scheduler.maybeYield();
-			canBlock = ioEvents == 0 && tasks == 0;
+			hadVtWork |= scheduler.maybeYield(ioEvents > 0 || tasks > 0);
+			canBlock = ioEvents == 0 && tasks == 0 && !hadVtWork;
 		}
 		while (!ioEventLoop.isTerminated()) {
 			ioEventLoop.runNow();
-			scheduler.maybeYield();
+			scheduler.maybeYield(true);
 		}
 		pollerRunning.set(false);
 	}
@@ -194,9 +195,9 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 		if (event == null) {
 			return ioEventLoop.runNonBlockingTasks(deadlineNs);
 		}
-		int queueDepthBefore = scheduler.externalContinuationsCount();
+		int queueDepthBefore = scheduler.runnableCount();
 		int tasksHandled = ioEventLoop.runNonBlockingTasks(deadlineNs);
-		int queueDepthAfter = scheduler.externalContinuationsCount();
+		int queueDepthAfter = scheduler.runnableCount();
 		SchedulerJfrUtil.commitRunTasksEvent(event, scheduler.carrierThread(), tasksHandled, queueDepthBefore,
 				queueDepthAfter);
 		return tasksHandled;

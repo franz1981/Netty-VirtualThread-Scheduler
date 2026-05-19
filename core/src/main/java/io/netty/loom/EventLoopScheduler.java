@@ -19,7 +19,9 @@ import java.lang.invoke.VarHandle;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
 import org.jctools.queues.MpscUnboundedArrayQueue;
@@ -40,11 +42,17 @@ import io.netty.loom.spi.NettyScheduler;
 public final class EventLoopScheduler {
 
 	private static final VarHandle PINNED_POLLER_WAKEUP;
+	private static final VarHandle CONSUMER_TICKET;
+	private static final VarHandle CONSUMER_SERVING;
+	private static final VarHandle SCHEDULER_HEARTBEAT;
 
 	static {
 		try {
-			PINNED_POLLER_WAKEUP = MethodHandles.lookup().findVarHandle(EventLoopScheduler.class, "pinnedPollerWakeup",
-					Runnable.class);
+			var lookup = MethodHandles.lookup();
+			PINNED_POLLER_WAKEUP = lookup.findVarHandle(EventLoopScheduler.class, "pinnedPollerWakeup", Runnable.class);
+			CONSUMER_TICKET = lookup.findVarHandle(EventLoopScheduler.class, "consumerTicket", int.class);
+			CONSUMER_SERVING = lookup.findVarHandle(EventLoopScheduler.class, "consumerServing", int.class);
+			SCHEDULER_HEARTBEAT = lookup.findVarHandle(EventLoopScheduler.class, "schedulerHeartbeat", long.class);
 		} catch (ReflectiveOperationException e) {
 			throw new ExceptionInInitializerError(e);
 		}
@@ -52,6 +60,12 @@ public final class EventLoopScheduler {
 
 	static final long YIELD_DURATION_NS = TimeUnit.MICROSECONDS
 			.toNanos(Integer.getInteger("io.netty.loom.yield.us", 10));
+	private static final int OVERLOAD_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.overload.queue",
+			10);
+	static final boolean WORK_STEALING_ENABLED = Boolean
+			.parseBoolean(System.getProperty("io.netty.loom.workstealing.enabled", "false"));
+	private static final long UNRESPONSIVE_THRESHOLD_NS = TimeUnit.MILLISECONDS
+			.toNanos(Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200));
 
 	enum VThreadType {
 		VT, JDK_POLLER, PINNED_POLLER
@@ -77,21 +91,38 @@ public final class EventLoopScheduler {
 		long vThreadId;
 		final VThreadType type;
 		final EventLoopScheduler eventLoopScheduler;
+		// Set to the carrier that last mounted this VT (in runContinuation,
+		// never cleared). Differs from eventLoopScheduler when the VT was
+		// stolen. Used in execute() to skip self-wakeup and in
+		// NettySchedulerProviderImpl to route JDK pollers to the running
+		// carrier, not the home carrier.
+		EventLoopScheduler runningScheduler;
 
 		SchedulingContext(long vThreadId, EventLoopScheduler eventLoopScheduler, VThreadType type) {
 			this.vThreadId = vThreadId;
 			this.eventLoopScheduler = eventLoopScheduler;
+			this.runningScheduler = eventLoopScheduler;
 			this.type = type;
 		}
 
 		/**
-		 * Returns the scheduler for the current thread, or {@code null} if the calling
-		 * thread is not the VT that owns this context. Use this when reading from the
-		 * ScopedValue — the thread ID check prevents inherited contexts from leaking to
-		 * child VTs.
+		 * Returns the home scheduler for the current thread, or {@code null} if the
+		 * calling thread is not the VT that owns this context.
 		 */
 		public EventLoopScheduler scheduler() {
 			return (Thread.currentThread().threadId() == vThreadId) ? eventLoopScheduler : null;
+		}
+
+		/**
+		 * Returns the scheduler of the carrier currently running this VT. Differs from
+		 * {@link #scheduler()} when the VT was stolen by another carrier.
+		 */
+		public EventLoopScheduler runningScheduler() {
+			if (Thread.currentThread().threadId() != vThreadId) {
+				return null;
+			}
+			var running = runningScheduler;
+			return running != null ? running : eventLoopScheduler;
 		}
 	}
 
@@ -122,6 +153,14 @@ public final class EventLoopScheduler {
 	private volatile Thread.VirtualThreadTask pinnedContinuationToRun;
 	@SuppressWarnings("FieldMayBeFinal")
 	private volatile Runnable pinnedPollerWakeup;
+	@SuppressWarnings("FieldMayBeFinal")
+	private volatile int consumerTicket;
+	@SuppressWarnings("FieldMayBeFinal")
+	private volatile int consumerServing;
+	private volatile EventLoopScheduler[] siblings;
+	private volatile AtomicBoolean pollerRunningFlag;
+	@SuppressWarnings("FieldMayBeFinal")
+	private long schedulerHeartbeat = System.nanoTime();
 
 	EventLoopScheduler(int id, ThreadFactory threadFactory, int resumedContinuationsExpectedCount) {
 		this.id = id;
@@ -145,8 +184,31 @@ public final class EventLoopScheduler {
 	 * Returns {@code true} if a pinned poller is currently registered on this
 	 * carrier.
 	 */
-	public boolean hasRegisteredPinnedPoller() {
+	boolean hasRegisteredPinnedPoller() {
 		return pinnedPollerWakeup != null;
+	}
+
+	void setSiblings(EventLoopScheduler[] siblings) {
+		this.siblings = siblings;
+	}
+
+	void setPollerRunningFlag(AtomicBoolean flag) {
+		this.pollerRunningFlag = flag;
+	}
+
+	Thread.VirtualThreadTask tryStealOne() {
+		int t = (int) CONSUMER_TICKET.getAcquire(this);
+		if (t != (int) CONSUMER_SERVING.getAcquire(this)) {
+			return null;
+		}
+		if (!CONSUMER_TICKET.compareAndSet(this, t, t + 1)) {
+			return null;
+		}
+		try {
+			return runQueue.poll();
+		} finally {
+			CONSUMER_SERVING.setRelease(this, t + 1);
+		}
 	}
 
 	/**
@@ -189,25 +251,36 @@ public final class EventLoopScheduler {
 	}
 
 	/**
-	 * Called by the pinned poller between phases. Yields the carrier if external
-	 * virtual threads have work queued, allowing the carrier loop to drain them
-	 * before the poller resumes.
+	 * Scheduling checkpoint for the pinned poller. Must be called between phases of
+	 * the poller loop. Yields the carrier if external VTs have work queued, and
+	 * updates the scheduler heartbeat so siblings can detect unresponsive carriers.
+	 * When no I/O work was done, the scheduler may steal from an overloaded
+	 * sibling.
+	 *
+	 * @param hadIoWork
+	 *            true if the poller processed I/O events or tasks since the last
+	 *            call; false if idle
 	 */
-	// TODO work stealing: add boolean hadWork parameter.
-	// When hadWork=false AND hasSiblingStealableWork(), set a needPreempt flag
-	// and yield. The carrier loop checks needPreempt to steal before re-mounting
-	// the poller. canBlock() also reads needPreempt to prevent re-entering
-	// blocking I/O during steal mode.
-	public void maybeYield() {
-		if (shouldPreemptPoller()) {
+	public boolean maybeYield(boolean hadIoWork) {
+		touchHeartbeat(System.nanoTime());
+		if (hasRunnableContinuations()) {
 			Thread.yield();
+			return true;
 		}
+		if (!hadIoWork && WORK_STEALING_ENABLED && tryStealing(false)) {
+			Thread.yield();
+			return true;
+		}
+		return false;
 	}
 
 	private void virtualThreadSchedulerLoop() {
 		while (true) {
-			int count = runExternalContinuations(YIELD_DURATION_NS);
+			int count = drainContinuations(YIELD_DURATION_NS);
 			if (!runPinnedContinuation() && count == 0) {
+				if (WORK_STEALING_ENABLED && tryStealing(true)) {
+					continue;
+				}
 				parkedCarrierThread = carrierThread;
 				if (canParkScheduler()) {
 					LockSupport.park();
@@ -217,8 +290,12 @@ public final class EventLoopScheduler {
 		}
 	}
 
-	private boolean shouldPreemptPoller() {
+	private boolean hasRunnableContinuations() {
 		return !runQueue.isEmpty();
+	}
+
+	private void touchHeartbeat(long nanos) {
+		SCHEDULER_HEARTBEAT.setOpaque(this, nanos);
 	}
 
 	/**
@@ -233,7 +310,7 @@ public final class EventLoopScheduler {
 	 * handle this race (see {@link #registerPinnedPoller} for details).
 	 */
 	public boolean canBlock() {
-		return runQueue.isEmpty();
+		return !hasRunnableContinuations();
 	}
 
 	private static ThreadFactory newVThreadFactory(EventLoopScheduler scheduler, VThreadType type) {
@@ -252,7 +329,7 @@ public final class EventLoopScheduler {
 	/**
 	 * Returns the number of virtual thread continuations waiting in the run queue.
 	 */
-	public int externalContinuationsCount() {
+	int runnableCount() {
 		return runQueue.size();
 	}
 
@@ -264,7 +341,7 @@ public final class EventLoopScheduler {
 	}
 
 	/** Returns the platform thread backing this carrier. */
-	public Thread carrierThread() {
+	Thread carrierThread() {
 		return carrierThread;
 	}
 
@@ -280,23 +357,36 @@ public final class EventLoopScheduler {
 	}
 
 	private boolean canParkScheduler() {
-		return runQueue.isEmpty() && pinnedContinuationToRun == null;
+		return !hasRunnableContinuations() && pinnedContinuationToRun == null;
 	}
 
-	private int runExternalContinuations(long deadlineNs) {
+	private int drainContinuations(long deadlineNs) {
 		var event = SchedulerJfrUtil.beginVirtualThreadTaskRunsEvent();
 		final long startDrainingNs = System.nanoTime();
+		touchHeartbeat(startDrainingNs);
 		int queueDepthBefore = event != null ? runQueue.size() : 0;
 		var ready = this.runQueue;
 		int runContinuations = 0;
 		for (;;) {
-			var task = ready.poll();
+			Thread.VirtualThreadTask task;
+			if (WORK_STEALING_ENABLED) {
+				if (ready.isEmpty()) {
+					break;
+				}
+				int ticket = acquireConsumer();
+				task = ready.poll();
+				releaseConsumer(ticket);
+			} else {
+				task = ready.poll();
+			}
 			if (task == null) {
 				break;
 			}
 			runContinuations++;
 			runContinuation(task);
-			long elapsedNs = System.nanoTime() - startDrainingNs;
+			long nowNs = System.nanoTime();
+			touchHeartbeat(nowNs);
+			long elapsedNs = nowNs - startDrainingNs;
 			if (elapsedNs >= deadlineNs) {
 				break;
 			}
@@ -332,24 +422,135 @@ public final class EventLoopScheduler {
 					context.type == VThreadType.JDK_POLLER, pinnedTask);
 		}
 		if (currentThread != carrierThread) {
-			if (EventLoopScheduler.currentThreadSchedulerContext().scheduler() != this) {
-				var poller = pinnedPollerWakeup;
-				if (poller != null) {
-					poller.run();
-				}
-				LockSupport.unpark(parkedCarrierThread);
+			if (EventLoopScheduler.currentThreadSchedulerContext().runningScheduler() != this) {
+				wakeup();
+			}
+			if (WORK_STEALING_ENABLED && needsHelp(System.nanoTime())) {
+				wakeIdleSibling();
 			}
 		}
 		return true;
 	}
 
+	void wakeup() {
+		var poller = pinnedPollerWakeup;
+		if (poller != null) {
+			poller.run();
+		}
+		LockSupport.unpark(parkedCarrierThread);
+	}
+
+	private boolean tryWakeup() {
+		var poller = pinnedPollerWakeup;
+		if (poller != null) {
+			var flag = pollerRunningFlag;
+			if (flag != null && !flag.get()) {
+				poller.run();
+				return true;
+			}
+			return false;
+		}
+		Thread parked = parkedCarrierThread;
+		if (parked != null) {
+			LockSupport.unpark(parked);
+			return true;
+		}
+		return false;
+	}
+
+	private boolean isUnresponsive(long nowNanos) {
+		return (nowNanos - (long) SCHEDULER_HEARTBEAT.getOpaque(this)) > UNRESPONSIVE_THRESHOLD_NS;
+	}
+
+	boolean needsHelp(long nowNanos) {
+		return isUnresponsive(nowNanos) || runnableCount() > OVERLOAD_QUEUE_THRESHOLD;
+	}
+
+	private void wakeIdleSibling() {
+		var siblings = this.siblings;
+		if (siblings == null) {
+			return;
+		}
+		int len = siblings.length;
+		var rng = ThreadLocalRandom.current();
+		int a = rng.nextInt(len);
+		if (len == 1) {
+			siblings[a].tryWakeup();
+			return;
+		}
+		int b = rng.nextInt(len - 1);
+		if (b >= a) {
+			b++;
+		}
+		if (!siblings[a].tryWakeup()) {
+			siblings[b].tryWakeup();
+		}
+	}
+
+	private int acquireConsumer() {
+		int myTicket = (int) CONSUMER_TICKET.getAndAdd(this, 1);
+		while ((int) CONSUMER_SERVING.getAcquire(this) != myTicket) {
+			Thread.onSpinWait();
+		}
+		return myTicket;
+	}
+
+	private void releaseConsumer(int ticket) {
+		CONSUMER_SERVING.setRelease(this, ticket + 1);
+	}
+
+	private boolean tryStealing(boolean prePark) {
+		var siblings = this.siblings;
+		if (siblings == null) {
+			return false;
+		}
+		long now = System.nanoTime();
+		int len = siblings.length;
+		var rng = ThreadLocalRandom.current();
+		int a = rng.nextInt(len);
+		EventLoopScheduler victim;
+		if (len == 1) {
+			victim = siblings[a].needsHelp(now) ? siblings[a] : null;
+		} else {
+			int b = rng.nextInt(len - 1);
+			if (b >= a) {
+				b++;
+			}
+			var sa = siblings[a];
+			var sb = siblings[b];
+			boolean helpA = sa.needsHelp(now);
+			boolean helpB = sb.needsHelp(now);
+			if (helpA && helpB) {
+				victim = sa.runnableCount() >= sb.runnableCount() ? sa : sb;
+			} else {
+				victim = helpA ? sa : helpB ? sb : null;
+			}
+		}
+		if (victim == null || !victim.hasRunnableContinuations()) {
+			return false;
+		}
+		var task = victim.tryStealOne();
+		if (task != null) {
+			var event = SchedulerJfrUtil.beginWorkStealEvent();
+			int sourceQueueDepth = event != null ? victim.runnableCount() : 0;
+			runQueue.offer(task);
+			if (event != null) {
+				SchedulerJfrUtil.commitWorkStealEvent(event, task, victim.carrierThread, carrierThread,
+						sourceQueueDepth, prePark);
+			}
+			return true;
+		}
+		return false;
+	}
+
 	private void runContinuation(Thread.VirtualThreadTask task) {
+		var context = (SchedulingContext) task.attachment();
+		context.runningScheduler = this;
 		var event = SchedulerJfrUtil.beginVirtualThreadTaskRunEvent();
 		if (event == null) {
 			task.run();
 			return;
 		}
-		var context = (SchedulingContext) task.attachment();
 		boolean isPinned = context.type == VThreadType.PINNED_POLLER;
 		boolean isPoller = context.type == VThreadType.JDK_POLLER;
 		task.run();
