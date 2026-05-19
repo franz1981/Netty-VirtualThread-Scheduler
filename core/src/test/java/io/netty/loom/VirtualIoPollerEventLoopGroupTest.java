@@ -1084,6 +1084,87 @@ public class VirtualIoPollerEventLoopGroupTest {
 		}
 	}
 
+	@Test
+	@Timeout(15)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void parkedCarrierWithoutPollerIsWokenToSteal() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2);
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+		var parkedLatch = new CountDownLatch(1);
+		var spinnerB = new AtomicBoolean(true);
+		var vtRan = new CompletableFuture<EventLoopScheduler>();
+		schedulerA.virtualThreadFactory().newThread(() -> {
+			parkedLatch.countDown();
+		}).start();
+		assertTrue(parkedLatch.await(2, TimeUnit.SECONDS));
+		while (schedulerA.carrierThread().getState() != Thread.State.WAITING) {
+			Thread.onSpinWait();
+		}
+		schedulerB.virtualThreadFactory().newThread(() -> {
+			while (spinnerB.get()) {
+				Thread.onSpinWait();
+			}
+		}).start();
+		try {
+			awaitUnresponsive(schedulerB);
+			schedulerB.virtualThreadFactory().newThread(() -> {
+				vtRan.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+			}).start();
+			var running = vtRan.get(5, TimeUnit.SECONDS);
+			assertSame(schedulerA, running, "parked carrier A should be woken to steal VT from unresponsive B");
+		} finally {
+			spinnerB.set(false);
+		}
+	}
+
+	@Test
+	@Timeout(15)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void parkedCarrierWithDescheduledPollerIsWokenToSteal() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2);
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+		var pollerLatch = new CountDownLatch(1);
+		var pollerStarted = new CountDownLatch(1);
+		var spinnerB = new AtomicBoolean(true);
+		var vtRan = new CompletableFuture<EventLoopScheduler>();
+		var pollerTermination = schedulerA.registerPinnedPoller(() -> {
+		}, () -> {
+			pollerStarted.countDown();
+			try {
+				pollerLatch.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+		try {
+			assertTrue(pollerStarted.await(2, TimeUnit.SECONDS));
+			while (schedulerA.carrierThread().getState() != Thread.State.WAITING) {
+				Thread.onSpinWait();
+			}
+			schedulerB.virtualThreadFactory().newThread(() -> {
+				while (spinnerB.get()) {
+					Thread.onSpinWait();
+				}
+			}).start();
+			awaitUnresponsive(schedulerB);
+			schedulerB.virtualThreadFactory().newThread(() -> {
+				vtRan.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+			}).start();
+			var running = vtRan.get(5, TimeUnit.SECONDS);
+			assertSame(schedulerA, running, "parked carrier A with descheduled poller should be woken to steal from B");
+		} finally {
+			spinnerB.set(false);
+			pollerLatch.countDown();
+			pollerTermination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+		}
+	}
+
 	private static void awaitUnresponsive(EventLoopScheduler scheduler) throws InterruptedException {
 		long thresholdMs = Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200);
 		Thread.sleep(thresholdMs + 5);

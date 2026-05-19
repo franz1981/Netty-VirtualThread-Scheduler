@@ -157,7 +157,6 @@ public final class EventLoopScheduler {
 	@SuppressWarnings("FieldMayBeFinal")
 	private volatile int consumerServing;
 	private volatile EventLoopScheduler[] siblings;
-	private volatile AtomicBoolean pollerRunningFlag;
 	@SuppressWarnings("FieldMayBeFinal")
 	private long schedulerHeartbeat = System.nanoTime();
 
@@ -189,10 +188,6 @@ public final class EventLoopScheduler {
 
 	void setSiblings(EventLoopScheduler[] siblings) {
 		this.siblings = siblings;
-	}
-
-	void setPollerRunningFlag(AtomicBoolean flag) {
-		this.pollerRunningFlag = flag;
 	}
 
 	Thread.VirtualThreadTask tryStealOne() {
@@ -432,30 +427,19 @@ public final class EventLoopScheduler {
 		return true;
 	}
 
-	void wakeup() {
+	boolean wakeup() {
+		boolean woke = false;
 		var poller = pinnedPollerWakeup;
 		if (poller != null) {
 			poller.run();
-		}
-		LockSupport.unpark(parkedCarrierThread);
-	}
-
-	private boolean tryWakeup() {
-		var poller = pinnedPollerWakeup;
-		if (poller != null) {
-			var flag = pollerRunningFlag;
-			if (flag != null && !flag.get()) {
-				poller.run();
-				return true;
-			}
-			return false;
+			woke = true;
 		}
 		Thread parked = parkedCarrierThread;
 		if (parked != null) {
 			LockSupport.unpark(parked);
-			return true;
+			woke = true;
 		}
-		return false;
+		return woke;
 	}
 
 	private boolean isUnresponsive(long nowNanos) {
@@ -475,15 +459,15 @@ public final class EventLoopScheduler {
 		var rng = ThreadLocalRandom.current();
 		int a = rng.nextInt(len);
 		if (len == 1) {
-			siblings[a].tryWakeup();
+			siblings[a].wakeup();
 			return;
 		}
 		int b = rng.nextInt(len - 1);
 		if (b >= a) {
 			b++;
 		}
-		if (!siblings[a].tryWakeup()) {
-			siblings[b].tryWakeup();
+		if (!siblings[a].wakeup()) {
+			siblings[b].wakeup();
 		}
 	}
 

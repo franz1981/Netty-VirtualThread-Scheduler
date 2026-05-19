@@ -123,7 +123,6 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 	private static PollerResult createNettyPoller(EventLoopScheduler scheduler, VirtualIoPollerEventLoopGroup parent,
 			IoHandlerFactory ioHandlerFactory) {
 		var pollerRunning = new AtomicBoolean(false);
-		scheduler.setPollerRunningFlag(pollerRunning);
 
 		var eventLoop = new ManualIoEventLoop(parent, null,
 				ioExecutor -> new AwakeAwareIoHandler(pollerRunning, ioHandlerFactory.newHandler(ioExecutor))) {
