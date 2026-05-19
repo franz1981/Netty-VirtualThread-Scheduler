@@ -119,13 +119,13 @@ final class SchedulerJfrUtil {
 	}
 
 	public static void commitWorkStealEvent(WorkStealEvent event, Thread.VirtualThreadTask task, Thread sourceCarrier,
-			Thread stealerCarrier, int sourceQueueDepth, boolean prePark) {
+			Thread stealerCarrier, int sourceQueueDepth, boolean fromCarrierLoop) {
 		event.end();
 		event.virtualThread = task.thread();
 		event.sourceCarrier = sourceCarrier;
 		event.stealerCarrier = stealerCarrier;
 		event.sourceQueueDepth = sourceQueueDepth;
-		event.prePark = prePark;
+		event.fromCarrierLoop = fromCarrierLoop;
 		event.commit();
 	}
 

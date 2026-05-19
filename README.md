@@ -419,6 +419,10 @@ in that time. Three cases:
   unresponsive. Note: a blocking carrier always has an empty queue
   (`canBlock()` requires it), so nothing can be stolen FROM it. But it
   can be woken via `tryWakeup()` to help steal from others.
+- **Poller descheduled**: the poller VT is parked on something other than I/O
+  (e.g. a `CountDownLatch`). The carrier has nothing to run — no VTs, no
+  pinned continuation — and tries to steal before parking. This lets a carrier
+  with a registered-but-descheduled poller help an overloaded sibling.
 - **Carrier parked** (no poller): same pattern — the heartbeat was updated at
   the last `drainContinuations()` call, no further checkpoints while parked.
 
@@ -498,8 +502,8 @@ Each event records:
 - `virtualThread`: the stolen VT
 - `sourceCarrier` / `stealerCarrier`: which carrier lost/gained the VT
 - `sourceQueueDepth`: how deep the victim's queue was
-- `prePark`: `true` if the stealer was about to park (no poller), `false` if
-  the poller was idle between I/O cycles
+- `fromCarrierLoop`: `true` if stolen from the carrier loop, `false` if stolen
+  from the pinned poller via `maybeYield`
 
 ### What to expect
 

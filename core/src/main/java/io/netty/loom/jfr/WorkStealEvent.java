@@ -45,9 +45,9 @@ public final class WorkStealEvent extends Event {
 	@Label("Source Queue Depth")
 	public int sourceQueueDepth;
 
-	@Label("Pre-park")
-	@Description("True if the stealer was about to park (no poller); false if the poller was idle between I/O cycles.")
-	public boolean prePark;
+	@Label("From Carrier Loop")
+	@Description("True if stolen from the carrier loop; false if stolen from the pinned poller via maybeYield.")
+	public boolean fromCarrierLoop;
 
 	public static boolean isEventEnabled() {
 		return EVENT_TYPE.isEnabled();
