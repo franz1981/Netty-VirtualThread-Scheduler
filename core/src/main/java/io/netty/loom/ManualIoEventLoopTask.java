@@ -20,6 +20,8 @@ import io.netty.channel.ManualIoEventLoop;
 
 import java.util.concurrent.TimeUnit;
 
+import static io.netty.loom.EventLoopScheduler.currentScheduler;
+
 public class ManualIoEventLoopTask extends ManualIoEventLoop implements Runnable {
 
 	private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS
@@ -31,14 +33,23 @@ public class ManualIoEventLoopTask extends ManualIoEventLoop implements Runnable
 
 	@Override
 	public void run() {
+		var scheduler = currentScheduler();
 		while (!isShuttingDown()) {
 			run(0, RUNNING_YIELD_US);
-			Thread.yield();
+			maybeYield(scheduler);
 			runNonBlockingTasks(RUNNING_YIELD_US);
-			Thread.yield();
+			maybeYield(scheduler);
 		}
 		while (!isTerminated()) {
 			runNow();
+			maybeYield(scheduler);
+		}
+	}
+
+	private static void maybeYield(EventLoopScheduler scheduler) {
+		if (scheduler != null) {
+			scheduler.maybeYield();
+		} else {
 			Thread.yield();
 		}
 	}
