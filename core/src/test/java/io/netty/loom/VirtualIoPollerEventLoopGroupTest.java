@@ -1033,6 +1033,57 @@ public class VirtualIoPollerEventLoopGroupTest {
 		assertSame(schedulerA, home, "both carriers busy — VT must run on home A after blocker releases");
 	}
 
+	@Test
+	@Timeout(15)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void carrierWithDescheduledPollerCanSteal() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2);
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+		var spinnerA = new AtomicBoolean(true);
+		var spinnerB = new AtomicBoolean(true);
+		var pollerLatch = new CountDownLatch(1);
+		var pollersStarted = new CountDownLatch(2);
+		var vtRan = new CompletableFuture<EventLoopScheduler>();
+		var pollerATermination = schedulerA.registerPinnedPoller(() -> {
+		}, () -> {
+			pollersStarted.countDown();
+			while (spinnerA.get()) {
+				Thread.onSpinWait();
+			}
+			try {
+				pollerLatch.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+		var pollerBTermination = schedulerB.registerPinnedPoller(() -> {
+		}, () -> {
+			pollersStarted.countDown();
+			while (spinnerB.get()) {
+				Thread.onSpinWait();
+			}
+		});
+		try {
+			assertTrue(pollersStarted.await(2, TimeUnit.SECONDS));
+			awaitUnresponsive(schedulerB);
+			schedulerB.virtualThreadFactory().newThread(() -> {
+				vtRan.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+			}).start();
+			spinnerA.set(false);
+			var running = vtRan.get(5, TimeUnit.SECONDS);
+			assertSame(schedulerA, running, "carrier A (with descheduled poller) should steal VT from overloaded B");
+		} finally {
+			spinnerA.set(false);
+			spinnerB.set(false);
+			pollerLatch.countDown();
+			pollerATermination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+			pollerBTermination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+		}
+	}
+
 	private static void awaitUnresponsive(EventLoopScheduler scheduler) throws InterruptedException {
 		long thresholdMs = Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200);
 		Thread.sleep(thresholdMs + 5);

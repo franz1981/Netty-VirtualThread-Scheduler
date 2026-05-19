@@ -278,7 +278,7 @@ public final class EventLoopScheduler {
 		while (true) {
 			int count = drainContinuations(YIELD_DURATION_NS);
 			if (!runPinnedContinuation() && count == 0) {
-				if (WORK_STEALING_ENABLED && !hasRegisteredPinnedPoller() && tryStealing(true)) {
+				if (WORK_STEALING_ENABLED && tryStealing(true)) {
 					continue;
 				}
 				parkedCarrierThread = carrierThread;
@@ -499,7 +499,7 @@ public final class EventLoopScheduler {
 		CONSUMER_SERVING.setRelease(this, ticket + 1);
 	}
 
-	private boolean tryStealing(boolean prePark) {
+	private boolean tryStealing(boolean fromCarrierLoop) {
 		var siblings = this.siblings;
 		if (siblings == null) {
 			return false;
@@ -536,7 +536,7 @@ public final class EventLoopScheduler {
 			runQueue.offer(task);
 			if (event != null) {
 				SchedulerJfrUtil.commitWorkStealEvent(event, task, victim.carrierThread, carrierThread,
-						sourceQueueDepth, prePark);
+						sourceQueueDepth, fromCarrierLoop);
 			}
 			return true;
 		}
