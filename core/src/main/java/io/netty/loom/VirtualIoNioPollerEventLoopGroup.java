@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 The Netty VirtualThread Scheduler Project
+ * Copyright 2026 The Netty VirtualThread Scheduler Project
  *
  * The Netty VirtualThread Scheduler Project licenses this file to you under the Apache License,
  * version 2.0 (the "License"); you may not use this file except in compliance with the
@@ -22,26 +22,25 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.netty.channel.IoEventLoop;
-import io.netty.channel.IoHandler;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
-import io.netty.channel.nio.NioIoHandler;
 import io.netty.loom.spi.NettyScheduler;
 import io.netty.util.concurrent.FastThreadLocalThread;
 
 /**
- * Event loop group for native transports (EPOLL, IO_URING). Registers a pinned
- * poller on each carrier — the Netty event loop runs as a virtual thread with
- * affinity to the carrier, doing kernel I/O directly.
+ * Event loop group for loom-friendly transports (NIO, LOCAL) that don't pin the
+ * carrier during blocking I/O. Each event loop runs as a pinned poller VT for
+ * priority and anti-steal guarantees, but blocking parks via Loom, freeing the
+ * carrier for other work.
  *
  * <p>
- * Use {@link VirtualIoEventLoopGroup} for NIO/LOCAL transports that don't need
- * poller pinning.
+ * Use {@link VirtualIoNativePollerEventLoopGroup} for native transports (EPOLL,
+ * IO_URING) that pin the carrier during blocking I/O.
  *
- * @see VirtualIoEventLoopGroup
+ * @see VirtualIoNativePollerEventLoopGroup
  */
-public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
+public class VirtualIoNioPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 
 	private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
 	private Map<IoEventLoop, EventLoopScheduler> eventSchedulerMappings;
@@ -51,23 +50,15 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 	private int assignedCount;
 	private final AtomicInteger nextAssigned = new AtomicInteger();
 
-	/**
-	 * Creates a group using all carriers in the global
-	 * {@link EventLoopSchedulerGroup}.
-	 */
-	public VirtualIoPollerEventLoopGroup(IoHandlerFactory ioHandlerFactory) {
+	public VirtualIoNioPollerEventLoopGroup(IoHandlerFactory ioHandlerFactory) {
 		this(EventLoopSchedulerGroup.instance().size(), ioHandlerFactory);
 	}
 
-	/**
-	 * Creates a group using {@code nThreads} carriers that have no registered
-	 * poller. Throws if not enough free carriers are available.
-	 */
-	public VirtualIoPollerEventLoopGroup(int nThreads, IoHandlerFactory ioHandlerFactory) {
+	public VirtualIoNioPollerEventLoopGroup(int nThreads, IoHandlerFactory ioHandlerFactory) {
 		this(resolveSchedulers(nThreads, EventLoopSchedulerGroup.instance()), ioHandlerFactory);
 	}
 
-	private VirtualIoPollerEventLoopGroup(EventLoopScheduler[] schedulers, IoHandlerFactory ioHandlerFactory) {
+	private VirtualIoNioPollerEventLoopGroup(EventLoopScheduler[] schedulers, IoHandlerFactory ioHandlerFactory) {
 		super(schedulers.length, (Executor) command -> {
 			throw new UnsupportedOperationException("this executor is not supposed to be used");
 		}, ioHandlerFactory, (Object) schedulers);
@@ -86,7 +77,7 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 		if (!NettyScheduler.isAvailable()) {
 			if (!NettyScheduler.isInstalled()) {
 				throw new IllegalStateException(
-						"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler is required to use VirtualIoPollerEventLoopGroup");
+						"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler is required");
 			}
 			throw new IllegalStateException(
 					"NettyScheduler bootstrap is installed but no NettySchedulerSpi provider was found. "
@@ -95,12 +86,6 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 		}
 	}
 
-	/**
-	 * Return a {@link java.util.concurrent.ThreadFactory} that creates virtual
-	 * threads tied to the specified {@link IoEventLoop}'s
-	 * {@link EventLoopScheduler}. Returns {@code null} if the provided event loop
-	 * is not associated with this group.
-	 */
 	public java.util.concurrent.ThreadFactory vThreadFactoryOf(IoEventLoop eventLoop) {
 		EventLoopScheduler scheduler = eventSchedulerMappings.get(eventLoop);
 		if (scheduler == null) {
@@ -109,10 +94,6 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 		return scheduler.virtualThreadFactory();
 	}
 
-	/**
-	 * Return a {@link java.util.concurrent.ThreadFactory} that creates virtual
-	 * threads tied to an {@link EventLoopScheduler} of this group.
-	 */
 	public java.util.concurrent.ThreadFactory vThreadFactory() {
 		var scheduler = EventLoopScheduler.currentScheduler();
 		if (scheduler != null && scheduler.id() < assignedById.length && assignedById[scheduler.id()] == scheduler) {
@@ -122,67 +103,30 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 		return assignedRoundRobin[index].virtualThreadFactory();
 	}
 
-	private static PollerResult createNettyPoller(EventLoopScheduler scheduler, VirtualIoPollerEventLoopGroup parent,
+	private static PollerResult createPoller(EventLoopScheduler scheduler, VirtualIoNioPollerEventLoopGroup parent,
 			IoHandlerFactory ioHandlerFactory) {
 		var pollerRunning = new AtomicBoolean(false);
-		boolean[] pinsCarrier = { true };
 
-		var eventLoop = new ManualIoEventLoop(parent, null, ioExecutor -> {
-			var handler = ioHandlerFactory.newHandler(ioExecutor);
-			pinsCarrier[0] = !(handler instanceof NioIoHandler);
-			return new AwakeAwareIoHandler(pollerRunning, handler);
-		}) {
+		var eventLoop = new ManualIoEventLoop(parent, null,
+				ioExecutor -> new AwakeAwareIoHandler(pollerRunning, ioHandlerFactory.newHandler(ioExecutor))) {
 			@Override
 			public boolean canBlock() {
-				return !pinsCarrier[0] || scheduler.canBlock();
+				return true;
 			}
 		};
 
-		boolean pins = pinsCarrier[0];
-		var termination = scheduler.registerPinnedPoller(
-				pins ? () -> {
-					if (!pollerRunning.get()) {
-						eventLoop.wakeup();
-						return true;
-					}
-					return false;
-				} : () -> false,
-				() -> {
-					eventLoop.setOwningThread(Thread.currentThread());
-					if (pins) {
-						FastThreadLocalThread.runWithFastThreadLocal(
-								() -> pinningEventLoop(scheduler, eventLoop, pollerRunning));
-					} else {
-						FastThreadLocalThread.runWithFastThreadLocal(
-								() -> loomFriendlyEventLoop(scheduler, eventLoop, pollerRunning));
-					}
-				});
+		// Loom-friendly: carrier is not pinned during blocking I/O
+		var termination = scheduler.registerPinnedPoller(() -> false, () -> {
+			eventLoop.setOwningThread(Thread.currentThread());
+			FastThreadLocalThread.runWithFastThreadLocal(() -> eventLoop(scheduler, eventLoop, pollerRunning));
+		});
 		return new PollerResult(eventLoop, termination);
 	}
 
 	private record PollerResult(ManualIoEventLoop eventLoop, CompletionStage<Void> termination) {
 	}
 
-	private static void pinningEventLoop(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
-			AtomicBoolean pollerRunning) {
-		pollerRunning.set(true);
-		assert ioEventLoop.inEventLoop(Thread.currentThread()) && Thread.currentThread().isVirtual();
-		boolean canBlock = false;
-		while (!ioEventLoop.isShuttingDown()) {
-			int ioEvents = runIO(scheduler, ioEventLoop, canBlock, pollerRunning);
-			boolean hadVtWork = scheduler.maybeYield(ioEvents > 0);
-			int tasks = runNonBlockingTasks(scheduler, ioEventLoop, EventLoopScheduler.YIELD_DURATION_NS);
-			hadVtWork |= scheduler.maybeYield(ioEvents > 0 || tasks > 0);
-			canBlock = ioEvents == 0 && tasks == 0 && !hadVtWork;
-		}
-		while (!ioEventLoop.isTerminated()) {
-			ioEventLoop.runNow();
-			scheduler.maybeYield(true);
-		}
-		pollerRunning.set(false);
-	}
-
-	private static void loomFriendlyEventLoop(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
+	private static void eventLoop(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
 			AtomicBoolean pollerRunning) {
 		pollerRunning.set(true);
 		assert ioEventLoop.inEventLoop(Thread.currentThread()) && Thread.currentThread().isVirtual();
@@ -217,33 +161,6 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 		pollerRunning.set(false);
 	}
 
-	private static int runIO(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop, boolean canBlock,
-			AtomicBoolean pollerRunning) {
-		var event = SchedulerJfrUtil.beginRunIoEvent();
-		int ioEventsHandled;
-		boolean ranBlocking = false;
-		if (canBlock) {
-			pollerRunning.set(false);
-			if (scheduler.canBlock()) {
-				ranBlocking = true;
-				try {
-					ioEventsHandled = ioEventLoop.run(MAX_WAIT_TASKS_NS, EventLoopScheduler.YIELD_DURATION_NS);
-				} finally {
-					pollerRunning.set(true);
-				}
-			} else {
-				pollerRunning.set(true);
-				ioEventsHandled = ioEventLoop.runNow(EventLoopScheduler.YIELD_DURATION_NS);
-			}
-		} else {
-			ioEventsHandled = ioEventLoop.runNow(EventLoopScheduler.YIELD_DURATION_NS);
-		}
-		if (event != null) {
-			SchedulerJfrUtil.commitRunIoEvent(event, scheduler.carrierThread(), ranBlocking, ioEventsHandled);
-		}
-		return ioEventsHandled;
-	}
-
 	private static int runNonBlockingTasks(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
 			long deadlineNs) {
 		var event = SchedulerJfrUtil.beginRunTasksEvent();
@@ -274,7 +191,7 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 			}
 		}
 		var scheduler = schedulers[assignedCount];
-		var result = createNettyPoller(scheduler, this, ioHandlerFactory);
+		var result = createPoller(scheduler, this, ioHandlerFactory);
 		pollerTerminations[assignedCount] = result.termination();
 		assignedCount++;
 		eventSchedulerMappings.put(result.eventLoop(), scheduler);
