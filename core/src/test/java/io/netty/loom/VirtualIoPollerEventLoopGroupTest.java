@@ -286,6 +286,8 @@ public class VirtualIoPollerEventLoopGroupTest {
 	void saveWakeupsOnVirtualThreads(Transport transport) throws InterruptedException, ExecutionException {
 		assumeTrue(transport.isAvailable());
 		assumeTrue(!transport.isLocal());
+		assumeTrue(!EventLoopScheduler.WORK_STEALING_ENABLED,
+				"stolen VTs submitting to home trigger wakeup (runningScheduler != home)");
 		var wakeupCounter = new AtomicInteger();
 		IoHandlerFactory baseFactory = transport.handlerFactory();
 		IoHandlerFactory counterHandlerFactory = ioExecutor -> {
