@@ -451,12 +451,12 @@ public final class EventLoopScheduler {
 		return woke;
 	}
 
-	private boolean isUnresponsive(long nowNanos) {
+	boolean isUnresponsive(long nowNanos) {
 		return (nowNanos - (long) SCHEDULER_HEARTBEAT.getOpaque(this)) > UNRESPONSIVE_THRESHOLD_NS;
 	}
 
-	boolean needsHelp(long nowNanos) {
-		return isUnresponsive(nowNanos) || runnableCount() > OVERLOAD_QUEUE_THRESHOLD;
+	private boolean needsHelp(long nowNanos) {
+		return (isUnresponsive(nowNanos) && hasRunnableContinuations()) || runnableCount() > OVERLOAD_QUEUE_THRESHOLD;
 	}
 
 	private void wakeIdleSibling() {

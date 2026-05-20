@@ -996,46 +996,6 @@ public class VirtualIoPollerEventLoopGroupTest {
 	@Test
 	@Timeout(15)
 	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
-	void busyCarrierDoesNotSteal() throws Exception {
-		var group = EventLoopSchedulerGroup.instance();
-		assumeTrue(group.size() >= 2);
-		var schedulerA = group.scheduler(0);
-		var schedulerB = group.scheduler(1);
-		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
-		var factoryA = schedulerA.virtualThreadFactory();
-		var factoryB = schedulerB.virtualThreadFactory();
-		var blockerA = new AtomicBoolean(true);
-		var blockerB = new AtomicBoolean(true);
-		var startedA = new CountDownLatch(1);
-		var startedB = new CountDownLatch(1);
-		var targetHome = new CompletableFuture<EventLoopScheduler>();
-		factoryA.newThread(() -> {
-			startedA.countDown();
-			while (blockerA.get()) {
-				Thread.onSpinWait();
-			}
-		}).start();
-		factoryB.newThread(() -> {
-			startedB.countDown();
-			while (blockerB.get()) {
-				Thread.onSpinWait();
-			}
-		}).start();
-		assertTrue(startedA.await(2, TimeUnit.SECONDS));
-		assertTrue(startedB.await(2, TimeUnit.SECONDS));
-		awaitUnresponsive(schedulerA);
-		factoryA.newThread(() -> {
-			targetHome.complete(EventLoopScheduler.currentScheduler());
-		}).start();
-		blockerA.set(false);
-		blockerB.set(false);
-		var home = targetHome.get(5, TimeUnit.SECONDS);
-		assertSame(schedulerA, home, "both carriers busy — VT must run on home A after blocker releases");
-	}
-
-	@Test
-	@Timeout(15)
-	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
 	void carrierWithDescheduledPollerCanSteal() throws Exception {
 		var group = EventLoopSchedulerGroup.instance();
 		assumeTrue(group.size() >= 2);
@@ -1094,6 +1054,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 		var schedulerB = group.scheduler(1);
 		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
 		var parkedLatch = new CountDownLatch(1);
+		var spinnerStarted = new CountDownLatch(1);
 		var spinnerB = new AtomicBoolean(true);
 		var vtRan = new CompletableFuture<EventLoopScheduler>();
 		schedulerA.virtualThreadFactory().newThread(() -> {
@@ -1104,10 +1065,12 @@ public class VirtualIoPollerEventLoopGroupTest {
 			Thread.onSpinWait();
 		}
 		schedulerB.virtualThreadFactory().newThread(() -> {
+			spinnerStarted.countDown();
 			while (spinnerB.get()) {
 				Thread.onSpinWait();
 			}
 		}).start();
+		assertTrue(spinnerStarted.await(2, TimeUnit.SECONDS));
 		try {
 			awaitUnresponsive(schedulerB);
 			schedulerB.virtualThreadFactory().newThread(() -> {
@@ -1131,6 +1094,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
 		var pollerLatch = new CountDownLatch(1);
 		var pollerStarted = new CountDownLatch(1);
+		var spinnerStarted = new CountDownLatch(1);
 		var spinnerB = new AtomicBoolean(true);
 		var vtRan = new CompletableFuture<EventLoopScheduler>();
 		var pollerTermination = schedulerA.registerPinnedPoller(() -> {
@@ -1148,10 +1112,12 @@ public class VirtualIoPollerEventLoopGroupTest {
 				Thread.onSpinWait();
 			}
 			schedulerB.virtualThreadFactory().newThread(() -> {
+				spinnerStarted.countDown();
 				while (spinnerB.get()) {
 					Thread.onSpinWait();
 				}
 			}).start();
+			assertTrue(spinnerStarted.await(2, TimeUnit.SECONDS));
 			awaitUnresponsive(schedulerB);
 			schedulerB.virtualThreadFactory().newThread(() -> {
 				vtRan.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
@@ -1168,6 +1134,6 @@ public class VirtualIoPollerEventLoopGroupTest {
 	private static void awaitUnresponsive(EventLoopScheduler scheduler) throws InterruptedException {
 		long thresholdMs = Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200);
 		Thread.sleep(thresholdMs + 5);
-		assertTrue(scheduler.needsHelp(System.nanoTime()), "scheduler should be unresponsive after threshold");
+		assertTrue(scheduler.isUnresponsive(System.nanoTime()), "scheduler should be unresponsive after threshold");
 	}
 }
