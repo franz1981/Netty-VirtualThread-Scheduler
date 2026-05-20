@@ -13,7 +13,7 @@ A locality-first virtual thread scheduler for the JVM. Virtual threads that work
 **This scheduler doesn't replace ForkJoinPool** — it runs alongside it. `Thread.ofVirtual()` still creates virtual threads on the default FJP, and third-party libraries that create their own virtual threads are unaffected. You choose which work runs on which scheduler:
 
 ```java
-var group = new VirtualIoPollerEventLoopGroup(EpollIoHandler.newFactory());
+var group = new VirtualIoNativePollerEventLoopGroup(EpollIoHandler.newFactory());
 var schedulerFactory = group.vThreadFactory();
 
 schedulerFactory.newThread(() -> {
@@ -95,8 +95,9 @@ For the full analysis with benchmarks, see the [talk at Devoxx](https://youtu.be
 
 | Transport | Class | Pinned poller? |
 |---|---|---|
-| NIO / LOCAL | `VirtualIoEventLoopGroup` | No — NIO parks via Loom, carrier is freed |
-| EPOLL / IO_URING | `VirtualIoPollerEventLoopGroup` | Yes — one per carrier, does kernel I/O |
+| NIO | `VirtualIoNioPollerEventLoopGroup` | Yes — priority poller, anti-steal; NIO parks via Loom (carrier freed) |
+| EPOLL / IO_URING | `VirtualIoNativePollerEventLoopGroup` | Yes — one per carrier, kernel I/O pins carrier |
+| NIO (lightweight) | `VirtualIoEventLoopGroup` | No — event loop as regular VT, no anti-steal |
 | No Netty | `EventLoopSchedulerGroup` | Optional — `registerPinnedPoller()` |
 
 ## Architecture
@@ -128,10 +129,10 @@ A carrier can optionally host a **pinned poller** — a long-running virtual thr
 
 ### Netty with NIO
 
-Use `VirtualIoEventLoopGroup`. NIO parks via Loom (carrier is freed), so no pinned poller is needed — the event loop just gets VT affinity to a carrier for locality.
+Use `VirtualIoNioPollerEventLoopGroup`. NIO parks via Loom (carrier is freed), so the event loop doesn't pin the carrier. The poller registration gives the event loop priority scheduling and prevents it from being stolen when work stealing is enabled.
 
 ```java
-var group = new VirtualIoEventLoopGroup(4, NioIoHandler.newFactory());
+var group = new VirtualIoNioPollerEventLoopGroup(NioIoHandler.newFactory());
 
 new ServerBootstrap()
     .group(group)
@@ -140,12 +141,18 @@ new ServerBootstrap()
     .bind(8080).sync();
 ```
 
-### Netty with native transport (EPOLL / IO_URING)
-
-Use `VirtualIoPollerEventLoopGroup`. It registers a pinned poller on each carrier — a virtual thread that runs the Netty event loop and does kernel I/O (epoll_wait, io_uring_enter) with affinity to that carrier.
+For a lightweight alternative without anti-steal guarantees, use `VirtualIoEventLoopGroup`:
 
 ```java
-var group = new VirtualIoPollerEventLoopGroup(EpollIoHandler.newFactory());
+var group = new VirtualIoEventLoopGroup(4, NioIoHandler.newFactory());
+```
+
+### Netty with native transport (EPOLL / IO_URING)
+
+Use `VirtualIoNativePollerEventLoopGroup`. It registers a pinned poller on each carrier — a virtual thread that runs the Netty event loop and does kernel I/O (epoll_wait, io_uring_enter) with affinity to that carrier.
+
+```java
+var group = new VirtualIoNativePollerEventLoopGroup(EpollIoHandler.newFactory());
 
 new ServerBootstrap()
     .group(group)
@@ -163,7 +170,7 @@ Spawn virtual threads from a handler — they run on the same carrier as the eve
 
 ```java
 class MyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
-    private final VirtualIoPollerEventLoopGroup group;
+    private final VirtualIoNativePollerEventLoopGroup group;
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
@@ -244,7 +251,7 @@ A pinned poller has three responsibilities:
 
    The blocking decision must be made **inside your transport** — the transport must advertise it's about to sleep (store a flag) before checking `canBlock()` (a load), with a StoreLoad barrier between the two so the load cannot slip before the advertisement. This is the [Seastar sleep/wakeup pattern](https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/): the symmetric store-barrier-load on both producer and consumer sides ensures at least one side always sees the other's store.
 
-   This is how our Netty integration works: `canBlock()` is [injected into the ManualIoEventLoop](core/src/main/java/io/netty/loom/VirtualIoPollerEventLoopGroup.java) via override, the transport advertises sleep via a volatile write (`pollerRunning.set(false)`) before reading `canBlock()`, and the wakeup checks that flag to report whether the poller was sleeping (see [netty#15922](https://github.com/netty/netty/issues/15922)):
+   This is how the native transport integration works: `canBlock()` is [injected into the ManualIoEventLoop](core/src/main/java/io/netty/loom/VirtualIoNativePollerEventLoopGroup.java) via override, the transport advertises sleep via a volatile write (`pollerRunning.set(false)`) before reading `canBlock()`, and the wakeup checks that flag to report whether the poller was sleeping (see [netty#15922](https://github.com/netty/netty/issues/15922)):
 
    ```java
    // inject canBlock into the transport
