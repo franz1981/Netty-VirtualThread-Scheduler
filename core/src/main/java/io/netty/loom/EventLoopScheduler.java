@@ -431,11 +431,15 @@ public final class EventLoopScheduler {
 			SchedulerJfrUtil.commitVirtualThreadTaskSubmitEvent(task, currentThread, carrierThread,
 					context.type == VThreadType.JDK_POLLER, pinnedTask);
 		}
+		// skip for yield/re-enqueue on the same carrier (onContinue path)
 		if (currentThread != carrierThread) {
 			if (EventLoopScheduler.currentThreadSchedulerContext().runningScheduler() != this) {
+				// external submission — wake the target carrier/poller
 				wakeup();
 			}
-			if (WORK_STEALING_ENABLED && needsHelp(System.nanoTime())) {
+			// internal: carrier is running us, just check if overloaded
+			// external: only ask for help if the carrier is stuck, not idle
+			if (WORK_STEALING_ENABLED && isCarrierBusy() && needsHelp(System.nanoTime())) {
 				wakeIdleSibling();
 			}
 		}
@@ -454,6 +458,10 @@ public final class EventLoopScheduler {
 			woke = true;
 		}
 		return woke;
+	}
+
+	private boolean isCarrierBusy() {
+		return parkedCarrierThread == null;
 	}
 
 	private long heartbeat() {
