@@ -22,6 +22,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 
 import org.jctools.queues.MpscUnboundedArrayQueue;
 
@@ -48,7 +49,7 @@ public final class EventLoopScheduler {
 	static {
 		try {
 			var lookup = MethodHandles.lookup();
-			PINNED_POLLER_WAKEUP = lookup.findVarHandle(EventLoopScheduler.class, "pinnedPollerWakeup", Runnable.class);
+			PINNED_POLLER_WAKEUP = lookup.findVarHandle(EventLoopScheduler.class, "pinnedPollerWakeup", BooleanSupplier.class);
 			CONSUMER_TICKET = lookup.findVarHandle(EventLoopScheduler.class, "consumerTicket", int.class);
 			CONSUMER_SERVING = lookup.findVarHandle(EventLoopScheduler.class, "consumerServing", int.class);
 			SCHEDULER_HEARTBEAT = lookup.findVarHandle(EventLoopScheduler.class, "schedulerHeartbeat", long.class);
@@ -150,7 +151,7 @@ public final class EventLoopScheduler {
 	private volatile Thread parkedCarrierThread;
 	private volatile Thread.VirtualThreadTask pinnedContinuationToRun;
 	@SuppressWarnings("FieldMayBeFinal")
-	private volatile Runnable pinnedPollerWakeup;
+	private volatile BooleanSupplier pinnedPollerWakeup;
 	@SuppressWarnings("FieldMayBeFinal")
 	private volatile int consumerTicket;
 	@SuppressWarnings("FieldMayBeFinal")
@@ -226,7 +227,7 @@ public final class EventLoopScheduler {
 	 *            the poller loop; the slot is freed when this returns
 	 * @return completes when {@code body} exits and the slot is freed
 	 */
-	public CompletionStage<Void> registerPinnedPoller(Runnable wakeup, Runnable body) {
+	public CompletionStage<Void> registerPinnedPoller(BooleanSupplier wakeup, Runnable body) {
 		if (!PINNED_POLLER_WAKEUP.compareAndSet(this, null, wakeup)) {
 			throw new IllegalStateException("poller already registered");
 		}
@@ -285,7 +286,9 @@ public final class EventLoopScheduler {
 				}
 				parkedCarrierThread = carrierThread;
 				if (canParkScheduler()) {
+					touchHeartbeat(System.nanoTime());
 					LockSupport.park();
+					touchHeartbeat(System.nanoTime());
 				}
 				parkedCarrierThread = null;
 			}
@@ -440,8 +443,7 @@ public final class EventLoopScheduler {
 		boolean woke = false;
 		var poller = pinnedPollerWakeup;
 		if (poller != null) {
-			poller.run();
-			woke = true;
+			woke = poller.getAsBoolean();
 		}
 		Thread parked = parkedCarrierThread;
 		if (parked != null) {
