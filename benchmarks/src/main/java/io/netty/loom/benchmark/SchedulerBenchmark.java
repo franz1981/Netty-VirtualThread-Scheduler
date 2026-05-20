@@ -44,7 +44,7 @@ import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.local.LocalIoHandler;
 import io.netty.channel.nio.NioIoHandler;
-import io.netty.loom.VirtualIoPollerEventLoopGroup;
+import io.netty.loom.VirtualIoNativePollerEventLoopGroup;
 
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -93,7 +93,7 @@ public class SchedulerBenchmark {
 		durationNs = TimeUnit.MICROSECONDS.toNanos(durationUs);
 		switch (scheduler) {
 			case Netty :
-				var virtualGroup = new VirtualIoPollerEventLoopGroup(factory);
+				var virtualGroup = new VirtualIoNativePollerEventLoopGroup(factory);
 				executorGroup = virtualGroup;
 				vtFactory = executorGroup.submit(virtualGroup::vThreadFactory).get();
 				break;

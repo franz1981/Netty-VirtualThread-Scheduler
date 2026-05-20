@@ -79,7 +79,7 @@ public final class EventLoopScheduler {
 	 * Because ScopedValues are inherited by child threads, the thread ID check
 	 * prevents a forked VT (e.g. in a {@code StructuredTaskScope} without our
 	 * factory) from accidentally using the parent's scheduler. See
-	 * {@code VirtualIoPollerEventLoopGroupTest.schedulerIsNotInheritedByForkedVT}.
+	 * {@code VirtualIoNativePollerEventLoopGroupTest.schedulerIsNotInheritedByForkedVT}.
 	 * <li><b>VirtualThreadTask attachment ({@link #eventLoopScheduler})</b> —
 	 * internal, used by {@code NettySchedulerProviderImpl.onStart/onContinue}. Safe
 	 * to access directly (no ID check) because attachments are only set on

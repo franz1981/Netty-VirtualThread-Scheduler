@@ -32,10 +32,10 @@ import java.util.concurrent.ThreadFactory;
  * scheduler (e.g. ForkJoinPool for benchmarking baselines).
  *
  * <p>
- * Use {@link VirtualIoPollerEventLoopGroup} for native transports (EPOLL,
+ * Use {@link VirtualIoNativePollerEventLoopGroup} for native transports (EPOLL,
  * IO_URING) that need poller pinning.
  *
- * @see VirtualIoPollerEventLoopGroup
+ * @see VirtualIoNativePollerEventLoopGroup
  */
 public class VirtualIoEventLoopGroup extends MultiThreadIoEventLoopGroup {
 

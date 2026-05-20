@@ -19,7 +19,7 @@ import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.uring.IoUringIoHandler;
-import io.netty.loom.VirtualIoPollerEventLoopGroup;
+import io.netty.loom.VirtualIoNativePollerEventLoopGroup;
 import io.netty.util.concurrent.FastThreadLocal;
 import org.HdrHistogram.Histogram;
 import org.jctools.queues.MpscArrayQueue;
@@ -113,7 +113,7 @@ public class SchedulerHandoffBenchmark {
 			case EPOLL -> EpollIoHandler.newFactory();
 		};
 		if (params.getBenchmark().contains("custom")) {
-			var group = new VirtualIoPollerEventLoopGroup(ioFactory);
+			var group = new VirtualIoNativePollerEventLoopGroup(ioFactory);
 			threadFactory = group::vThreadFactory;
 			this.group = group;
 		} else {
