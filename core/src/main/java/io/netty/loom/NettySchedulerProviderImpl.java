@@ -55,7 +55,8 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 	public void onStart(Thread.VirtualThreadTask virtualThreadTask) {
 		if (virtualThreadTask.attachment() instanceof EventLoopScheduler.SchedulingContext context) {
 			var eventLoop = context.eventLoopScheduler;
-			if (eventLoop != null && eventLoop.execute(virtualThreadTask)) {
+			if (eventLoop != null) {
+				eventLoop.execute(virtualThreadTask);
 				return;
 			}
 			virtualThreadTask.attach(null);
@@ -68,10 +69,8 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 							virtualThreadTask.attach(
 									new EventLoopScheduler.SchedulingContext(virtualThreadTask.thread().threadId(),
 											scheduler, EventLoopScheduler.VThreadType.JDK_POLLER));
-							if (scheduler.execute(virtualThreadTask)) {
-								return;
-							}
-							virtualThreadTask.attach(null);
+							scheduler.execute(virtualThreadTask);
+							return;
 						}
 					}
 				}
@@ -84,7 +83,8 @@ public class NettySchedulerProviderImpl implements NettySchedulerSpi {
 	public void onContinue(Thread.VirtualThreadTask virtualThreadTask) {
 		if (virtualThreadTask.attachment() instanceof EventLoopScheduler.SchedulingContext context) {
 			var eventLoop = context.eventLoopScheduler;
-			if (eventLoop != null && eventLoop.execute(virtualThreadTask)) {
+			if (eventLoop != null) {
+				eventLoop.execute(virtualThreadTask);
 				return;
 			}
 			virtualThreadTask.attach(null);
