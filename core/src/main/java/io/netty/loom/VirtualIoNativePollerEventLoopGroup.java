@@ -34,10 +34,10 @@ import io.netty.util.concurrent.FastThreadLocalThread;
  * affinity to the carrier, doing kernel I/O directly.
  *
  * <p>
- * Use {@link VirtualIoEventLoopGroup} for NIO/LOCAL transports that don't need
- * poller pinning.
+ * Use {@link VirtualIoNioPollerEventLoopGroup} for NIO transports that don't
+ * pin the carrier during blocking I/O.
  *
- * @see VirtualIoEventLoopGroup
+ * @see VirtualIoNioPollerEventLoopGroup
  */
 public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 
@@ -120,8 +120,8 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 		return assignedRoundRobin[index].virtualThreadFactory();
 	}
 
-	private static PollerResult createNettyPoller(EventLoopScheduler scheduler, VirtualIoNativePollerEventLoopGroup parent,
-			IoHandlerFactory ioHandlerFactory) {
+	private static PollerResult createNettyPoller(EventLoopScheduler scheduler,
+			VirtualIoNativePollerEventLoopGroup parent, IoHandlerFactory ioHandlerFactory) {
 		var pollerRunning = new AtomicBoolean(false);
 
 		var eventLoop = new ManualIoEventLoop(parent, null,
@@ -140,8 +140,7 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 			return false;
 		}, () -> {
 			eventLoop.setOwningThread(Thread.currentThread());
-			FastThreadLocalThread.runWithFastThreadLocal(
-					() -> pinningEventLoop(scheduler, eventLoop, pollerRunning));
+			FastThreadLocalThread.runWithFastThreadLocal(() -> pinningEventLoop(scheduler, eventLoop, pollerRunning));
 		});
 		return new PollerResult(eventLoop, termination);
 	}

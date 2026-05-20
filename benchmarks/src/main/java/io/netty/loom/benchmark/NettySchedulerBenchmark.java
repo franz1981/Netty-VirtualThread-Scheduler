@@ -15,7 +15,7 @@
 package io.netty.loom.benchmark;
 
 import io.netty.channel.nio.NioIoHandler;
-import io.netty.loom.VirtualIoNativePollerEventLoopGroup;
+import io.netty.loom.VirtualIoNioPollerEventLoopGroup;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -45,14 +45,14 @@ public class NettySchedulerBenchmark {
 	@Param({"1000", "100000"})
 	private int tasks;
 
-	private VirtualIoNativePollerEventLoopGroup executorGroup;
+	private VirtualIoNioPollerEventLoopGroup executorGroup;
 
 	private ThreadFactory vtFactory;
 
 	@Setup
 	public void setup(BenchmarkParams params) throws ExecutionException, InterruptedException {
 		if (params.getBenchmark().contains("Netty")) {
-			executorGroup = new VirtualIoNativePollerEventLoopGroup(NioIoHandler.newFactory());
+			executorGroup = new VirtualIoNioPollerEventLoopGroup(NioIoHandler.newFactory());
 			vtFactory = executorGroup.submit(executorGroup::vThreadFactory).get();
 		}
 	}
