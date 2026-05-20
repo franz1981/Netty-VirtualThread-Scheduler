@@ -132,23 +132,7 @@ public class VirtualIoNioPollerEventLoopGroup extends MultiThreadIoEventLoopGrou
 		assert ioEventLoop.inEventLoop(Thread.currentThread()) && Thread.currentThread().isVirtual();
 		boolean canBlock = false;
 		while (!ioEventLoop.isShuttingDown()) {
-			var event = SchedulerJfrUtil.beginRunIoEvent();
-			int ioEvents;
-			boolean ranBlocking = false;
-			if (canBlock) {
-				pollerRunning.set(false);
-				ranBlocking = true;
-				try {
-					ioEvents = ioEventLoop.run(MAX_WAIT_TASKS_NS, EventLoopScheduler.YIELD_DURATION_NS);
-				} finally {
-					pollerRunning.set(true);
-				}
-			} else {
-				ioEvents = ioEventLoop.runNow(EventLoopScheduler.YIELD_DURATION_NS);
-			}
-			if (event != null) {
-				SchedulerJfrUtil.commitRunIoEvent(event, scheduler.carrierThread(), ranBlocking, ioEvents);
-			}
+			int ioEvents = runIO(scheduler, ioEventLoop, canBlock, pollerRunning);
 			scheduler.maybeYield(ioEvents > 0);
 			int tasks = runNonBlockingTasks(scheduler, ioEventLoop, EventLoopScheduler.YIELD_DURATION_NS);
 			scheduler.maybeYield(ioEvents > 0 || tasks > 0);
@@ -159,6 +143,28 @@ public class VirtualIoNioPollerEventLoopGroup extends MultiThreadIoEventLoopGrou
 			scheduler.maybeYield(true);
 		}
 		pollerRunning.set(false);
+	}
+
+	private static int runIO(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop, boolean canBlock,
+			AtomicBoolean pollerRunning) {
+		var event = SchedulerJfrUtil.beginRunIoEvent();
+		int ioEventsHandled;
+		boolean ranBlocking = false;
+		if (canBlock) {
+			pollerRunning.set(false);
+			ranBlocking = true;
+			try {
+				ioEventsHandled = ioEventLoop.run(MAX_WAIT_TASKS_NS, EventLoopScheduler.YIELD_DURATION_NS);
+			} finally {
+				pollerRunning.set(true);
+			}
+		} else {
+			ioEventsHandled = ioEventLoop.runNow(EventLoopScheduler.YIELD_DURATION_NS);
+		}
+		if (event != null) {
+			SchedulerJfrUtil.commitRunIoEvent(event, scheduler.carrierThread(), ranBlocking, ioEventsHandled);
+		}
+		return ioEventsHandled;
 	}
 
 	private static int runNonBlockingTasks(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
