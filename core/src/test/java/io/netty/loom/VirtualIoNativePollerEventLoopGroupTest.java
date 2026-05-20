@@ -402,7 +402,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 					var task = scope.fork(() -> EventLoopScheduler.currentScheduler());
 					scope.join();
 					forkInheritedScheduler.complete(task.get());
-				} catch (InterruptedException e) {
+				} catch (Exception e) {
 					forkInheritedScheduler.completeExceptionally(e);
 				}
 			}).start();
@@ -421,7 +421,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 					var task = scope.fork(() -> EventLoopScheduler.currentScheduler());
 					scope.join();
 					schedulerRef.complete(task.get());
-				} catch (InterruptedException e) {
+				} catch (Exception e) {
 					schedulerRef.completeExceptionally(e);
 				}
 			}).start();
