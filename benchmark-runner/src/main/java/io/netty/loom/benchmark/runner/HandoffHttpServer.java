@@ -38,6 +38,7 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.loom.VirtualIoNativePollerEventLoopGroup;
+import io.netty.loom.VirtualIoNioPollerEventLoopGroup;
 import io.netty.loom.VirtualIoEventLoopGroup;
 import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
@@ -160,9 +161,18 @@ public class HandoffHttpServer {
 					case EPOLL -> io.netty.channel.epoll.EpollSocketChannel.class;
 					case IO_URING -> io.netty.channel.uring.IoUringSocketChannel.class;
 				};
-				var group = new VirtualIoNativePollerEventLoopGroup(ioHandlerFactory);
-				threadFactorySupplier = group::vThreadFactory;
-				workerGroup = group;
+				switch (io) {
+					case NIO -> {
+						var nioGroup = new VirtualIoNioPollerEventLoopGroup(ioHandlerFactory);
+						threadFactorySupplier = nioGroup::vThreadFactory;
+						workerGroup = nioGroup;
+					}
+					case EPOLL, IO_URING -> {
+						var nativeGroup = new VirtualIoNativePollerEventLoopGroup(ioHandlerFactory);
+						threadFactorySupplier = nativeGroup::vThreadFactory;
+						workerGroup = nativeGroup;
+					}
+				}
 			}
 			default -> {
 				serverChannelClass = switch (io) {

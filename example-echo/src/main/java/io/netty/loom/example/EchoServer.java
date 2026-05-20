@@ -30,7 +30,7 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.util.CharsetUtil;
 import io.netty.util.ReferenceCountUtil;
-import io.netty.loom.VirtualIoNativePollerEventLoopGroup;
+import io.netty.loom.VirtualIoNioPollerEventLoopGroup;
 
 import java.util.concurrent.ThreadFactory;
 
@@ -38,7 +38,7 @@ public class EchoServer {
 
 	public static void startServer(String[] args) throws Exception {
 		// simple echo server on port 8080
-		try (var group = new VirtualIoNativePollerEventLoopGroup(NioIoHandler.newFactory())) {
+		try (var group = new VirtualIoNioPollerEventLoopGroup(NioIoHandler.newFactory())) {
 			var bootstrap = new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
 					.childHandler(new ChannelInitializer<SocketChannel>() {
 						@Override

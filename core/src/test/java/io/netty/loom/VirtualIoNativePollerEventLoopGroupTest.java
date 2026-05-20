@@ -37,7 +37,6 @@ import java.util.stream.Stream;
 
 import io.netty.channel.*;
 import io.netty.channel.epoll.Epoll;
-import io.netty.channel.local.LocalIoHandler;
 import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 
@@ -70,21 +69,14 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 @Timeout(10)
 public class VirtualIoNativePollerEventLoopGroupTest {
 
-	// Transport enumeration to drive tests across available Netty transports.
 	private enum Transport {
-		NIO, EPOLL, IO_URING, LOCAL;
-
-		boolean isLocal() {
-			return this == LOCAL;
-		}
+		NIO, EPOLL, IO_URING;
 
 		boolean isAvailable() {
 			return switch (this) {
 				case NIO -> true;
 				case EPOLL -> Epoll.isAvailable();
 				case IO_URING -> IoUring.isAvailable();
-				case LOCAL -> true;
-				default -> false;
 			};
 		}
 
@@ -93,39 +85,38 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				case NIO -> NioIoHandler.newFactory();
 				case EPOLL -> EpollIoHandler.newFactory();
 				case IO_URING -> IoUringIoHandler.newFactory();
-				case LOCAL -> LocalIoHandler.newFactory();
-				default -> throw new IllegalStateException();
 			};
 		}
 
-		Class<? extends io.netty.channel.ServerChannel> serverChannelClass() {
+		Class<? extends ServerChannel> serverChannelClass() {
 			return switch (this) {
 				case NIO -> NioServerSocketChannel.class;
 				case EPOLL -> EpollServerSocketChannel.class;
 				case IO_URING -> IoUringServerSocketChannel.class;
-				case LOCAL -> throw new IllegalStateException(
-						"LOCAL transport does not provide a ServerChannel class for real networking");
-				default -> throw new IllegalStateException();
+			};
+		}
+
+		MultiThreadIoEventLoopGroup createGroup(int nThreads) {
+			return createGroup(nThreads, handlerFactory());
+		}
+
+		MultiThreadIoEventLoopGroup createGroup(int nThreads, IoHandlerFactory factory) {
+			return switch (this) {
+				case NIO -> new VirtualIoNioPollerEventLoopGroup(nThreads, factory);
+				case EPOLL, IO_URING -> new VirtualIoNativePollerEventLoopGroup(nThreads, factory);
 			};
 		}
 	}
 
-	private static Stream<Arguments> transportsForNetworking() {
-		return Stream.of(Transport.values()).filter(t -> !t.isLocal() && t.isAvailable()).map(Arguments::of);
-	}
-
-	private static Stream<Arguments> transportsAllowLocal() {
+	private static Stream<Arguments> availableTransports() {
 		return Stream.of(Transport.values()).filter(Transport::isAvailable).map(Arguments::of);
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsForNetworking")
+	@MethodSource("availableTransports")
 	void processHttpRequestWithVirtualThreadOnManualNettyEventLoop(Transport transport) throws InterruptedException {
 		assumeTrue(transport.isAvailable());
-		// avoid LOCAL for real networking tests
-		assumeTrue(!transport.isLocal());
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory())) {
-			// create a simple http request server
+		try (var group = transport.createGroup(1)) {
 			InetSocketAddress inetAddress = new InetSocketAddress(8080);
 			CountDownLatch sendResponse = new CountDownLatch(1);
 			var bootstrap = new ServerBootstrap().group(group).channel(transport.serverChannelClass())
@@ -134,13 +125,12 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 						@Override
 						protected void initChannel(SocketChannel ch) {
 							ch.pipeline().addLast(new HttpServerCodec());
-							// Netty is going to create a new one for each connection
 							ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
 
 								@Override
 								public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
 									if (msg instanceof DefaultHttpRequest) {
-										group.vThreadFactory().newThread(() -> {
+										vThreadFactory(group).newThread(() -> {
 											try {
 												sendResponse.await();
 												var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
@@ -164,7 +154,6 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 						}
 					});
 			Channel channel = bootstrap.bind(inetAddress).sync().channel();
-			// use a http client to send a random request and check the response
 			try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
 				var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
 						.header("Content-Type", "text/plain").GET().build();
@@ -179,10 +168,10 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void virtualEventExecutorGroupCorrectlySetEventExecutor(Transport transport)
 			throws ExecutionException, InterruptedException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = transport.createGroup(1)) {
 			var ioEventLoop = group.next();
 			assertInstanceOf(EventExecutor.class, ioEventLoop);
 			assertTrue(group.submit(() -> ThreadExecutorMap.currentExecutor() == ioEventLoop).get());
@@ -190,12 +179,10 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsForNetworking")
+	@MethodSource("availableTransports")
 	void busyYieldMakeEveryoneToProgress(Transport transport) throws InterruptedException {
 		assumeTrue(transport.isAvailable());
-		assumeTrue(!transport.isLocal());
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory())) {
-			// create a simple http request server
+		try (var group = transport.createGroup(1)) {
 			InetSocketAddress inetAddress = new InetSocketAddress(8080);
 			CountDownLatch sendResponse = new CountDownLatch(1);
 			AtomicBoolean secondVThreadHasDone = new AtomicBoolean(false);
@@ -207,13 +194,12 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 						@Override
 						protected void initChannel(SocketChannel ch) {
 							ch.pipeline().addLast(new HttpServerCodec());
-							// Netty is going to create a new one for each connection
 							ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
 
 								@Override
 								public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
 									if (msg instanceof DefaultHttpRequest) {
-										var vthreadFactory = group.vThreadFactory();
+										var vthreadFactory = vThreadFactory(group);
 										vthreadFactory.newThread(() -> {
 											try {
 												sendResponse.await();
@@ -265,7 +251,6 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 						}
 					});
 			Channel channel = bootstrap.bind(inetAddress).sync().channel();
-			// use a http client to send a random request and check the response
 			try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
 				var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
 						.header("Content-Type", "text/plain").GET().build();
@@ -274,7 +259,6 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				var httpResponse = httpResponseFuture.join();
 				assertEquals(200, httpResponse.statusCode());
 				assertEquals("HELLO!", httpResponse.body());
-				// assert yields more than 1
 				assertNotEquals(0, yields.get());
 			}
 			channel.close().await();
@@ -282,10 +266,9 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void saveWakeupsOnVirtualThreads(Transport transport) throws InterruptedException, ExecutionException {
 		assumeTrue(transport.isAvailable());
-		assumeTrue(!transport.isLocal());
 		assumeTrue(!EventLoopScheduler.WORK_STEALING_ENABLED,
 				"stolen VTs submitting to home trigger wakeup (runningScheduler != home)");
 		var wakeupCounter = new AtomicInteger();
@@ -331,8 +314,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				}
 			};
 		};
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, counterHandlerFactory)) {
-			// create a simple http request server
+		try (var group = transport.createGroup(1, counterHandlerFactory)) {
 			InetSocketAddress inetAddress = new InetSocketAddress(8080);
 			var innerVThreadCreationFromVThread = new CompletableFuture<Integer>();
 			var innerWriteFromVThread = new CompletableFuture<Integer>();
@@ -342,13 +324,12 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 						@Override
 						protected void initChannel(SocketChannel ch) {
 							ch.pipeline().addLast(new HttpServerCodec());
-							// Netty is going to create a new one for each connection
 							ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
 
 								@Override
 								public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
 									if (msg instanceof DefaultHttpRequest) {
-										var factory = group.vThreadFactory();
+										var factory = vThreadFactory(group);
 										factory.newThread(() -> {
 											final int beforeInner = wakeupCounter.get();
 											factory.newThread(() -> {
@@ -376,7 +357,6 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 						}
 					});
 			Channel channel = bootstrap.bind(inetAddress).sync().channel();
-			// use a http client to send a random request and check the response
 			try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
 				var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:8080"))
 						.header("Content-Type", "text/plain").GET().build();
@@ -389,13 +369,13 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void schedulerIsNotInheritedWithThreadOfVirtual(Transport transport)
 			throws InterruptedException, ExecutionException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = transport.createGroup(1)) {
 			final var expectedScheduler = group.submit(() -> EventLoopScheduler.currentScheduler()).get();
 			assertNotNull(expectedScheduler);
-			final var vThreadFactory = group.submit(group::vThreadFactory).get();
+			final var vThreadFactory = group.submit(() -> vThreadFactory(group)).get();
 			var groupEventLoopScheduler = new CompletableFuture<EventLoopScheduler>();
 			var noEventLoopScheduler = new CompletableFuture<>();
 			vThreadFactory.newThread(() -> {
@@ -408,13 +388,13 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void schedulerIsInheritedByForkedVTFromTheRightFactory(Transport transport)
 			throws InterruptedException, ExecutionException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = transport.createGroup(1)) {
 			final var expectedEventLoopScheduler = group.submit(() -> EventLoopScheduler.currentScheduler()).get();
 			assertNotNull(expectedEventLoopScheduler);
-			final var vThreadFactory = group.submit(group::vThreadFactory).get();
+			final var vThreadFactory = group.submit(() -> vThreadFactory(group)).get();
 			var forkInheritedScheduler = new CompletableFuture<EventLoopScheduler>();
 			vThreadFactory.newThread(() -> {
 				try (var scope = StructuredTaskScope.open(allSuccessfulOrThrow(),
@@ -431,10 +411,10 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void schedulerIsNotInheritedByForkedVT(Transport transport) throws InterruptedException, ExecutionException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory())) {
-			final var vThreadFactory = group.submit(group::vThreadFactory).get();
+		try (var group = transport.createGroup(1)) {
+			final var vThreadFactory = group.submit(() -> vThreadFactory(group)).get();
 			var schedulerRef = new CompletableFuture<EventLoopScheduler>();
 			vThreadFactory.newThread(() -> {
 				try (var scope = StructuredTaskScope.open(allSuccessfulOrThrow())) {
@@ -450,13 +430,13 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void virtualThreadCanMakeProgressEvenIfEventLoopIsClosed(Transport transport)
 			throws InterruptedException, ExecutionException, BrokenBarrierException {
 		assumeTrue(!EventLoopScheduler.WORK_STEALING_ENABLED, "work-stealing shutdown interaction needs investigation");
-		var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory());
+		var group = transport.createGroup(1);
 		final var barrier = new CyclicBarrier(2);
-		final var vThreadFactory = group.submit(group::vThreadFactory).get();
+		final var vThreadFactory = group.submit(() -> vThreadFactory(group)).get();
 		vThreadFactory.newThread(() -> {
 			try {
 				group.close();
@@ -469,13 +449,13 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void eventLoopSchedulerCanMakeProgressIfTheEventLoopIsBlocked(Transport transport)
 			throws BrokenBarrierException, InterruptedException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = transport.createGroup(1)) {
 			var allBlocked = new CyclicBarrier(3);
 			group.execute(() -> {
-				group.vThreadFactory().newThread(() -> {
+				vThreadFactory(group).newThread(() -> {
 					try {
 						allBlocked.await();
 					} catch (Throwable t) {
@@ -491,17 +471,18 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void testFairness(Transport transport) throws ExecutionException, InterruptedException {
+		assumeTrue(!EventLoopScheduler.WORK_STEALING_ENABLED, "work stealing reorders VTs across carriers by design");
 		final long V_TASK_DURATION_NS = TimeUnit.MILLISECONDS.toNanos(100);
 		int tasks = 4;
 		var interleavingVirtualThreads = new AtomicBoolean(false);
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory())) {
+		try (var group = transport.createGroup(1)) {
 			var nonBlockingTasksCompleted = new CountDownLatch(tasks);
 			group.submit(() -> {
 				var counter = new AtomicInteger();
 				for (int i = 0; i < tasks; i++) {
-					group.vThreadFactory().newThread(() -> {
+					vThreadFactory(group).newThread(() -> {
 						spinWait(V_TASK_DURATION_NS);
 						int count = counter.incrementAndGet();
 						group.execute(() -> {
@@ -526,27 +507,24 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	void testPlatformThreadSpawnsVirtualThreads(Transport transport) throws ExecutionException, InterruptedException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory());
-				var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+		try (var group = transport.createGroup(1); var executor = Executors.newVirtualThreadPerTaskExecutor()) {
 			var scheduler = executor.submit(() -> EventLoopScheduler.currentScheduler());
 			assertNull(scheduler.get());
 		}
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	@EnabledIfSystemProperty(named = "jdk.pollerMode", matches = "3")
 	void testBlockingIO(Transport transport) throws IOException, InterruptedException, ExecutionException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory());
-				var serverAcceptor = new ServerSocket(0)) {
+		try (var group = transport.createGroup(1); var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
 				try {
 					serverSocketPromise.complete(serverAcceptor.accept());
 				} catch (Throwable e) {
-					// complete exceptionally
 					serverSocketPromise.completeExceptionally(e);
 				}
 			});
@@ -557,7 +535,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				var readerVThreadPromise = new CompletableFuture<Thread>();
 				var readCompleted = new CompletableFuture<Void>();
 				group.execute(() -> {
-					var readerThread = group.vThreadFactory().newThread(() -> {
+					var readerThread = vThreadFactory(group).newThread(() -> {
 						var eventLoopScheduler = EventLoopScheduler.currentScheduler();
 						assertEquals(0, eventLoopScheduler.runnableCount());
 						try {
@@ -572,7 +550,6 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 				});
 				var readerVThread = readerVThreadPromise.get();
-				// it has to be waiting on read
 				while (readerVThread.getState() != Thread.State.WAITING) {
 					Thread.sleep(1);
 				}
@@ -583,18 +560,16 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	@EnabledIfSystemProperty(named = "jdk.pollerMode", matches = "3")
 	void testShutdownSchedulerOnBlockingIO(Transport transport)
 			throws IOException, InterruptedException, ExecutionException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory());
-				var serverAcceptor = new ServerSocket(0)) {
+		try (var group = transport.createGroup(1); var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
 				try {
 					serverSocketPromise.complete(serverAcceptor.accept());
 				} catch (Throwable e) {
-					// complete exceptionally
 					serverSocketPromise.completeExceptionally(e);
 				}
 			});
@@ -607,7 +582,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				var secondReadCompleted = new CompletableFuture<Void>();
 				var readerVThreadPromise = new CompletableFuture<Thread>();
 				group.execute(() -> {
-					var readerThread = group.vThreadFactory().newThread(() -> {
+					var readerThread = vThreadFactory(group).newThread(() -> {
 						schedulerRef.lazySet(EventLoopScheduler.currentScheduler());
 						var eventLoopScheduler = EventLoopScheduler.currentScheduler();
 						assertEquals(0, eventLoopScheduler.runnableCount());
@@ -629,15 +604,12 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 				});
 				var readerVThread = readerVThreadPromise.get();
-				// it has to be waiting on read
 				while (readerVThread.getState() != Thread.State.WAITING) {
 					Thread.sleep(1);
 				}
 				group.close();
-				// unblock the client and expect the read to complete
 				clientOut.write(1);
 				firstReadCompleted.join();
-				// it has to be waiting on read
 				while (readerVThread.getState() != Thread.State.WAITING) {
 					Thread.sleep(1);
 				}
@@ -648,19 +620,17 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@ParameterizedTest(name = "{index} => transport={0}")
-	@MethodSource("transportsAllowLocal")
+	@MethodSource("availableTransports")
 	@EnabledIfSystemProperty(named = "jdk.pollerMode", matches = "3")
 	void testShutdownSchedulerOnLongBlockingIO(Transport transport)
 			throws IOException, InterruptedException, ExecutionException {
 		int bytesToWrite = 16;
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, transport.handlerFactory());
-				var serverAcceptor = new ServerSocket(0)) {
+		try (var group = transport.createGroup(1); var serverAcceptor = new ServerSocket(0)) {
 			var serverSocketPromise = new CompletableFuture<Socket>();
 			Thread.ofVirtual().start(() -> {
 				try {
 					serverSocketPromise.complete(serverAcceptor.accept());
 				} catch (Throwable e) {
-					// complete exceptionally
 					serverSocketPromise.completeExceptionally(e);
 				}
 			});
@@ -672,7 +642,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				var readCompleted = new CompletableFuture<byte[]>();;
 				var readerVThreadPromise = new CompletableFuture<Thread>();
 				group.execute(() -> {
-					var readerThread = group.vThreadFactory().newThread(() -> {
+					var readerThread = vThreadFactory(group).newThread(() -> {
 						schedulerRef.lazySet(EventLoopScheduler.currentScheduler());
 						var eventLoopScheduler = EventLoopScheduler.currentScheduler();
 						assertEquals(0, eventLoopScheduler.runnableCount());
@@ -693,14 +663,12 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				for (int i = 0; i < toWrite.length; i++) {
 					toWrite[i] = (byte) i;
 				}
-				// it has to be waiting on read
 				while (readerVThread.getState() != Thread.State.WAITING) {
 					Thread.sleep(1);
 				}
 				for (int i = 0; i < toWrite.length; i++) {
-					Thread.sleep(50); // make sure the read is parked
+					Thread.sleep(50);
 					byte b = toWrite[i];
-					// shutdown whilst the read is parked
 					if (i == shutDownAt) {
 						group.close();
 					}
@@ -713,11 +681,11 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 	@Test
 	void pollerSlotIsFreedAfterGroupClose() throws InterruptedException, ExecutionException {
-		var first = new VirtualIoNativePollerEventLoopGroup(1, NioIoHandler.newFactory());
+		var first = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory());
 		var scheduler = first.submit(() -> EventLoopScheduler.currentScheduler()).get();
 		first.close();
 		assertFalse(scheduler.hasRegisteredPinnedPoller());
-		try (var second = new VirtualIoNativePollerEventLoopGroup(1, NioIoHandler.newFactory())) {
+		try (var second = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory())) {
 			var response = second.submit(() -> "alive").get();
 			assertEquals("alive", response);
 		}
@@ -748,8 +716,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 	@Test
 	void twoGroupsSharingPool() throws InterruptedException, ExecutionException {
-		try (var groupA = new VirtualIoNativePollerEventLoopGroup(1, NioIoHandler.newFactory());
-				var groupB = new VirtualIoNativePollerEventLoopGroup(1, NioIoHandler.newFactory())) {
+		try (var groupA = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory());
+				var groupB = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory())) {
 			var schedulerA = groupA.submit(() -> EventLoopScheduler.currentScheduler()).get();
 			var schedulerB = groupB.submit(() -> EventLoopScheduler.currentScheduler()).get();
 			assertNotSame(schedulerA, schedulerB);
@@ -758,7 +726,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 	@Test
 	void vThreadFactoryReturnsAssignedSchedulerFactory() throws InterruptedException, ExecutionException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, NioIoHandler.newFactory())) {
+		try (var group = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory())) {
 			var scheduler = group.submit(() -> EventLoopScheduler.currentScheduler()).get();
 			var factory = group.submit(() -> group.vThreadFactory()).get();
 			assertSame(scheduler.virtualThreadFactory(), factory);
@@ -767,8 +735,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 	@Test
 	void vThreadFactoryMappingShouldReturnNullIfNoneIsFound() throws InterruptedException, ExecutionException {
-		try (var otherGroup = new VirtualIoNativePollerEventLoopGroup(1, LocalIoHandler.newFactory());
-				var group = new VirtualIoNativePollerEventLoopGroup(1, NioIoHandler.newFactory())) {
+		try (var otherGroup = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory());
+				var group = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory())) {
 			var otherEventLoop = otherGroup.next();
 			assertNull(group.vThreadFactoryOf(otherEventLoop));
 		}
@@ -776,7 +744,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 	@Test
 	void vThreadFactoryMappingShouldReturnTheRightOne() throws InterruptedException, ExecutionException {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(1, NioIoHandler.newFactory())) {
+		try (var group = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory())) {
 			var ioEventLoop = (IoEventLoop) group.iterator().next();
 			var eventLoopScheduler = group.submit(() -> EventLoopScheduler.currentScheduler()).get();
 			assertSame(eventLoopScheduler.virtualThreadFactory(), group.vThreadFactoryOf(ioEventLoop));
@@ -938,7 +906,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	@Timeout(15)
 	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
 	void busyPollerWithIoDoesNotSteal() throws Exception {
-		try (var group = new VirtualIoNativePollerEventLoopGroup(2, NioIoHandler.newFactory())) {
+		try (var group = new VirtualIoNioPollerEventLoopGroup(2, NioIoHandler.newFactory())) {
 			var pair = group.submit(() -> new Object[]{EventLoopScheduler.currentScheduler(), group.vThreadFactory()})
 					.get();
 			var schedulerA = (EventLoopScheduler) pair[0];
@@ -1132,5 +1100,13 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		long thresholdMs = Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200);
 		Thread.sleep(thresholdMs + 5);
 		assertTrue(scheduler.isUnresponsive(System.nanoTime()), "scheduler should be unresponsive after threshold");
+	}
+
+	private static ThreadFactory vThreadFactory(MultiThreadIoEventLoopGroup group) {
+		return switch (group) {
+			case VirtualIoNioPollerEventLoopGroup g -> g.vThreadFactory();
+			case VirtualIoNativePollerEventLoopGroup g -> g.vThreadFactory();
+			default -> throw new IllegalArgumentException("unexpected group type: " + group.getClass());
+		};
 	}
 }

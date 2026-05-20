@@ -20,6 +20,7 @@ import io.netty.channel.epoll.EpollIoHandler;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.loom.VirtualIoNativePollerEventLoopGroup;
+import io.netty.loom.VirtualIoNioPollerEventLoopGroup;
 import io.netty.util.concurrent.FastThreadLocal;
 import org.HdrHistogram.Histogram;
 import org.jctools.queues.MpscArrayQueue;
@@ -113,9 +114,16 @@ public class SchedulerHandoffBenchmark {
 			case EPOLL -> EpollIoHandler.newFactory();
 		};
 		if (params.getBenchmark().contains("custom")) {
-			var group = new VirtualIoNativePollerEventLoopGroup(ioFactory);
-			threadFactory = group::vThreadFactory;
-			this.group = group;
+			MultiThreadIoEventLoopGroup customGroup = switch (io) {
+				case NIO -> new VirtualIoNioPollerEventLoopGroup(ioFactory);
+				case EPOLL, IO_URING -> new VirtualIoNativePollerEventLoopGroup(ioFactory);
+			};
+			this.group = customGroup;
+			threadFactory = switch (customGroup) {
+				case VirtualIoNioPollerEventLoopGroup g -> g::vThreadFactory;
+				case VirtualIoNativePollerEventLoopGroup g -> g::vThreadFactory;
+				default -> throw new IllegalStateException();
+			};
 		} else {
 			group = new MultiThreadIoEventLoopGroup(EL_THREADS, ioFactory);
 			var sameFactory = Thread.ofVirtual().factory();
