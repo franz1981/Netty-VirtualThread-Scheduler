@@ -726,8 +726,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
 		assumeTrue(available != null, "no free scheduler slots available");
 		var scheduler = available[0];
-		var termination = scheduler.registerPinnedPoller(() -> {
-		}, () -> {
+		var termination = scheduler.registerPinnedPoller(() -> false, () -> {
 		});
 		termination.toCompletableFuture().join();
 		assertFalse(scheduler.hasRegisteredPinnedPoller());
@@ -738,8 +737,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
 		assumeTrue(available != null, "no free scheduler slots available");
 		var scheduler = available[0];
-		var termination = scheduler.registerPinnedPoller(() -> {
-		}, () -> {
+		var termination = scheduler.registerPinnedPoller(() -> false, () -> {
 			throw new RuntimeException("poller crashed");
 		});
 		termination.toCompletableFuture().join();
@@ -1007,8 +1005,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 		var pollerLatch = new CountDownLatch(1);
 		var pollersStarted = new CountDownLatch(2);
 		var vtRan = new CompletableFuture<EventLoopScheduler>();
-		var pollerATermination = schedulerA.registerPinnedPoller(() -> {
-		}, () -> {
+		var pollerATermination = schedulerA.registerPinnedPoller(() -> false, () -> {
 			pollersStarted.countDown();
 			while (spinnerA.get()) {
 				Thread.onSpinWait();
@@ -1019,8 +1016,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 				Thread.currentThread().interrupt();
 			}
 		});
-		var pollerBTermination = schedulerB.registerPinnedPoller(() -> {
-		}, () -> {
+		var pollerBTermination = schedulerB.registerPinnedPoller(() -> false, () -> {
 			pollersStarted.countDown();
 			while (spinnerB.get()) {
 				Thread.onSpinWait();
@@ -1097,8 +1093,7 @@ public class VirtualIoPollerEventLoopGroupTest {
 		var spinnerStarted = new CountDownLatch(1);
 		var spinnerB = new AtomicBoolean(true);
 		var vtRan = new CompletableFuture<EventLoopScheduler>();
-		var pollerTermination = schedulerA.registerPinnedPoller(() -> {
-		}, () -> {
+		var pollerTermination = schedulerA.registerPinnedPoller(() -> false, () -> {
 			pollerStarted.countDown();
 			try {
 				pollerLatch.await();

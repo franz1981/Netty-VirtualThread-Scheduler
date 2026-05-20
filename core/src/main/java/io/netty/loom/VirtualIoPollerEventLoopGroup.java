@@ -132,7 +132,13 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 			}
 		};
 
-		var termination = scheduler.registerPinnedPoller(eventLoop::wakeup, () -> {
+		var termination = scheduler.registerPinnedPoller(() -> {
+			if (!pollerRunning.get()) {
+				eventLoop.wakeup();
+				return true;
+			}
+			return false;
+		}, () -> {
 			eventLoop.setOwningThread(Thread.currentThread());
 			FastThreadLocalThread.runWithFastThreadLocal(() -> nettyEventLoop(scheduler, eventLoop, pollerRunning));
 		});
