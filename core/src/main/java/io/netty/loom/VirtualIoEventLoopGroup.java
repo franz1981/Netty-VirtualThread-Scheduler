@@ -22,19 +22,21 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadFactory;
 
 /**
- * Event loop group for transports that don't pin the carrier (NIO, LOCAL). Each
- * event loop runs as a virtual thread with carrier affinity — NIO parks via
- * Loom, freeing the carrier for other work.
+ * Lightweight event loop group for loom-friendly transports (NIO). Each event
+ * loop runs as a regular virtual thread — no pinned poller registration, no
+ * anti-steal guarantees.
+ *
+ * <p>
+ * Prefer {@link VirtualIoNioPollerEventLoopGroup} for NIO when work stealing is
+ * enabled — it registers a pinned poller for priority scheduling and prevents
+ * the event loop from being stolen.
  *
  * <p>
  * Defaults to the global {@link EventLoopSchedulerGroup} carriers. Pass a
  * custom {@link java.util.concurrent.ThreadFactory} to use a different
  * scheduler (e.g. ForkJoinPool for benchmarking baselines).
  *
- * <p>
- * Use {@link VirtualIoNativePollerEventLoopGroup} for native transports (EPOLL,
- * IO_URING) that need poller pinning.
- *
+ * @see VirtualIoNioPollerEventLoopGroup
  * @see VirtualIoNativePollerEventLoopGroup
  */
 public class VirtualIoEventLoopGroup extends MultiThreadIoEventLoopGroup {
