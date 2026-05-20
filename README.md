@@ -389,8 +389,11 @@ between I/O phases and reports whether it processed events:
   stealable work via power-of-2 random probing (O(1), no scan).
 
 A sibling qualifies as a steal victim when `needsHelp()` returns true:
-- **Unresponsive**: no scheduling checkpoint reached in >200ms (last
-  checkpoint). The carrier is stuck running a long VT or deep I/O batch.
+- **Unresponsive with work**: no scheduling checkpoint reached in >200ms **and**
+  the run queue is non-empty. The carrier is stuck running a long VT while
+  other continuations wait. An unresponsive carrier with an empty queue (e.g.
+  idle/parked or blocking in kernel I/O) is not a steal victim — there is
+  nothing to steal.
 - **Overloaded**: the run queue exceeds the threshold (default 10). A burst of VT
   submissions is piling up faster than the carrier can drain.
 
