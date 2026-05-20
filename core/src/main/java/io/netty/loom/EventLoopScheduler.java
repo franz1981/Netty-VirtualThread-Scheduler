@@ -413,7 +413,7 @@ public final class EventLoopScheduler {
 		return ((SchedulingContext) task.attachment()).type == VThreadType.PINNED_POLLER;
 	}
 
-	boolean execute(Thread.VirtualThreadTask task) {
+	void execute(Thread.VirtualThreadTask task) {
 		var currentThread = Thread.currentThread();
 		var context = (SchedulingContext) task.attachment();
 		boolean submitEventEnabled = VirtualThreadTaskSubmitEvent.isEventEnabled();
@@ -424,9 +424,7 @@ public final class EventLoopScheduler {
 			pinnedTask = true;
 		}
 		if (!pinnedTask) {
-			if (!runQueue.offer(task)) {
-				return false;
-			}
+			runQueue.offer(task);
 		}
 		if (submitEventEnabled) {
 			SchedulerJfrUtil.commitVirtualThreadTaskSubmitEvent(task, currentThread, carrierThread,
@@ -445,7 +443,6 @@ public final class EventLoopScheduler {
 				wakeIdleSibling();
 			}
 		}
-		return true;
 	}
 
 	boolean wakeup() {
