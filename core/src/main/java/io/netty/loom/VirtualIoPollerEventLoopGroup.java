@@ -22,9 +22,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.netty.channel.IoEventLoop;
+import io.netty.channel.IoHandler;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.loom.spi.NettyScheduler;
 import io.netty.util.concurrent.FastThreadLocalThread;
 
@@ -123,32 +125,45 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 	private static PollerResult createNettyPoller(EventLoopScheduler scheduler, VirtualIoPollerEventLoopGroup parent,
 			IoHandlerFactory ioHandlerFactory) {
 		var pollerRunning = new AtomicBoolean(false);
+		boolean[] pinsCarrier = { true };
 
-		var eventLoop = new ManualIoEventLoop(parent, null,
-				ioExecutor -> new AwakeAwareIoHandler(pollerRunning, ioHandlerFactory.newHandler(ioExecutor))) {
+		var eventLoop = new ManualIoEventLoop(parent, null, ioExecutor -> {
+			var handler = ioHandlerFactory.newHandler(ioExecutor);
+			pinsCarrier[0] = !(handler instanceof NioIoHandler);
+			return new AwakeAwareIoHandler(pollerRunning, handler);
+		}) {
 			@Override
 			public boolean canBlock() {
-				return scheduler.canBlock();
+				return !pinsCarrier[0] || scheduler.canBlock();
 			}
 		};
 
-		var termination = scheduler.registerPinnedPoller(() -> {
-			if (!pollerRunning.get()) {
-				eventLoop.wakeup();
-				return true;
-			}
-			return false;
-		}, () -> {
-			eventLoop.setOwningThread(Thread.currentThread());
-			FastThreadLocalThread.runWithFastThreadLocal(() -> nettyEventLoop(scheduler, eventLoop, pollerRunning));
-		});
+		boolean pins = pinsCarrier[0];
+		var termination = scheduler.registerPinnedPoller(
+				pins ? () -> {
+					if (!pollerRunning.get()) {
+						eventLoop.wakeup();
+						return true;
+					}
+					return false;
+				} : () -> false,
+				() -> {
+					eventLoop.setOwningThread(Thread.currentThread());
+					if (pins) {
+						FastThreadLocalThread.runWithFastThreadLocal(
+								() -> pinningEventLoop(scheduler, eventLoop, pollerRunning));
+					} else {
+						FastThreadLocalThread.runWithFastThreadLocal(
+								() -> loomFriendlyEventLoop(scheduler, eventLoop, pollerRunning));
+					}
+				});
 		return new PollerResult(eventLoop, termination);
 	}
 
 	private record PollerResult(ManualIoEventLoop eventLoop, CompletionStage<Void> termination) {
 	}
 
-	private static void nettyEventLoop(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
+	private static void pinningEventLoop(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
 			AtomicBoolean pollerRunning) {
 		pollerRunning.set(true);
 		assert ioEventLoop.inEventLoop(Thread.currentThread()) && Thread.currentThread().isVirtual();
@@ -159,6 +174,41 @@ public class VirtualIoPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 			int tasks = runNonBlockingTasks(scheduler, ioEventLoop, EventLoopScheduler.YIELD_DURATION_NS);
 			hadVtWork |= scheduler.maybeYield(ioEvents > 0 || tasks > 0);
 			canBlock = ioEvents == 0 && tasks == 0 && !hadVtWork;
+		}
+		while (!ioEventLoop.isTerminated()) {
+			ioEventLoop.runNow();
+			scheduler.maybeYield(true);
+		}
+		pollerRunning.set(false);
+	}
+
+	private static void loomFriendlyEventLoop(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
+			AtomicBoolean pollerRunning) {
+		pollerRunning.set(true);
+		assert ioEventLoop.inEventLoop(Thread.currentThread()) && Thread.currentThread().isVirtual();
+		boolean canBlock = false;
+		while (!ioEventLoop.isShuttingDown()) {
+			var event = SchedulerJfrUtil.beginRunIoEvent();
+			int ioEvents;
+			boolean ranBlocking = false;
+			if (canBlock) {
+				pollerRunning.set(false);
+				ranBlocking = true;
+				try {
+					ioEvents = ioEventLoop.run(MAX_WAIT_TASKS_NS, EventLoopScheduler.YIELD_DURATION_NS);
+				} finally {
+					pollerRunning.set(true);
+				}
+			} else {
+				ioEvents = ioEventLoop.runNow(EventLoopScheduler.YIELD_DURATION_NS);
+			}
+			if (event != null) {
+				SchedulerJfrUtil.commitRunIoEvent(event, scheduler.carrierThread(), ranBlocking, ioEvents);
+			}
+			scheduler.maybeYield(ioEvents > 0);
+			int tasks = runNonBlockingTasks(scheduler, ioEventLoop, EventLoopScheduler.YIELD_DURATION_NS);
+			scheduler.maybeYield(ioEvents > 0 || tasks > 0);
+			canBlock = ioEvents == 0;
 		}
 		while (!ioEventLoop.isTerminated()) {
 			ioEventLoop.runNow();

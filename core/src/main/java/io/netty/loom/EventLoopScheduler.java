@@ -433,13 +433,14 @@ public final class EventLoopScheduler {
 		}
 		// skip for yield/re-enqueue on the same carrier (onContinue path)
 		if (currentThread != carrierThread) {
+			boolean woke = false;
 			if (EventLoopScheduler.currentThreadSchedulerContext().runningScheduler() != this) {
 				// external submission — wake the target carrier/poller
-				wakeup();
+				woke = wakeup();
 			}
-			// internal: carrier is running us, just check if overloaded
-			// external: only ask for help if the carrier is stuck, not idle
-			if (WORK_STEALING_ENABLED && isCarrierBusy() && needsHelp(System.nanoTime())) {
+			// woke=true: carrier was sleeping (parked or poller pinning it) — it'll drain
+			// woke=false: internal submission or carrier is active — check if overloaded
+			if (!woke && WORK_STEALING_ENABLED && needsHelp(System.nanoTime())) {
 				wakeIdleSibling();
 			}
 		}
@@ -458,10 +459,6 @@ public final class EventLoopScheduler {
 			woke = true;
 		}
 		return woke;
-	}
-
-	private boolean isCarrierBusy() {
-		return parkedCarrierThread == null;
 	}
 
 	private long heartbeat() {
