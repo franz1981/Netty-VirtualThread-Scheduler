@@ -432,13 +432,15 @@ in that time. Three cases:
   further checkpoints occur while sleeping. After 200ms the carrier becomes
   unresponsive. Note: a blocking carrier always has an empty queue
   (`canBlock()` requires it), so nothing can be stolen FROM it. But it
-  can be woken via `tryWakeup()` to help steal from others.
+  can be woken via `wakeup()` to help steal from others.
 - **Poller descheduled**: the poller VT is parked on something other than I/O
   (e.g. a `CountDownLatch`). The carrier has nothing to run — no VTs, no
   pinned continuation — and tries to steal before parking. This lets a carrier
   with a registered-but-descheduled poller help an overloaded sibling.
-- **Carrier parked** (no poller): same pattern — the heartbeat was updated at
-  the last `drainContinuations()` call, no further checkpoints while parked.
+- **Carrier parked** (no poller): the carrier touches the heartbeat immediately
+  before parking and again after waking, mirroring the poller's pattern. A
+  recently-parked carrier appears responsive — only after the threshold elapses
+  while parked does it become unresponsive.
 
 ### Submission paths and when help is requested
 
@@ -458,7 +460,7 @@ Virtual thread continuations arrive in `execute()` from two sources:
   is woken to help drain them.
 
 `wakeIdleSibling()` uses power-of-2 random probing: pick 2 random siblings, try
-`tryWakeup()` on the first — if it was actually idle (poller blocking or carrier
+`wakeup()` on the first — if it was actually idle (poller blocking or carrier
 parked), the wakeup fires and returns true. If the first was busy, try the second.
 This avoids scanning all siblings (O(1) regardless of carrier count).
 

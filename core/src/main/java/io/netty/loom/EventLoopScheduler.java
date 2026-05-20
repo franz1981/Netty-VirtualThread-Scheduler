@@ -222,7 +222,10 @@ public final class EventLoopScheduler {
 	 *
 	 * @param wakeup
 	 *            called from any thread to interrupt the poller's blocking I/O;
-	 *            must be thread-safe
+	 *            must be thread-safe. Must return {@code true} if the poller was
+	 *            observed sleeping (signal sent), {@code false} if it was actively
+	 *            running (signal suppressed). The scheduler uses this to guide
+	 *            work-stealing decisions
 	 * @param body
 	 *            the poller loop; the slot is freed when this returns
 	 * @return completes when {@code body} exits and the slot is freed
@@ -258,7 +261,7 @@ public final class EventLoopScheduler {
 	 */
 	public boolean maybeYield(boolean hadIoWork) {
 		assert isValidPinnedPoller();
-		touchHeartbeat(System.nanoTime());
+		touchHeartbeat();
 		if (hasRunnableContinuations()) {
 			Thread.yield();
 			return true;
@@ -285,10 +288,10 @@ public final class EventLoopScheduler {
 					continue;
 				}
 				parkedCarrierThread = carrierThread;
+				touchHeartbeat();
 				if (canParkScheduler()) {
-					touchHeartbeat(System.nanoTime());
 					LockSupport.park();
-					touchHeartbeat(System.nanoTime());
+					touchHeartbeat();
 				}
 				parkedCarrierThread = null;
 			}
@@ -299,8 +302,10 @@ public final class EventLoopScheduler {
 		return !runQueue.isEmpty();
 	}
 
-	private void touchHeartbeat(long nanos) {
-		SCHEDULER_HEARTBEAT.setOpaque(this, nanos);
+	private void touchHeartbeat() {
+		if (WORK_STEALING_ENABLED) {
+			SCHEDULER_HEARTBEAT.setOpaque(this, System.nanoTime());
+		}
 	}
 
 	/**
@@ -369,7 +374,6 @@ public final class EventLoopScheduler {
 	private int drainContinuations(long deadlineNs) {
 		var event = SchedulerJfrUtil.beginVirtualThreadTaskRunsEvent();
 		final long startDrainingNs = System.nanoTime();
-		touchHeartbeat(startDrainingNs);
 		int queueDepthBefore = event != null ? runQueue.size() : 0;
 		var ready = this.runQueue;
 		int runContinuations = 0;
@@ -391,7 +395,6 @@ public final class EventLoopScheduler {
 			runContinuations++;
 			runContinuation(task);
 			long nowNs = System.nanoTime();
-			touchHeartbeat(nowNs);
 			long elapsedNs = nowNs - startDrainingNs;
 			if (elapsedNs >= deadlineNs) {
 				break;
@@ -453,8 +456,13 @@ public final class EventLoopScheduler {
 		return woke;
 	}
 
+	private long heartbeat() {
+		assert WORK_STEALING_ENABLED : "heartbeat is only valid when work stealing is enabled";
+		return (long) SCHEDULER_HEARTBEAT.getOpaque(this);
+	}
+
 	boolean isUnresponsive(long nowNanos) {
-		return (nowNanos - (long) SCHEDULER_HEARTBEAT.getOpaque(this)) > UNRESPONSIVE_THRESHOLD_NS;
+		return (nowNanos - heartbeat()) > UNRESPONSIVE_THRESHOLD_NS;
 	}
 
 	private boolean needsHelp(long nowNanos) {
@@ -544,11 +552,12 @@ public final class EventLoopScheduler {
 		var event = SchedulerJfrUtil.beginVirtualThreadTaskRunEvent();
 		if (event == null) {
 			task.run();
-			return;
+		} else {
+			boolean isPinned = context.type == VThreadType.PINNED_POLLER;
+			boolean isPoller = context.type == VThreadType.JDK_POLLER;
+			task.run();
+			SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task.thread(), isPoller, isPinned);
 		}
-		boolean isPinned = context.type == VThreadType.PINNED_POLLER;
-		boolean isPoller = context.type == VThreadType.JDK_POLLER;
-		task.run();
-		SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task.thread(), isPoller, isPinned);
+		touchHeartbeat();
 	}
 }
