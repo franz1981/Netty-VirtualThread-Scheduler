@@ -210,7 +210,7 @@ Register your own I/O poller on a carrier via `registerPinnedPoller`. The poller
 var scheduler = EventLoopSchedulerGroup.instance().scheduler(0);
 
 CompletionStage<Void> termination = scheduler.registerPinnedPoller(
-    () -> { /* empty — no blocking, no wakeup needed */ },
+    () -> false,  // non-blocking — never sleeping, nothing to wake
     () -> {
         while (!shutdown) {
             int events = doPollNonBlocking();
@@ -235,11 +235,16 @@ A pinned poller has three responsibilities:
 
 2. **Terminate.** The poller slot is freed when the body `Runnable` returns (via try-finally internally). The returned `CompletionStage` completes after cleanup, so callers can wait for the slot to be available again.
 
-3. **Never miss a wakeup — if you choose to block.** The simple poller above never blocks, so it doesn't need wakeup coordination. But if you want to block in kernel I/O when idle (to save CPU), the blocking path introduces a coordination problem.
+3. **Report wakeup state honestly.** The wakeup `BooleanSupplier` must return `true` if the poller was observed sleeping (blocking in kernel I/O) and the wakeup signal was sent, or `false` if the poller was actively running (spinning, processing events). The scheduler uses this to decide whether idle siblings need to be woken for work stealing — a poller that falsely reports "sleeping" when it's actually running can suppress sibling wakeups that would otherwise help an overloaded carrier.
+
+   - **Non-blocking poller (spin-poll):** return `false` — the poller never sleeps. No wakeup action needed.
+   - **Blocking poller:** track whether you're inside the blocking syscall (e.g. a volatile flag set before `select()`/`epoll_wait()` and cleared after). Return `true` and send the wakeup signal when the flag is set; return `false` when it's not.
+
+4. **Never miss a wakeup — if you choose to block.** The simple poller above never blocks, so it doesn't need wakeup coordination. But if you want to block in kernel I/O when idle (to save CPU), the blocking path introduces a coordination problem.
 
    The blocking decision must be made **inside your transport** — the transport must advertise it's about to sleep (store a flag) before checking `canBlock()` (a load), with a StoreLoad barrier between the two so the load cannot slip before the advertisement. This is the [Seastar sleep/wakeup pattern](https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/): the symmetric store-barrier-load on both producer and consumer sides ensures at least one side always sees the other's store.
 
-   This is how our Netty integration works: `canBlock()` is [injected into the ManualIoEventLoop](core/src/main/java/io/netty/loom/VirtualIoPollerEventLoopGroup.java) via override, the transport advertises sleep via a volatile write (`pollerRunning.set(false)`) before reading `canBlock()`, and the wakeup is the transport's own `eventLoop::wakeup` (see [netty#15922](https://github.com/netty/netty/issues/15922)):
+   This is how our Netty integration works: `canBlock()` is [injected into the ManualIoEventLoop](core/src/main/java/io/netty/loom/VirtualIoPollerEventLoopGroup.java) via override, the transport advertises sleep via a volatile write (`pollerRunning.set(false)`) before reading `canBlock()`, and the wakeup checks that flag to report whether the poller was sleeping (see [netty#15922](https://github.com/netty/netty/issues/15922)):
 
    ```java
    // inject canBlock into the transport
@@ -251,7 +256,13 @@ A pinned poller has three responsibilities:
    };
 
    scheduler.registerPinnedPoller(
-       eventLoop::wakeup,   // transport's own wakeup mechanism
+       () -> {              // wakeup: return true if poller was sleeping
+           if (!pollerRunning.get()) {
+               eventLoop.wakeup();
+               return true;
+           }
+           return false;
+       },
        () -> {
            boolean canBlock = false;
            while (!eventLoop.isShuttingDown()) {
