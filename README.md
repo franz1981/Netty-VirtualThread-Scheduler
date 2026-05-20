@@ -217,7 +217,7 @@ Register your own I/O poller on a carrier via `registerPinnedPoller`. The poller
 var scheduler = EventLoopSchedulerGroup.instance().scheduler(0);
 
 CompletionStage<Void> termination = scheduler.registerPinnedPoller(
-    () -> false,  // non-blocking — never sleeping, nothing to wake
+    () -> false,  // spinning — never sleeps, must return false (see below)
     () -> {
         while (!shutdown) {
             int events = doPollNonBlocking();
@@ -238,14 +238,15 @@ A pinned poller has three responsibilities:
    - **`hadIoWork=true`**: the poller has I/O to process. The scheduler only yields for local VT preemption — no work stealing, because the carrier is doing useful work.
    - **`hadIoWork=false`**: the poller is idle. The scheduler may attempt to steal work from an overloaded sibling (if [work stealing](#work-stealing-experimental) is enabled), helping reduce tail latency when load is uneven.
 
-   The `hadIoWork` parameter also controls the scheduler heartbeat. Passing `false` when idle allows the scheduler to accurately detect which carriers are available to help others. Passing `true` incorrectly would prevent the carrier from ever stealing, while passing `false` incorrectly would make the carrier steal when it should be doing I/O. **Get this right** — it's the feedback loop between the poller and the scheduler.
+   The scheduler heartbeat is always updated on every `maybeYield` call regardless of `hadIoWork`. What `hadIoWork` controls is the **steal path**: when `false`, the scheduler may steal from an overloaded sibling; when `true`, stealing is suppressed because the carrier is doing useful I/O work. Passing `true` incorrectly would prevent the carrier from ever stealing, while passing `false` incorrectly would make the carrier steal when it should be doing I/O. **Get this right** — it's the feedback loop between the poller and the scheduler.
 
 2. **Terminate.** The poller slot is freed when the body `Runnable` returns (via try-finally internally). The returned `CompletionStage` completes after cleanup, so callers can wait for the slot to be available again.
 
 3. **Report wakeup state honestly.** The wakeup `BooleanSupplier` must return `true` if the poller was observed sleeping (blocking in kernel I/O) and the wakeup signal was sent, or `false` if the poller was actively running (spinning, processing events). The scheduler uses this to decide whether idle siblings need to be woken for work stealing — a poller that falsely reports "sleeping" when it's actually running can suppress sibling wakeups that would otherwise help an overloaded carrier.
 
-   - **Non-blocking poller (spin-poll):** return `false` — the poller never sleeps. No wakeup action needed.
-   - **Blocking poller:** track whether you're inside the blocking syscall (e.g. a volatile flag set before `select()`/`epoll_wait()` and cleared after). Return `true` and send the wakeup signal when the flag is set; return `false` when it's not.
+   - **Non-blocking poller (spin-poll):** return `false` — the poller never sleeps, so waking it doesn't free the carrier. Returning `true` incorrectly would suppress `wakeIdleSibling()`, preventing idle siblings from helping an overloaded carrier.
+   - **Blocking poller (native transport):** track whether you're inside the blocking syscall (e.g. a volatile flag set before `epoll_wait()` and cleared after). Return `true` and send the wakeup signal when the flag is set — this tells the scheduler that waking the poller freed the pinned carrier, so no sibling help is needed. Return `false` when the poller is actively running.
+   - **Loom-friendly poller (NIO):** return `false` — NIO's `select()` parks via Loom, freeing the carrier. The carrier parks in its scheduler loop and is woken via `LockSupport.unpark()`, not via the poller wakeup. See `VirtualIoNioPollerEventLoopGroup`.
 
 4. **Never miss a wakeup — if you choose to block.** The simple poller above never blocks, so it doesn't need wakeup coordination. But if you want to block in kernel I/O when idle (to save CPU), the blocking path introduces a coordination problem.
 
@@ -423,9 +424,9 @@ Stolen tasks go to the stealer's local queue. The poller yields naturally via
 Each carrier maintains a **scheduler heartbeat** — a nanosecond timestamp updated
 via `setOpaque` at every scheduling checkpoint:
 
-- At the start of `drainContinuations()` (before draining VTs)
-- After each VT continuation completes (inside the drain loop)
+- After each VT continuation completes (in `runContinuation()`, after `task.run()` returns)
 - At every `maybeYield(hadIoWork)` call (the poller's scheduling checkpoint)
+- Before and after carrier park (in `virtualThreadSchedulerLoop()`)
 
 A carrier is **unresponsive** when `System.nanoTime() - heartbeat > threshold`
 (default 200ms). This means the carrier hasn't reached any scheduling checkpoint
@@ -456,8 +457,9 @@ Virtual thread continuations arrive in `execute()` from two sources:
 **External submissions** (from a different carrier or a platform thread):
 - The submitter's `runningScheduler()` differs from the target → `wakeup()` fires
   to interrupt the target's blocking I/O or unpark its carrier.
-- If the target `needsHelp()` (unresponsive or overloaded) → `wakeIdleSibling()`
-  wakes a random idle sibling to come steal.
+- If `wakeup()` returned false (carrier was not sleeping) and the target
+  `needsHelp()` (unresponsive or overloaded) → `wakeIdleSibling()` wakes a random
+  idle sibling to come steal.
 
 **Internal submissions** (a VT running on this carrier submits to the same carrier):
 - The submitter's `runningScheduler()` matches → no self-wakeup needed.
@@ -465,6 +467,14 @@ Virtual thread continuations arrive in `execute()` from two sources:
   case where a VT monopolizes a carrier and spawns many children: the carrier is
   stuck running the parent VT while children pile up in the queue. An idle sibling
   is woken to help drain them.
+- Note: the poller VT counts as "internal" here — submissions from Netty handlers
+  (channelRead → vThreadFactory → start) come from the poller VT, which has
+  `runningScheduler() == this`. No self-wakeup fires, but `needsHelp()` is checked.
+
+**Yield / re-enqueue** (onContinue path, runs on the carrier thread itself):
+- Skipped entirely — the carrier thread is actively draining, no wakeup or help
+  request needed. The carrier will pick up the re-enqueued continuation on its
+  next drain cycle.
 
 `wakeIdleSibling()` uses power-of-2 random probing: pick 2 random siblings, try
 `wakeup()` on the first — if it was actually idle (poller blocking or carrier
