@@ -308,7 +308,7 @@ For a deeper look at the store-barrier-load protocol, JCStress proofs that the g
 | Property | Default | Description |
 |---|---|---|
 | `io.netty.loom.schedulers` | `availableProcessors()` | Number of carrier threads |
-| `io.netty.loom.yield.us` | `10` | Yield duration in microseconds |
+| `io.netty.loom.yield.us` | `50` | Yield duration in microseconds |
 | `io.netty.loom.resumed.continuations` | `1024` | Initial MPSC queue capacity |
 | `io.netty.loom.workstealing.enabled` | `false` | Enable work stealing (experimental) |
 | `io.netty.loom.workstealing.unresponsive.ms` | `200` | Time without a scheduling checkpoint before a carrier is considered unresponsive |
