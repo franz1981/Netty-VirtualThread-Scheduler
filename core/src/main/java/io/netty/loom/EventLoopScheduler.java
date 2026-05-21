@@ -60,7 +60,7 @@ public final class EventLoopScheduler {
 	}
 
 	static final long YIELD_DURATION_NS = TimeUnit.MICROSECONDS
-			.toNanos(Integer.getInteger("io.netty.loom.yield.us", 10));
+			.toNanos(Integer.getInteger("io.netty.loom.yield.us", 50));
 	private static final int OVERLOAD_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.overload.queue",
 			10);
 	static final boolean WORK_STEALING_ENABLED = Boolean
