@@ -34,8 +34,6 @@ public class ManualIoEventLoopTask extends ManualIoEventLoop implements Runnable
 		while (!isShuttingDown()) {
 			run(0, RUNNING_YIELD_US);
 			Thread.yield();
-			runNonBlockingTasks(RUNNING_YIELD_US);
-			Thread.yield();
 		}
 		while (!isTerminated()) {
 			runNow();
