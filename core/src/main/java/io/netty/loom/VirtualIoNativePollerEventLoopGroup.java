@@ -156,9 +156,7 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 		while (!ioEventLoop.isShuttingDown()) {
 			int ioEvents = runIO(scheduler, ioEventLoop, canBlock, pollerRunning);
 			boolean hadVtWork = scheduler.maybeYield(ioEvents > 0);
-			int tasks = runNonBlockingTasks(scheduler, ioEventLoop, EventLoopScheduler.YIELD_DURATION_NS);
-			hadVtWork |= scheduler.maybeYield(ioEvents > 0 || tasks > 0);
-			canBlock = ioEvents == 0 && tasks == 0 && !hadVtWork;
+			canBlock = ioEvents == 0 && !hadVtWork;
 		}
 		while (!ioEventLoop.isTerminated()) {
 			ioEventLoop.runNow();
