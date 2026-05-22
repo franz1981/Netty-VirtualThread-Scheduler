@@ -140,7 +140,10 @@ public class HandoffHttpServer {
 				if (!silent) {
 					System.out.println("[io_uring] " + IoUring.featureString());
 				}
-				var config = new IoUringIoHandlerConfig().setRingSize(16384).setCqSize(32768);
+				boolean singleIssuer = Boolean
+						.parseBoolean(System.getProperty("io.netty.loom.benchmark.uring.singleIssuer", "true"));
+				var config = new IoUringIoHandlerConfig().setRingSize(16384).setCqSize(32768)
+						.setSingleIssuer(singleIssuer);
 				yield IoUringIoHandler.newFactory(config);
 			}
 		};
