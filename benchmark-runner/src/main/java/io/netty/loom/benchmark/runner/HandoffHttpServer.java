@@ -239,7 +239,12 @@ public class HandoffHttpServer {
 		if (serverChannel != null) {
 			serverChannel.close();
 		}
-		if (workerGroup != null) {
+		if (workerGroup instanceof AutoCloseable ac) {
+			try {
+				ac.close();
+			} catch (Exception _) {
+			}
+		} else if (workerGroup != null) {
 			workerGroup.shutdownGracefully();
 		}
 		if (!silent) {

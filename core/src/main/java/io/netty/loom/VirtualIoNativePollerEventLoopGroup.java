@@ -42,6 +42,7 @@ import io.netty.util.concurrent.FastThreadLocalThread;
 public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 
 	private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
+	private static final boolean FORCE_NON_BLOCKING = Boolean.getBoolean("io.netty.loom.forceNonBlocking");
 	private Map<IoEventLoop, EventLoopScheduler> eventSchedulerMappings;
 	private EventLoopScheduler[] assignedById;
 	private EventLoopScheduler[] assignedRoundRobin;
@@ -156,7 +157,7 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 		while (!ioEventLoop.isShuttingDown()) {
 			int ioEvents = runIO(scheduler, ioEventLoop, canBlock, pollerRunning);
 			boolean hadVtWork = scheduler.maybeYield(ioEvents > 0);
-			canBlock = ioEvents == 0 && !hadVtWork;
+			canBlock = !FORCE_NON_BLOCKING && ioEvents == 0 && !hadVtWork;
 		}
 		while (!ioEventLoop.isTerminated()) {
 			ioEventLoop.runNow();
