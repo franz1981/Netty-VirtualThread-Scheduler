@@ -244,7 +244,7 @@ A pinned poller has three responsibilities:
 
 3. **Report wakeup state honestly.** The wakeup `BooleanSupplier` must return `true` if the poller was observed sleeping (blocking in kernel I/O) and the wakeup signal was sent, or `false` if the poller was actively running (spinning, processing events). The scheduler uses this to decide whether idle siblings need to be woken for work stealing — a poller that falsely reports "sleeping" when it's actually running can suppress sibling wakeups that would otherwise help an overloaded carrier.
 
-   - **Non-blocking poller (spin-poll):** return `false` — the poller never sleeps, so waking it doesn't free the carrier. Returning `true` incorrectly would suppress `wakeIdleSibling()`, preventing idle siblings from helping an overloaded carrier.
+   - **Non-blocking poller (spin-poll):** return `false` — the poller never sleeps, so waking it doesn't free the carrier. An active poller calls `maybeYield(false)` on every cycle, which already probes siblings for work to steal — there is no need to wake it.
    - **Blocking poller (native transport):** track whether you're inside the blocking syscall (e.g. a volatile flag set before `epoll_wait()` and cleared after). Return `true` and send the wakeup signal when the flag is set — this tells the scheduler that waking the poller freed the pinned carrier, so no sibling help is needed. Return `false` when the poller is actively running.
    - **Loom-friendly poller (NIO):** return `false` — NIO's `select()` parks via Loom, freeing the carrier. The carrier parks in its scheduler loop and is woken via `LockSupport.unpark()`, not via the poller wakeup. See `VirtualIoNioPollerEventLoopGroup`.
 
