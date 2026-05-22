@@ -25,7 +25,9 @@ import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.ServerSocketChannel;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.channel.uring.IoUring;
 import io.netty.channel.uring.IoUringIoHandler;
+import io.netty.channel.uring.IoUringIoHandlerConfig;
 import io.netty.channel.uring.IoUringServerSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -134,7 +136,13 @@ public class HandoffHttpServer {
 		var ioHandlerFactory = switch (io) {
 			case NIO -> NioIoHandler.newFactory();
 			case EPOLL -> EpollIoHandler.newFactory();
-			case IO_URING -> IoUringIoHandler.newFactory();
+			case IO_URING -> {
+				if (!silent) {
+					System.out.println("[io_uring] " + IoUring.featureString());
+				}
+				var config = new IoUringIoHandlerConfig().setRingSize(16384).setCqSize(32768);
+				yield IoUringIoHandler.newFactory(config);
+			}
 		};
 
 		final Class<? extends ServerSocketChannel> serverChannelClass;
