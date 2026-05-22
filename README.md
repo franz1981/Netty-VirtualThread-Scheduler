@@ -278,9 +278,7 @@ A pinned poller has three responsibilities:
                    ? eventLoop.run(MAX_WAIT_NS, YIELD_NS)
                    : eventLoop.runNow(YIELD_NS);
                boolean hadVtWork = scheduler.maybeYield(events > 0);
-               int tasks = eventLoop.runNonBlockingTasks(YIELD_NS);
-               hadVtWork |= scheduler.maybeYield(events > 0 || tasks > 0);
-               canBlock = events == 0 && tasks == 0 && !hadVtWork;
+               canBlock = events == 0 && !hadVtWork;
            }
        }
    );
