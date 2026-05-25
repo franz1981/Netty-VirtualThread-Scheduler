@@ -1,214 +1,405 @@
-# Performance tuning and latency analysis
+# Performance tuning: why latency degrades and how to fix it
 
-This guide covers the latency/throughput trade-offs of the Netty VT scheduler's
-tuning knobs: idle spinning, work stealing, and their interaction. All data was
-collected on the same machine with the benchmark script.
+This document explains why the Netty VT scheduler shows elevated latency at moderate
+load, what causes it, and which knobs fix it — with measured data for each claim.
+
+## Architecture in one paragraph
+
+Each **carrier** is an OS platform thread that runs a poll-drain loop: discover I/O
+events via epoll (`runIO`), then drain queued virtual threads (`drainContinuations`,
+50µs budget). Virtual threads (VTs) have **carrier affinity** — a VT's I/O is
+registered on its home carrier's event loop, and by default only that carrier drains
+it. The **ForkJoinPool (FJP)** baseline runs Netty event loops on dedicated platform
+threads and VTs on separate FJP worker threads — no affinity, any worker can process
+any task.
 
 ## Test environment
 
-- **CPU:** AMD Ryzen 9 7950X (32 logical cores)
-- **Kernel:** Linux 7.0.9 (Fedora 43)
-- **JDK:** Custom Loom build (Java 27)
+- **CPU:** AMD Ryzen 9 7950X (32 logical cores, 2 NUMA nodes)
+- **Kernel:** Linux 7.0.9 (Fedora 43, EEVDF scheduler — not CFS)
+- **JDK:** Custom Loom build (Java 27), `-Xms4g -Xmx4g`, G1GC (default).
+  GC pauses were not isolated from the measurements. At 50K req/s with 4g heap,
+  G1 young-gen pauses are typically <1ms and infrequent. Results are representative
+  of production-like conditions where GC is present.
 - **Netty:** 4.2.13 with wakeup event count fix (issue #112)
-- **Benchmark:** `benchmark-runner/scripts/run-benchmark.sh`
-- **Workload:** CPU-bound — 2 carriers on CPUs 2,3; 1ms mock think time;
-  100 connections; fixed rate via wrk2 (coordinated-omission corrected)
+- **Transport:** epoll for all results unless noted otherwise
+- **Warmup:** 10s at the target rate before measurement begins, 30s steady state.
+  wrk2 runs for 40s total (10s warmup + 30s measured). JIT compilation stabilizes
+  during warmup.
+- **Benchmark:** `benchmark-runner/scripts/run-benchmark.sh` with wrk2 (coordinated-omission corrected)
+- **CPU-bound workload:** 2 carriers on CPUs 2,3 via `taskset`; 100 keep-alive
+  connections; wrk2 on CPUs 0,1,4,5
+- **Mock server:** a separate Netty HTTP server on CPUs 6,7 that responds after a
+  configurable think time (1ms for CPU-bound, 30ms for I/O-bound). Each request
+  makes a blocking HTTP call to the mock, simulating a backend service call.
 
-```bash
-# Example: run at 50K req/s with spin 256 and work stealing
-OUTPUT_DIR=/tmp/test LOAD_GEN_RATE=50000 SERVER_MODE=NETTY_SCHEDULER \
-  MOCK_THREADS=2 MOCK_CPUSET=6,7 SERVER_CPUSET=2,3 \
-  LOAD_GEN_THREADS=4 LOAD_GEN_CPUSET=0,1,4,5 \
-  TOTAL_DURATION=40s ENABLE_PERF_STAT=true \
-  benchmark-runner/scripts/run-benchmark.sh \
-  --idle-spins 256 --jvm-args "-Dio.netty.loom.workstealing.enabled=true"
+**CPUs** in all tables = `task-clock / elapsed_time` from `perf stat`, representing
+average number of cores consumed by the server process during the measurement window.
+
+## The problem
+
+At 50K req/s (70% of max 72K TPS), our scheduler's p50 latency is 3.80ms.
+FJP achieves 1.20ms on the same hardware. Both process the same requests with the
+same per-event cost (~9µs). Where does the 2.6ms gap come from?
+
+## Measurement: per-request phase instrumentation
+
+We added `System.nanoTime()` counters at 6 points per request: READ (channelRead),
+VT_START, VT_PARK (before mock call), VT_RESUME (after mock), WRITE_SUBMIT
+(`eventLoop.execute`), WRITE_EXEC (Netty processes write). This is lightweight —
+unlike JFR `RequestPhaseEvent` (250K events/s), which added enough overhead to equalize
+both configs at ~5ms p50, masking the actual difference.
+
+**Result:** the per-request pipeline (READ→WRITE_EXEC) takes ≤2ms p50 in ALL configs.
+The gap is not in request processing.
+
+## Root cause (inferred by elimination): carrier preemption
+
+Pinning carriers to dedicated cores — with no code changes — eliminates the latency
+gap. Since pinning is the only variable changed, the gap is caused by whatever pinning
+removes: OS scheduler interference with carrier threads.
+
+### The evidence
+
+We used JFR events (`NettyRunIo`, `VirtualThreadTaskRuns`, `VirtualThreadTaskSubmit`)
+to trace carrier behavior. Pinning each carrier to its own core via `sched_setaffinity`
+(no code changes) dropped p50 from 3.80ms to 1.16ms. The JFR data shows why:
+
+| Metric | 2 cores, no pin | 2 cores, pinned |
+|---|---|---|
+| IO cycles/10s | 247K | 632K (2.6x) |
+| IO events/cycle | 4.0 | 1.6 |
+| VT drains/10s | 210K | 406K (1.9x) |
+| VTs/drain | 5.5 | 3.6 |
+| Queue depth p50 | 8 | 1 |
+| Master-Poller → JDK Poller submissions | 165K | 474K (2.9x) |
+| Per-event IO cost | ~9µs | ~9µs (same) |
+
+**The per-event cost is identical.** Pinning doesn't make operations faster. The
+carriers cycle 2.6x more often because they react to wakeup signals faster — each
+poll discovers 1.6 events instead of 4.0 (trickle mode vs batch mode).
+
+### Master-Poller notifications confirm the pattern
+
+The JDK **Master-Poller** is a platform thread that monitors sockets for I/O
+completions (via its own epoll) and unparks VTs when data arrives. It submits VTs
+to our scheduler. We measured its submit→run delay (time from submission to the VT
+actually executing on a carrier):
+
+| Master-Poller → JDK Poller | No pin | Pinned |
+|---|---|---|
+| Submissions/10s | 37K | 182K (5x more) |
+| submit→run p50 | 7µs | 6µs (same) |
+| submit→run p99 | 1,538µs | 48µs (32x tighter) |
+| submit→run avg | 85µs | 10µs |
+
+5x more notifications with pinning, each handled at the same p50 (~7µs), but the
+tail collapses: p99 from 1.5ms to 48µs. Without pinning, occasional preemptions
+delay individual notifications by over 1ms.
+
+### Why preemption happens and why pinning fixes it
+
+With `taskset` confining the process to CPUs 2,3, the 2 carriers share those cores
+with GC threads, JIT compiler (C2), and the JDK Master-Poller. `pidstat` shows:
+
+| | 2 cores, no pin | 2 cores, pinned | 3 cores, no pin |
+|---|---|---|---|
+| %wait per carrier | 23% | 2% | 7.6% |
+| vol cswch/s | 1,244 | 7,273 | 9,737 |
+| nvol cswch/s | 1,072 | 4,067 | 1,139 |
+
+**23% of carrier time is runnable-but-waiting.** But why does pinning fix this when
+housekeeping threads still share the same 2 cores?
+
+**Directly observed via `perf sched record` (10s, `--perf-sched` flag):**
+
+Without pinning, carriers migrate freely between CPUs 2 and 3:
+
+```
+Thread-0: CPU 2 = 6616 (44%), CPU 3 = 8368 (56%)
+Thread-1: CPU 2 = 8011 (55%), CPU 3 = 6617 (45%)
 ```
 
-## Summary: what helps and what it costs
+Both carriers run nearly equally on both cores — EEVDF does not keep them put.
+The Master-Poller has more scheduling events than either carrier, competing for
+CPU time on both cores:
 
-At 50K req/s (CPU-bound, 2 carriers, epoll):
+```
+UNPINNED (perf sched record, 10s):
+                    CPU 2         CPU 3         scheduling events
+Thread-0            6,616 (44%)   8,368 (56%)   14,984
+Thread-1            8,011 (55%)   6,617 (45%)   14,628
+Master-Poller      12,608 (53%)  11,386 (47%)   23,994
+```
 
-| Config | p50 | p99 | CPUs | Max TPS |
-|---|---|---|---|---|
-| Baseline (WS OFF, spin 0) | 3.80ms | 32ms | 1.46 | 70K |
-| WS ON (default thresholds) | 3.41ms | 78ms | 1.53 | 72K |
-| WS ON (steal.queue=2, wake.queue=8) | 2.59ms | 27ms | 1.53 | 73K |
-| Spin 256, WS OFF | 1.13ms | 20ms | 1.90 | 70K |
-| Spin 256, WS ON | 1.12ms | 15ms | 1.91 | 73K |
-| **FJP (NON_VIRTUAL_NETTY)** | **1.20ms** | **29ms** | **1.82** | **61K** |
+Carrier scheduling latency (runqueue wait — time from wakeup to actually getting
+CPU): avg=112-115µs, max=6.0ms.
 
-**Key takeaways:**
-- Work stealing with low steal threshold gives 32% p50 improvement at +0.07 CPUs
-  and actually increases max TPS
-- Spin 256 matches FJP latency at +0.44 CPUs — the CPU cost is the price of
-  preventing I/O batch formation
-- FJP has lower max TPS (61K vs 70K+) because of cross-thread coordination overhead
-- WS ON + Spin 256 is the best combination: low latency + tail help from stealing
+With pinning, each carrier stays on its core. All threads are more active —
+carriers have 3.5x more scheduling events because they cycle faster without
+migration overhead:
 
-## Idle spinning (`io.netty.loom.idleSpins`)
+```
+PINNED (perf sched record, 10s):
+                    CPU 2         CPU 3         scheduling events
+Thread-0           55,063 (100%)  0             55,063
+Thread-1            0             50,991 (100%) 50,991
+Master-Poller      39,657 (52%)  36,877 (48%)  76,534
+```
 
-### What it does
+**Zero carrier migrations.** The Master-Poller still runs on both cores (52/48%)
+— pinning carriers doesn't exclude other threads from those cores.
 
-When the poller has no I/O events and no VT work, it can either block immediately
-in `epoll_wait` (spin=0, default) or spin for N iterations before blocking. During
-each spin iteration, the poller does a non-blocking I/O poll + `Thread.onSpinWait()`.
+To collect this data: `--perf-sched` flag. Outputs `perf-sched-latency.txt`
+(per-thread scheduling delay), `perf-sched-distribution.txt` (per-thread CPU
+distribution), and `perf-sched-our-migrations.txt` (migration events for process
+threads). A `jcmd Thread.print` dump is saved to `perf-sched-threads.txt` for
+TID↔thread name correlation.
 
-### Why it helps
+`perf sched latency` on CPUs 2,3 (5s sample, unpinned) confirmed:
 
-Our scheduler multiplexes I/O polling and VT execution on the same carrier thread.
-At moderate load (50K req/s on 2 carriers), each carrier spends 42% of its time on
-I/O and 56% on VTs, leaving only 1.7% idle. When the poller blocks in `epoll_wait`,
-incoming TCP data accumulates in kernel buffers until the poller wakes. This creates
-**batch formation**: N events discovered at once → N VTs → N mock calls → N responses
-arrive together → more batching. The cycle is self-reinforcing.
+```
+Thread-0:  avg delay=24µs, max delay=4.644ms, 3235 wakeups
+Thread-1:  avg delay=22µs, max delay=4.575ms, 3574 wakeups
+```
 
-Spinning keeps the poller in the non-blocking path, discovering events individually
-instead of in batches. Queue depth drops from p50=8 (no spin) to p50=1 (spin 256).
+Most wakeups are fast, but max delays reach 4.6ms — one EEVDF scheduling slice.
 
-### Transport-dependent poll cost
+### bpftrace runqueue latency histograms
 
-Each spin iteration includes a non-blocking I/O poll whose cost depends on the
-transport:
+Using `bpftrace` to trace `sched_wakeup` → `sched_switch` for carrier threads only:
 
-| Transport | Poll cost (measured) | 256 spins | 2048 spins |
+**2 cores, pinned** (142 wakeups in 5s):
+```
+[1]        47  |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                     |
+[2, 4)     77  |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[4, 8)     11  |@@@@@@@                                             |
+[8, 16)     6  |@@@@                                                |
+[16, 32)    1  |                                                    |
+```
+Every wakeup ≤32µs. No tail.
+
+**3 cores, no pin** (16,925 wakeups in 5s):
+```
+[1]      9689  |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[2, 4)   5618  |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                      |
+[4, 8)    597  |@@@                                                 |
+[8, 16)   261  |@                                                   |
+[256,512) 158  |                                                    |
+[512,1K)  350  |@                                                   |
+[1K, 2K)    3  |                                                    |
+```
+93% ≤4µs, small tail up to 2ms.
+
+Note: the 2-core unpinned histogram (218 wakeups) suffers from observer effect —
+bpftrace itself runs on the same 2 cores, distorting the measurement.
+
+### Corroboration: N+1 cores removes most of the penalty
+
+Adding one extra core (CPUs 2,3,4) gives housekeeping threads room to run without
+preempting carriers:
+
+| Config | p50 | p99 | CPUs |
 |---|---|---|---|
-| epoll | ~0.42µs (syscall) | ~108µs | ~860µs |
-| io_uring | ~0.05µs (shared-memory CQ peek) | ~13µs | ~102µs |
+| 2 cores (CPUs 2,3), no pin | 3.80ms | 32ms | 1.46 |
+| 2 cores, pinned | 1.16ms | 11ms | 1.75 |
+| 3 cores (CPUs 2,3,4), no pin | 1.13ms | 23ms | 1.88 |
 
-**The same spin count covers vastly different time windows.** An epoll spin of 256
-is equivalent to an io_uring spin of ~2048. Tune per transport and measure on your
-hardware.
+The p50 matches pinning (1.13 vs 1.16ms). The p99 is still higher (23ms vs 11ms) —
+preemption is reduced but not fully eliminated, since housekeeping threads can still
+occasionally land on the carriers' cores. No code changes needed.
 
-### CPU cost
+### The platoon effect
 
-| Spin count | p50 at 50K | CPUs |
+Batch formation is self-reinforcing — analogous to **platoon formation** in
+transportation queueing, where synchronized arrivals perpetuate synchronized
+departures. When the carrier discovers N events in one poll:
+
+1. N channelReads → N VTs → N mock calls depart within ~50µs
+2. N responses arrive ~1ms later in a ~50µs window
+3. Next poll discovers ~N completions → cycle repeats
+
+Each carrier alternates between I/O polling ("vacation") and VT draining ("service").
+At constant service capacity, latency is driven by vacation duration — how long between
+consecutive drain cycles. Preemption extends vacations, more events accumulate, larger
+batches form.
+
+## What helps latency
+
+### Quick reference
+
+| Config | p50 | p99 | CPUs | Max TPS | Mechanism |
+|---|---|---|---|---|---|
+| Baseline (2 cores, no WS) | 3.80ms | 32ms | 1.46 | 72K | — |
+| WS steal-only (no wake) | 3.78ms | 38ms | 1.51 | n/m | Steal without signaling (ineffective) |
+| WS ON (steal=2, wake=8) | 2.59ms | 27ms | 1.53 | 73K | Sibling steals overflow |
+| WS ON (unresponsive=0) | 1.60ms | 20ms | 1.61 | 72K | Always-steal |
+| Spin 256 | 1.13ms | 20ms | 1.90 | 72K | Prevents blocking |
+| Spin 256 + WS | 1.12ms | 15ms | 1.91 | 73K | Both |
+| Pinned (no spin, no WS) | 1.16ms | 11ms | 1.75 | 72K | Eliminates preemption |
+| 3 cores (no pin, no WS) | 1.13ms | 23ms | 1.88 | n/m | Housekeeping gets own core |
+| **FJP** | **1.20ms** | **29ms** | **1.82** | **61K** | Separate I/O + VT threads |
+
+Max TPS values marked "n/m" were not measured for these experimental configs.
+All Max TPS numbers are averages of 3 runs.
+
+### 1. Allocate N+1 cores (simplest)
+
+Give the process one more core than the number of carriers. No code changes needed.
+
+### 2. Per-carrier core pinning
+
+Pin each carrier via `sched_setaffinity`. Same effect as N+1 at 2 carriers. The higher
+CPU usage (+0.28 CPUs) comes from eliminated `%wait` — carriers convert waiting time
+into productive work. No effect on I/O-bound workloads where carriers are under-utilized.
+
+### 3. Idle spinning (`io.netty.loom.idleSpins`)
+
+Spins N iterations with `Thread.onSpinWait()` before blocking in `epoll_wait`. Keeps
+the carrier in the non-blocking poll path.
+
+**Transport-dependent poll cost** — measured under continuous spinning:
+
+| Transport | Poll cost | 256 spins |
 |---|---|---|
-| 0 (default) | 3.80ms | 1.46 |
-| 64 | 3.28ms | 1.59 |
-| 128 | 1.16ms | 1.70 |
-| 256 | 1.13ms | 1.90 |
-| -1 (always) | 1.13ms | 2.00 |
+| epoll | ~0.42µs (syscall) | ~108µs |
+| io_uring | ~0.05µs (shared-memory CQ peek) | ~13µs |
 
-Spin 128 is a transition point: p50 drops to 1.16ms but p90 remains high (13.89ms)
-because some bursts escape the spin window. Spin 256 covers enough wall-clock time
-to catch all burst tails on this hardware.
+The same spin count is not interchangeable across transports (8.4x cost difference).
 
-## Work stealing
+### 4. Work stealing with split thresholds
 
-### How it helps
+Two thresholds control different decisions:
 
-Work stealing allows idle carriers to take VTs from overloaded siblings. This is
-most effective after the wakeup event count fix (Netty issue #112): without the fix,
-eventfd wakeups counted as I/O events, causing `maybeYield(true)` which suppressed
-the stealing code path.
-
-### Steal vs wake thresholds
-
-Two thresholds control different decisions with different costs:
-
-- **`steal.queue` (default 2):** when an already-awake carrier probes siblings for
-  work. Cheap — just a queue size check.
-- **`wake.queue` (default 8):** when `execute()` decides to wake a sleeping sibling
+- **`steal.queue` (default 2):** queue depth for an already-awake carrier to consider
+  stealing. Cheap — queue size check, no syscall.
+- **`wake.queue` (default 8):** queue depth for `execute()` to wake a sleeping sibling
   via eventfd. Expensive — syscall.
 
-The defaults are tuned for CPU-bound workloads on 2 carriers. With more carriers
-(e.g., 8-core I/O-bound), the wake threshold may need to increase to avoid excessive
-wakeup syscalls.
+**Why `wakeIdleSibling` is essential:** disabling it while keeping steal enabled
+(`-Dio.netty.loom.workstealing.wake.enabled=false`) gave p50=3.78ms — identical to
+baseline. Without waking, the sibling stays parked and never reaches `tryStealing`.
+The wake signal is what gets the sibling to start probing.
 
-| Config | p50 at 50K | CPUs | Max TPS |
-|---|---|---|---|
-| WS OFF | 3.80ms | 1.46 | 70K |
-| WS ON (steal=10, wake=10) | 3.41ms | 1.53 | 72K |
-| WS ON (steal=2, wake=8) | 2.59ms | 1.53 | 73K |
+**Unresponsive threshold sweep:** the `unresponsive.ms` threshold controls when a
+carrier is considered stale enough for the wakeup path to fire. Max TPS was measured
+only at the extremes; intermediate values showed no TPS difference in spot checks.
 
-Profiling (async-profiler): WS overhead = 1.1% of CPU samples. The `wakeIdleSibling`
-eventfd write is the main cost.
+| Threshold | p50 |
+|---|---|
+| 200ms (default) | 2.61ms |
+| 4ms | 2.95ms |
+| 1ms | 2.61ms |
+| 100µs | 3.18ms |
+| 10µs | 3.11ms |
+| 1µs | 2.31ms |
+| 500ns | 2.29ms |
+| 0 | 1.60ms |
 
-### Interaction with spinning
+Max TPS at 0: 72.2K (avg of 3 runs) — no regression vs baseline 71.9K.
 
-Spinning and work stealing are complementary:
+Sharp cliff at 0 — with threshold=0, `isUnresponsive` is always true (any nanoTime
+delta > 0), turning every submission with queued work into a sibling wake signal.
 
-- **Spin alone** prevents batch formation → low p50 but no help for tail
-- **WS alone** distributes burst overflow → lower p50, helps tail via sibling
-- **Both** prevents batches AND distributes any remaining overflow → lowest p50
-  and best p99
+### When to use what
 
-| Config | p50 | p99 |
-|---|---|---|
-| Neither | 3.80ms | 32ms |
-| WS only | 2.59ms | 27ms |
-| Spin only | 1.13ms | 20ms |
-| Both | 1.12ms | 15ms |
-
-## Latency curves (CPU-bound, epoll)
-
-The curves below show p50 latency vs request rate for each configuration.
-All curves use the same test environment.
-
-<!-- TODO: add HdrHistogram plots or ASCII curves -->
-
-```
-rate    baseline   WS ON(2,8)   spin-256   WS+spin    FJP
- 7000   1.12ms     1.12ms       1.12ms     1.12ms     1.13ms
-14000   1.12ms     1.12ms       1.12ms     1.12ms     1.13ms
-21000   1.13ms     1.13ms       1.13ms     1.13ms     1.15ms
-28000   1.13ms     1.13ms       1.13ms     1.13ms     1.14ms
-35000   1.15ms     1.16ms       1.15ms     1.15ms     1.15ms
-42000   3.18ms     2.39ms       1.16ms     1.16ms     1.16ms
-49000   4.08ms     3.26ms       1.17ms     1.17ms     1.17ms
-52500   5.96ms     3.41ms       1.18ms     1.18ms     1.18ms
-56000   4.65ms     2.23ms       1.20ms     1.20ms     1.20ms
-59500   2.69ms     1.40ms       1.22ms     1.22ms     1.22ms
-63000   1.32ms     1.85ms       1.26ms     1.26ms     1.26ms
-```
-
-**Below 40% load:** all configs identical — no batching at low utilization.
-
-**40-75% load:** baseline degrades to 3-6ms. WS ON (steal.queue=2) stays at
-2-3ms. Spin 256 and FJP stay flat at ~1.2ms.
-
-**Above 85% load:** all configs converge as CPU saturation dominates.
+| Scenario | Recommendation |
+|---|---|
+| Latency-sensitive, can spare a core | N+1 cores |
+| Latency-sensitive, fixed core count | Spin 256 + WS (steal=2, wake=8) |
+| Throughput-first, some latency help | WS ON with defaults |
+| I/O-bound (30ms+ think time) | No tuning needed — carriers under-utilized |
 
 ## FJP comparison
 
-FJP (NON_VIRTUAL_NETTY) runs Netty event loops on 2 dedicated platform threads
-and VTs on 2 FJP workers — 5 OS threads total on 2 CPUs. Our scheduler uses 3
-OS threads (2 carriers + Master-Poller).
+FJP runs 5 OS threads on the same 2 CPUs: 2 Netty event loop platform threads + 2
+FJP worker threads + 1 Master-Poller. Our scheduler uses 3 (2 carriers + Master-Poller).
 
-FJP's latency advantage comes from three factors:
-1. **Separate I/O and VT execution** — neither blocks the other
-2. **VT distribution** — FJP's work-stealing distributes VTs from one Netty EL
-   across both workers
-3. **Lower per-resource utilization** — each thread handles less work, reducing
-   queueing delays
+**Why FJP achieves 1.20ms without pinning or spinning:**
+- **Preemption resilience:** FJP's shared work deque means preempting one worker
+  doesn't stall requests — the other worker steals them. Preemption delays the THREAD
+  but not the WORK. In our scheduler (WS OFF), preempting a carrier stalls its entire
+  MPSC queue.
+- **More threads than cores:** 5 threads on 2 cores means the OS always has runnable
+  threads to schedule. FJP workers themselves show 31% `%wait` (worse than our 23%),
+  but this doesn't matter because work flows to whichever worker gets CPU next. Our
+  carriers' 23% `%wait` directly translates to request stalling because work is pinned
+  to specific carriers.
 
-FJP's throughput disadvantage (61K vs 70K+) comes from cross-thread coordination:
-5 threads competing for 2 CPUs, 9K non-voluntary context switches/s, 31% `%wait`.
+**FJP's internal spinning doesn't matter:** FJP workers scan 128 iterations
+(`SPIN_WAITS = 1 << 7`, array reads checking deques for work) before parking. We patched the JDK to make this
+configurable (`-Djdk.forkJoinPool.spinWaits=0`) and measured:
+
+| FJP spin | p50 | CPUs |
+|---|---|---|
+| 128 (default) | 1.20ms | 1.83 |
+| 0 (disabled) | 1.19ms | 1.82 |
+
+No effect. FJP's latency comes from architecture (shared queues + thread slack),
+not from spinning.
+
+**FJP's trade-off:** 15% lower max TPS (61K vs 72K) from cross-thread coordination —
+5 threads competing for 2 CPUs produce 9K non-voluntary context switches/s and 31%
+`%wait`.
+
+## I/O-bound results (8 carriers, 30ms mock, 10K connections)
+
+| Config | Max TPS (avg of 3 runs) |
+|---|---|
+| Baseline | 165K |
+| WS aggressive (steal=2, wake=8) | 163K |
+| WS aggressive (unresponsive=0) | 161K |
+| FJP | 149K |
+
+Our scheduler beats FJP by 10% on I/O-bound throughput. WS aggressive shows ≤3%
+regression — within noise. Pinning and spinning have no effect at I/O-bound load
+(carriers use 3-4 of 8 CPUs, no preemption contention).
 
 ## Reproducing
 
 ```bash
-# All configurations use the benchmark script:
-OUTPUT_DIR=/tmp/test SERVER_MODE=NETTY_SCHEDULER \
-  MOCK_THREADS=2 MOCK_CPUSET=6,7 SERVER_CPUSET=2,3 \
-  LOAD_GEN_THREADS=4 LOAD_GEN_CPUSET=0,1,4,5 \
-  TOTAL_DURATION=40s ENABLE_PERF_STAT=true \
-  benchmark-runner/scripts/run-benchmark.sh [OPTIONS]
+export JAVA_HOME=/path/to/loom/build/linux-x86_64-server-release/jdk
 
-# Baseline (no spin, no WS)
---rate 50000
+# Build
+mvn -pl benchmark-runner -am package -DskipTests
 
-# Work stealing with aggressive thresholds
---rate 50000 --jvm-args "-Dio.netty.loom.workstealing.enabled=true \
-  -Dio.netty.loom.workstealing.steal.queue=2 \
-  -Dio.netty.loom.workstealing.wake.queue=8"
+# Baseline at 50K
+benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
+  --server-cpuset 2,3 --mock-cpuset 6,7 --load-cpuset 0,1,4,5 \
+  --mock-think-time 1 --perf-stat
+
+# Work stealing aggressive
+benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
+  --server-cpuset 2,3 --mock-cpuset 6,7 --load-cpuset 0,1,4,5 \
+  --jvm-args "-Dio.netty.loom.workstealing.enabled=true \
+    -Dio.netty.loom.workstealing.steal.queue=2 \
+    -Dio.netty.loom.workstealing.wake.queue=8"
 
 # Spin 256
---rate 50000 --idle-spins 256
+benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
+  --server-cpuset 2,3 --idle-spins 256
+
+# N+1 cores
+benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
+  --server-cpuset 2,3,4 --load-cpuset 0,1,5
+
+# Per-carrier pinning (run benchmark in background, pin after startup)
+benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
+  --server-cpuset 2,3 &
+sleep 12
+SERVER_PID=$(lsof -i :8081 -t | head -1)
+for tid_dir in /proc/$SERVER_PID/task/*/; do
+  tid=$(basename $tid_dir)
+  name=$(cat /proc/$SERVER_PID/task/$tid/comm)
+  [[ "$name" == "Thread-0" ]] && taskset -cp 2 $tid
+  [[ "$name" == "Thread-1" ]] && taskset -cp 3 $tid
+done
+wait
 
 # FJP baseline
---rate 50000 --mode NON_VIRTUAL_NETTY
+benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
+  --mode NON_VIRTUAL_NETTY --server-cpuset 2,3
 
-# Max throughput (no rate limit)
---mode NETTY_SCHEDULER --idle-spins 256
+# Quick comparison (all configs, 3 runs each)
+./run-quick-comparison.sh 3
 ```

@@ -83,6 +83,10 @@ ENABLE_PERF_STAT="${ENABLE_PERF_STAT:-false}"
 PERF_STAT_OUTPUT="${PERF_STAT_OUTPUT:-perf-stat.txt}"
 PERF_STAT_ARGS="${PERF_STAT_ARGS:-}"
 
+# perf sched configuration (migration tracing)
+ENABLE_PERF_SCHED="${ENABLE_PERF_SCHED:-false}"
+PERF_SCHED_OUTPUT="${PERF_SCHED_OUTPUT:-perf-sched.data}"
+
 # Output directory
 OUTPUT_DIR="${OUTPUT_DIR:-./benchmark-results}"
 CONFIG_OUTPUT="${CONFIG_OUTPUT:-benchmark-config.txt}"
@@ -653,6 +657,79 @@ start_perf_stat() {
 
 # Note: perf stat stops automatically after the sleep duration, no explicit stop needed
 
+start_perf_sched() {
+    if [[ "$ENABLE_PERF_SCHED" != "true" ]]; then
+        return
+    fi
+
+    log "Starting perf sched record for handoff server (PID: $SERVER_PID)..."
+
+    # Capture thread names + TIDs via jcmd for later correlation
+    local thread_dump="$OUTPUT_DIR/perf-sched-threads.txt"
+    "$JAVA_HOME/bin/jcmd" "$SERVER_PID" Thread.print -l > "$thread_dump" 2>/dev/null || true
+    log "Thread dump: $thread_dump"
+
+    # Collect all TIDs for filtering
+    SERVER_TIDS=()
+    for tid_dir in /proc/$SERVER_PID/task/*/; do
+        SERVER_TIDS+=("$(basename "$tid_dir")")
+    done
+
+    local output_file="$OUTPUT_DIR/$PERF_SCHED_OUTPUT"
+    local profiling_duration=$PROFILING_DURATION_SECONDS
+
+    # Record scheduling events (migrations + context switches) for the server process
+    sudo perf sched record -p "$SERVER_PID" -o "$output_file" -- sleep "$profiling_duration" &
+    PERF_SCHED_PID=$!
+
+    log "perf sched recording (PID: $PERF_SCHED_PID) for ${profiling_duration}s"
+}
+
+stop_perf_sched() {
+    if [[ -n "${PERF_SCHED_PID:-}" ]]; then
+        wait "$PERF_SCHED_PID" 2>/dev/null || true
+        local output_file="$OUTPUT_DIR/$PERF_SCHED_OUTPUT"
+        if [[ -f "$output_file" ]]; then
+            log "perf sched output: $output_file"
+
+            # Scheduling latency per thread
+            local latency="$OUTPUT_DIR/perf-sched-latency.txt"
+            sudo perf sched latency -i "$output_file" --sort max > "$latency" 2>/dev/null || true
+            log "perf sched latency: $latency"
+
+            # Thread CPU distribution
+            local dist="$OUTPUT_DIR/perf-sched-distribution.txt"
+            sudo perf sched timehist -i "$output_file" 2>/dev/null | \
+                awk 'NR>2 {print $2, $3}' | sort | uniq -c | sort -rn \
+                > "$dist" 2>/dev/null || true
+            log "perf sched distribution: $dist"
+
+            # All migration events (unfiltered — see perf-sched-carrier-migrations.txt for carrier-only)
+            local migrations="$OUTPUT_DIR/perf-sched-migrations.txt"
+            sudo perf sched timehist -i "$output_file" --migrations 2>/dev/null | \
+                grep "migrated" > "$migrations" 2>/dev/null || true
+            local total_mig=$(wc -l < "$migrations" 2>/dev/null || echo 0)
+            # Filter migrations of our process threads (by TID)
+            local our_mig="$OUTPUT_DIR/perf-sched-our-migrations.txt"
+            local tid_pattern=""
+            for tid in "${SERVER_TIDS[@]}"; do
+                [ -n "$tid_pattern" ] && tid_pattern="$tid_pattern|"
+                tid_pattern="${tid_pattern}${tid}"
+            done
+            if [ -n "$tid_pattern" ]; then
+                grep -E "migrated:.*\[($tid_pattern)/" "$migrations" > "$our_mig" 2>/dev/null || true
+            fi
+            local our_count=$(wc -l < "$our_mig" 2>/dev/null || echo 0)
+            log "perf sched migrations: $total_mig total, $our_count for our threads"
+            if [[ $our_count -gt 0 ]]; then
+                echo "" >> "$our_mig"
+                echo "=== Migration triggers (who migrated our threads) ===" >> "$our_mig"
+                awk '{print $3}' "$our_mig" | grep -v "^$\|===" | sort | uniq -c | sort -rn >> "$our_mig"
+            fi
+        fi
+    fi
+}
+
 # ============================================================================
 # Run Load Test
 # ============================================================================
@@ -833,6 +910,7 @@ main() {
             --jfr)              ENABLE_JFR=true; shift ;;
             --jfr-events)       JFR_EVENTS="$2"; shift 2 ;;
             --perf-stat)        ENABLE_PERF_STAT=true; shift ;;
+            --perf-sched)      ENABLE_PERF_SCHED=true; shift ;;
             --perf-stat-args)   PERF_STAT_ARGS="$2"; shift 2 ;;
             --no-pidstat)       ENABLE_PIDSTAT=false; shift ;;
             # Output
@@ -953,11 +1031,13 @@ EOF
     start_profiler
     start_pidstat
     start_perf_stat
+    start_perf_sched
 
     # Run actual load test
     run_load_test
 
     # Stop monitoring
+    stop_perf_sched
     stop_profiler
     stop_pidstat
     export_jfr_timeline
