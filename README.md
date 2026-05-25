@@ -307,10 +307,12 @@ For a deeper look at the store-barrier-load protocol, JCStress proofs that the g
 |---|---|---|
 | `io.netty.loom.schedulers` | `availableProcessors()` | Number of carrier threads |
 | `io.netty.loom.yield.us` | `50` | Yield duration in microseconds |
+| `io.netty.loom.idleSpins` | `0` | Idle spin iterations before blocking. When >0, the poller spins this many iterations (calling `Thread.onSpinWait()`) before entering the blocking I/O path. Prevents batch formation at the cost of higher CPU usage below saturation. **The effective spin duration depends on the transport:** each iteration includes a non-blocking I/O poll — measured at ~0.42µs for epoll (syscall) and ~0.05µs for io_uring (shared-memory CQ peek) under continuous spinning. So 256 spins ≈ 108µs with epoll but only ~13µs with io_uring. The same spin count is not interchangeable across transports. |
 | `io.netty.loom.resumed.continuations` | `1024` | Initial MPSC queue capacity |
 | `io.netty.loom.workstealing.enabled` | `false` | Enable work stealing (experimental) |
 | `io.netty.loom.workstealing.unresponsive.ms` | `200` | Time without a scheduling checkpoint before a carrier is considered unresponsive |
-| `io.netty.loom.workstealing.overload.queue` | `10` | Queue depth threshold for overload detection |
+| `io.netty.loom.workstealing.wake.queue` | `8` | Queue depth above which `execute()` wakes an idle sibling via eventfd. Higher = fewer wakeup syscalls but slower reaction to imbalance. |
+| `io.netty.loom.workstealing.steal.queue` | `2` | Queue depth above which an already-awake carrier considers a sibling worth stealing from. Lower = more aggressive load balancing at no syscall cost. |
 
 ## Work stealing (experimental)
 
@@ -319,6 +321,21 @@ threads from their run queues. It is **opt-in** and designed around a
 **locality-first** principle.
 
 Enable with `-Dio.netty.loom.workstealing.enabled=true`.
+
+### Steal vs wake thresholds
+
+Two separate queue depth thresholds control different decisions with different costs:
+
+- **`steal.queue` (default 2):** used by `tryStealing()` when an already-awake carrier
+  probes siblings for work. This is cheap — just a queue size check, no syscall. A low
+  threshold means idle carriers steal aggressively, improving load balancing.
+- **`wake.queue` (default 8):** used by `execute()` to decide whether to call
+  `wakeIdleSibling()`. This is expensive — it writes to an eventfd to wake a sleeping
+  carrier. A higher threshold avoids unnecessary wakeup syscalls while still reacting
+  to sustained overload.
+
+The asymmetry reflects the cost difference: probing is free (the stealer is already
+running), waking requires a syscall.
 
 ### Locality-first principle
 

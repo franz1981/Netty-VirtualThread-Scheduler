@@ -61,8 +61,8 @@ public final class EventLoopScheduler {
 
 	static final long YIELD_DURATION_NS = TimeUnit.MICROSECONDS
 			.toNanos(Integer.getInteger("io.netty.loom.yield.us", 50));
-	private static final int OVERLOAD_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.overload.queue",
-			10);
+	private static final int WAKE_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.wake.queue", 8);
+	private static final int STEAL_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.steal.queue", 2);
 	static final boolean WORK_STEALING_ENABLED = Boolean
 			.parseBoolean(System.getProperty("io.netty.loom.workstealing.enabled", "false"));
 	private static final long UNRESPONSIVE_THRESHOLD_NS = TimeUnit.MILLISECONDS
@@ -469,7 +469,11 @@ public final class EventLoopScheduler {
 	}
 
 	private boolean needsHelp(long nowNanos) {
-		return (isUnresponsive(nowNanos) && hasRunnableContinuations()) || runnableCount() > OVERLOAD_QUEUE_THRESHOLD;
+		return (isUnresponsive(nowNanos) && hasRunnableContinuations()) || runnableCount() > WAKE_QUEUE_THRESHOLD;
+	}
+
+	boolean worthStealing(long nowNanos) {
+		return (isUnresponsive(nowNanos) && hasRunnableContinuations()) || runnableCount() > STEAL_QUEUE_THRESHOLD;
 	}
 
 	private void wakeIdleSibling() {
@@ -516,7 +520,7 @@ public final class EventLoopScheduler {
 		int a = rng.nextInt(len);
 		EventLoopScheduler victim;
 		if (len == 1) {
-			victim = siblings[a].needsHelp(now) ? siblings[a] : null;
+			victim = siblings[a].worthStealing(now) ? siblings[a] : null;
 		} else {
 			int b = rng.nextInt(len - 1);
 			if (b >= a) {
@@ -524,8 +528,8 @@ public final class EventLoopScheduler {
 			}
 			var sa = siblings[a];
 			var sb = siblings[b];
-			boolean helpA = sa.needsHelp(now);
-			boolean helpB = sb.needsHelp(now);
+			boolean helpA = sa.worthStealing(now);
+			boolean helpB = sb.worthStealing(now);
 			if (helpA && helpB) {
 				victim = sa.runnableCount() >= sb.runnableCount() ? sa : sb;
 			} else {
