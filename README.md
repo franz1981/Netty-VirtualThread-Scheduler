@@ -301,6 +301,11 @@ Additional constraints:
 
 For a deeper look at the store-barrier-load protocol, JCStress proofs that the guard prevents missed wakeups (and that removing it causes 94% signal loss), and the [`BlockingPollGuard`](concurrency-tests/src/main/java/io/netty/loom/concurrent/BlockingPollGuard.java) utility that encapsulates it, see [`concurrency-tests/README.md`](concurrency-tests/README.md).
 
+## Performance tuning
+
+See [`PERFORMANCE.md`](PERFORMANCE.md) for latency/throughput analysis, idle spin
+trade-offs, work stealing tuning, and FJP comparison with benchmark commands.
+
 ## Configuration
 
 | Property | Default | Description |
