@@ -37,6 +37,8 @@ SERVER_POLLER_MODE="${SERVER_POLLER_MODE:-}"  # jdk.pollerMode value (1, 2, or 3
 SERVER_FJ_PARALLELISM="${SERVER_FJ_PARALLELISM:-}"  # ForkJoinPool parallelism (empty = JVM default)
 SERVER_MODE="${SERVER_MODE:-NON_VIRTUAL_NETTY}"  # Server mode: NON_VIRTUAL_NETTY, REACTIVE, VIRTUAL_NETTY
 SERVER_MOCKLESS="${SERVER_MOCKLESS:-false}"  # Skip mock server; do Jackson work inline
+SERVER_IDLE_SPINS="${SERVER_IDLE_SPINS:-}"  # Idle spins before blocking (io.netty.loom.idleSpins)
+SERVER_VT_MODE="${SERVER_VT_MODE:-}"  # VT mode: longlived (default) or perreq
 
 # Load generator configuration
 LOAD_GEN_CPUSET="${LOAD_GEN_CPUSET:-0,1}"  # CPUs for load generator
@@ -401,6 +403,14 @@ start_handoff_server() {
         jvm_args="$jvm_args -Djdk.virtualThreadScheduler.parallelism=$SERVER_FJ_PARALLELISM"
     fi
 
+    if [[ -n "$SERVER_IDLE_SPINS" ]]; then
+        jvm_args="$jvm_args -Dio.netty.loom.idleSpins=$SERVER_IDLE_SPINS"
+    fi
+
+    if [[ -n "$SERVER_VT_MODE" ]]; then
+        jvm_args="$jvm_args -Dio.netty.loom.benchmark.vtmode=$SERVER_VT_MODE"
+    fi
+
     # Add debug non-safepoints if profiling is enabled
     if [[ "$ENABLE_PROFILER" == "true" ]]; then
         jvm_args="$jvm_args -XX:+UnlockDiagnosticVMOptions"
@@ -727,6 +737,8 @@ print_config() {
     log "  Poller Mode:    ${effective_poller:-<JVM default>}"
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
     log "  CPU Affinity:   ${SERVER_CPUSET:-<none>}"
+    log "  Idle Spins:     ${SERVER_IDLE_SPINS:-<disabled>}"
+    log "  VT Mode:        ${SERVER_VT_MODE:-longlived}"
     log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
     log ""
     log "Load Generator:"
@@ -798,6 +810,8 @@ main() {
             --fj-parallelism)   SERVER_FJ_PARALLELISM="$2"; shift 2 ;;
             --server-cpuset)    SERVER_CPUSET="$2"; shift 2 ;;
             --jvm-args)         SERVER_JVM_ARGS="$2"; shift 2 ;;
+            --idle-spins)       SERVER_IDLE_SPINS="$2"; shift 2 ;;
+            --vt-mode)          SERVER_VT_MODE="$2"; shift 2 ;;
             # Mock
             --mock-port)        MOCK_PORT="$2"; shift 2 ;;
             --mock-think-time)  MOCK_THINK_TIME_MS="$2"; shift 2 ;;
@@ -842,6 +856,8 @@ Server:
   --poller-mode <n>         jdk.pollerMode: 1, 2, or 3 (SERVER_POLLER_MODE)
   --fj-parallelism <n>      ForkJoinPool parallelism (SERVER_FJ_PARALLELISM)
   --server-cpuset <cpus>    Server CPU pinning, e.g. "2,3" (SERVER_CPUSET, default: 2,3)
+  --idle-spins <n>          Idle spin iterations before blocking (SERVER_IDLE_SPINS)
+  --vt-mode <mode>          VT mode: longlived or perreq (SERVER_VT_MODE, default: longlived)
   --jvm-args <args>         Additional JVM arguments (SERVER_JVM_ARGS)
 
 Mock Server:

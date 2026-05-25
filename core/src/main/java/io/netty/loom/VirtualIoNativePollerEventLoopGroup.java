@@ -42,6 +42,7 @@ import io.netty.util.concurrent.FastThreadLocalThread;
 public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 
 	private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
+	private static final int IDLE_SPINS = Integer.getInteger("io.netty.loom.idleSpins", 0);
 	private Map<IoEventLoop, EventLoopScheduler> eventSchedulerMappings;
 	private EventLoopScheduler[] assignedById;
 	private EventLoopScheduler[] assignedRoundRobin;
@@ -153,10 +154,18 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 		pollerRunning.set(true);
 		assert ioEventLoop.inEventLoop(Thread.currentThread()) && Thread.currentThread().isVirtual();
 		boolean canBlock = false;
+		int idleSpins = 0;
 		while (!ioEventLoop.isShuttingDown()) {
 			int ioEvents = runIO(scheduler, ioEventLoop, canBlock, pollerRunning);
 			boolean hadVtWork = scheduler.maybeYield(ioEvents > 0);
-			canBlock = ioEvents == 0 && !hadVtWork;
+			if (ioEvents > 0 || hadVtWork) {
+				idleSpins = 0;
+				canBlock = false;
+			} else if (IDLE_SPINS != 0 && (IDLE_SPINS < 0 || ++idleSpins <= IDLE_SPINS)) {
+				Thread.onSpinWait();
+			} else {
+				canBlock = true;
+			}
 		}
 		while (!ioEventLoop.isTerminated()) {
 			ioEventLoop.runNow();
