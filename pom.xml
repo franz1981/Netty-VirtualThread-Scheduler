@@ -20,8 +20,8 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <netty.version>4.2.13.Final</netty.version>
-        <junit.version>6.0.3</junit.version>
+        <netty.version>4.2.14.Final</netty.version>
+        <junit.version>6.1.0</junit.version>
         <jmh.version>1.37</jmh.version>
         <jcstress.version>0.16</jcstress.version>
         <java.version>27</java.version>
@@ -76,7 +76,7 @@
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
-                <version>3.4.0</version>
+                <version>3.5.1</version>
                 <configuration>
                     <java>
                         <eclipse/>
