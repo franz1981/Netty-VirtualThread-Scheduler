@@ -391,18 +391,17 @@ benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
   --mock-think-time 1 --perf-stat
 
 # Per-carrier pinning (manual — not yet a benchmark script feature)
-# Run benchmark in background, pin carriers after startup via taskset
+# The server prints CARRIER_TID=<tid> at startup for each event loop thread.
 benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
   --server-cpuset 2,3 --mock-cpuset 6,7 --load-cpuset 0,1,4,5 \
   --mock-think-time 1 --perf-stat &
 sleep 12
-SERVER_PID=$(lsof -i :8081 -t | head -1)
-jcmd "$SERVER_PID" Thread.print | grep -E '^\"|nid=' | \
-  awk -F'[\\[\\]]' '/Thread-0/{print $2}' | \
-  xargs -I{} taskset -cp 2 {}
-jcmd "$SERVER_PID" Thread.print | grep -E '^\"|nid=' | \
-  awk -F'[\\[\\]]' '/Thread-1/{print $2}' | \
-  xargs -I{} taskset -cp 3 {}
+# Read carrier TIDs from server output and pin to cores
+CPU=2
+for tid in $(grep -oP 'CARRIER_TID=\K\d+' benchmark-results/server-output.log); do
+  taskset -cp $CPU $tid
+  CPU=$((CPU + 1))
+done
 wait
 
 # FJP baseline

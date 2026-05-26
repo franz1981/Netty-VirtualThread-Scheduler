@@ -218,6 +218,16 @@ public class HandoffHttpServer {
 				});
 
 		serverChannel = b.bind(port).sync().channel();
+		for (var el : workerGroup) {
+			((io.netty.util.concurrent.EventExecutor) el).submit(() -> {
+				try {
+					var link = java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/thread-self"));
+					System.out.printf("CARRIER_TID=%s%n", link.getFileName());
+				} catch (java.io.IOException e) {
+					// not on Linux
+				}
+			}).sync();
+		}
 		if (!silent) {
 			System.out.printf("Handoff HTTP Server started on port %d%n", port);
 			System.out.printf("  Mode: %s%n", switch (mode) {
