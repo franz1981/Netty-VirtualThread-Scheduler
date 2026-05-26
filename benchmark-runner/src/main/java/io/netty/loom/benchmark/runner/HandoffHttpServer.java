@@ -15,6 +15,7 @@
 package io.netty.loom.benchmark.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.netty.loom.EventLoopSchedulerGroup;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -218,15 +219,12 @@ public class HandoffHttpServer {
 				});
 
 		serverChannel = b.bind(port).sync().channel();
-		for (var el : workerGroup) {
-			el.submit(() -> {
-				try {
-					var link = java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/thread-self"));
-					System.out.printf("CARRIER_TID=%s%n", link.getFileName());
-				} catch (java.io.IOException e) {
-					// not on Linux
-				}
-			}).sync();
+		if (mode == Mode.NETTY_SCHEDULER) {
+			var group = EventLoopSchedulerGroup.instance();
+			for (int i = 0; i < group.size(); i++) {
+				Thread carrier = group.scheduler(i).carrierThread();
+				System.out.printf("CARRIER id=%d name=%s%n", carrier.threadId(), carrier.getName());
+			}
 		}
 		if (!silent) {
 			System.out.printf("Handoff HTTP Server started on port %d%n", port);

@@ -353,7 +353,7 @@ public final class EventLoopScheduler {
 	}
 
 	/** Returns the platform thread backing this carrier. */
-	Thread carrierThread() {
+	public Thread carrierThread() {
 		return carrierThread;
 	}
 

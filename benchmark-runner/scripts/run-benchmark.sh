@@ -451,9 +451,8 @@ start_handoff_server() {
 
     wait_for_server "http://localhost:$SERVER_PORT/health" "Handoff server"
 
-    # Log carrier TIDs if printed by the server
-    if grep -q 'CARRIER_TID=' "$OUTPUT_DIR/server-output.log" 2>/dev/null; then
-        log "Carrier TIDs: $(grep -oP 'CARRIER_TID=\K\d+' "$OUTPUT_DIR/server-output.log" | tr '\n' ' ')"
+    if grep -q '^CARRIER ' "$OUTPUT_DIR/server-output.log" 2>/dev/null; then
+        log "Carriers: $(grep '^CARRIER ' "$OUTPUT_DIR/server-output.log" | tr '\n' '; ')"
     fi
 }
 

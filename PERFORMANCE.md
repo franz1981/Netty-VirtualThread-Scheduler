@@ -391,15 +391,20 @@ benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
   --mock-think-time 1 --perf-stat
 
 # Per-carrier pinning (manual — not yet a benchmark script feature)
-# The server prints CARRIER_TID=<tid> at startup for each event loop thread.
+# The server prints CARRIER id=<java-tid> name=<name> at startup.
+# Correlate Java thread ID with native TID via jcmd Thread.print
+# (shows "#<java-id> [<native-tid>]"), then pin with taskset.
 benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
   --server-cpuset 2,3 --mock-cpuset 6,7 --load-cpuset 0,1,4,5 \
   --mock-think-time 1 --perf-stat &
 sleep 12
-# Read carrier TIDs from server output and pin to cores
+SERVER_PID=$(lsof -i :8081 -t | head -1)
+# Map Java thread IDs to native TIDs and pin round-robin
 CPU=2
-for tid in $(grep -oP 'CARRIER_TID=\K\d+' benchmark-results/server-output.log); do
-  taskset -cp $CPU $tid
+for java_id in $(grep -oP 'CARRIER id=\K\d+' benchmark-results/server-output.log); do
+  native_tid=$(jcmd "$SERVER_PID" Thread.print | \
+    grep -P "^\".*#${java_id}\b" | grep -oP '\[\K\d+(?=\])')
+  [ -n "$native_tid" ] && taskset -cp $CPU $native_tid
   CPU=$((CPU + 1))
 done
 wait
