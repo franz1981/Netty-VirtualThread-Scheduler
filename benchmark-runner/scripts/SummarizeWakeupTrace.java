@@ -29,10 +29,6 @@ public class SummarizeWakeupTrace {
 
     enum WakeupType { EVENTFD, NETWORK, FUTEX, TIMER, OTHER }
 
-    record WakerKey(String name, String pid) {
-        @Override public String toString() { return name + "[" + pid + "]"; }
-    }
-
     public static void main(String[] args) throws IOException {
         if (args.length != 2) {
             System.err.println("Usage: jbang SummarizeWakeupTrace.java <server-threads.txt> <wakeup-trace.txt>");

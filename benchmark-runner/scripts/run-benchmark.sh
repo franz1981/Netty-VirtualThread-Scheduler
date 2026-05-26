@@ -446,7 +446,7 @@ start_handoff_server() {
 
     log "Handoff server command: $cmd"
 
-    $cmd > "$OUTPUT_DIR/server-output.log" 2>&1 &
+    $cmd > >(tee "$OUTPUT_DIR/server-output.log") 2>&1 &
     SERVER_PID=$!
 
     wait_for_server "http://localhost:$SERVER_PORT/health" "Handoff server"

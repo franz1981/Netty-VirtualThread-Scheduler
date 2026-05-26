@@ -219,7 +219,7 @@ public class HandoffHttpServer {
 
 		serverChannel = b.bind(port).sync().channel();
 		for (var el : workerGroup) {
-			((io.netty.util.concurrent.EventExecutor) el).submit(() -> {
+			el.submit(() -> {
 				try {
 					var link = java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/thread-self"));
 					System.out.printf("CARRIER_TID=%s%n", link.getFileName());
