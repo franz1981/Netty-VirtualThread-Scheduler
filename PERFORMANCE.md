@@ -153,7 +153,7 @@ Master-Poller      39,657 (52%)  36,877 (48%)  76,534
 To collect this data: `--perf-sched` flag. Outputs `perf-sched-latency.txt`
 (per-thread scheduling delay), `perf-sched-distribution.txt` (per-thread CPU
 distribution), and `perf-sched-our-migrations.txt` (migration events for process
-threads). A `jcmd Thread.print` dump is saved to `perf-sched-threads.txt` for
+threads). A `jcmd Thread.print` dump is saved to `server-threads.txt` for
 TID↔thread name correlation.
 
 `perf sched latency` on CPUs 2,3 (5s sample, unpinned) confirmed:
@@ -165,34 +165,34 @@ Thread-1:  avg delay=22µs, max delay=4.575ms, 3574 wakeups
 
 Most wakeups are fast, but max delays reach 4.6ms — one EEVDF scheduling slice.
 
-### bpftrace runqueue latency histograms
+### Who wakes the carriers
 
-Using `bpftrace` to trace `sched_wakeup` → `sched_switch` for carrier threads only:
+The `--wakeup-trace` flag captures kernel stacks at every `sched_waking` event,
+classifying each wakeup by mechanism (from `wakeup-trace-summary.txt`):
 
-**2 cores, pinned** (142 wakeups in 5s):
-```
-[1]        47  |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                     |
-[2, 4)     77  |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
-[4, 8)     11  |@@@@@@@                                             |
-[8, 16)     6  |@@@@                                                |
-[16, 32)    1  |                                                    |
-```
-Every wakeup ≤32µs. No tail.
+**Baseline (no spin, 2 cores, 50K req/s):**
 
-**3 cores, no pin** (16,925 wakeups in 5s):
-```
-[1]      9689  |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
-[2, 4)   5618  |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                      |
-[4, 8)    597  |@@@                                                 |
-[8, 16)   261  |@                                                   |
-[256,512) 158  |                                                    |
-[512,1K)  350  |@                                                   |
-[1K, 2K)    3  |                                                    |
-```
-93% ≤4µs, small tail up to 2ms.
+| Target | total | eventfd | network | ratio |
+|---|---|---|---|---|
+| Master-Poller | 21,692 | 0 | 21,252 | 98% network |
+| Thread-0 (carrier) | 6,320 | 3,812 | 2,494 | 60% eventfd, 39% network |
+| Thread-1 (carrier) | 5,859 | 3,643 | 2,204 | 62% eventfd, 38% network |
 
-Note: the 2-core unpinned histogram (218 wakeups) suffers from observer effect —
-bpftrace itself runs on the same 2 cores, distorting the measurement.
+Top waker→target pairs:
+
+| Waker | Target | Count | Mechanism |
+|---|---|---|---|
+| Mock server (epoll thread) | Master-Poller | 21,252 | network: downstream responses |
+| Master-Poller | Carriers | 7,451 | eventfd: VT submissions |
+| Load generator (epoll thread) | Carriers | 4,698 | network: upstream requests |
+
+Three-party wakeup chain: Mock → Master-Poller → Carriers (eventfd), and
+LoadGen → Carriers (network, bypassing Master-Poller).
+
+**With spinning (256 spins):** carriers almost never block — 597 wakeups vs 12,179
+baseline (20x fewer). When they do block, 75% are eventfd (VT submissions).
+The Master-Poller still receives 80K network wakeups because it always blocks
+between polls.
 
 ### Corroboration: N+1 cores removes most of the penalty
 
@@ -357,49 +357,75 @@ regression — within noise. Pinning and spinning have no effect at I/O-bound lo
 
 ## Reproducing
 
+All data in this document is collected via `benchmark-runner/scripts/run-benchmark.sh`.
+Flags: `--perf-stat` (CPU utilization), `--perf-sched` (scheduling events, migrations,
+latency), `--wakeup-trace` (who wakes whom via bpftrace + kernel stacks), `--jfr`
+(Netty event timing). pidstat is enabled by default.
+
 ```bash
 export JAVA_HOME=/path/to/loom/build/linux-x86_64-server-release/jdk
 
 # Build
 mvn -pl benchmark-runner -am package -DskipTests
 
-# Baseline at 50K
+# Baseline at 50K with full tracing
 benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
   --server-cpuset 2,3 --mock-cpuset 6,7 --load-cpuset 0,1,4,5 \
-  --mock-think-time 1 --perf-stat
+  --mock-think-time 1 --perf-stat --perf-sched --wakeup-trace
 
 # Work stealing aggressive
 benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
   --server-cpuset 2,3 --mock-cpuset 6,7 --load-cpuset 0,1,4,5 \
   --jvm-args "-Dio.netty.loom.workstealing.enabled=true \
     -Dio.netty.loom.workstealing.steal.queue=2 \
-    -Dio.netty.loom.workstealing.wake.queue=8"
+    -Dio.netty.loom.workstealing.wake.queue=8" --perf-stat
 
 # Spin 256
 benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
-  --server-cpuset 2,3 --idle-spins 256
+  --server-cpuset 2,3 --mock-cpuset 6,7 --load-cpuset 0,1,4,5 \
+  --idle-spins 256 --perf-stat --perf-sched --wakeup-trace
 
 # N+1 cores
 benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
-  --server-cpuset 2,3,4 --load-cpuset 0,1,5
+  --server-cpuset 2,3,4 --mock-cpuset 6,7 --load-cpuset 0,1,5 \
+  --mock-think-time 1 --perf-stat
 
-# Per-carrier pinning (run benchmark in background, pin after startup)
+# Per-carrier pinning (manual — not yet a benchmark script feature)
+# Run benchmark in background, pin carriers after startup via taskset
 benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
-  --server-cpuset 2,3 &
+  --server-cpuset 2,3 --mock-cpuset 6,7 --load-cpuset 0,1,4,5 \
+  --mock-think-time 1 --perf-stat &
 sleep 12
 SERVER_PID=$(lsof -i :8081 -t | head -1)
-for tid_dir in /proc/$SERVER_PID/task/*/; do
-  tid=$(basename $tid_dir)
-  name=$(cat /proc/$SERVER_PID/task/$tid/comm)
-  [[ "$name" == "Thread-0" ]] && taskset -cp 2 $tid
-  [[ "$name" == "Thread-1" ]] && taskset -cp 3 $tid
-done
+jcmd "$SERVER_PID" Thread.print | grep -E '^\"|nid=' | \
+  awk -F'[\\[\\]]' '/Thread-0/{print $2}' | \
+  xargs -I{} taskset -cp 2 {}
+jcmd "$SERVER_PID" Thread.print | grep -E '^\"|nid=' | \
+  awk -F'[\\[\\]]' '/Thread-1/{print $2}' | \
+  xargs -I{} taskset -cp 3 {}
 wait
 
 # FJP baseline
 benchmark-runner/scripts/run-benchmark.sh --rate 50000 \
-  --mode NON_VIRTUAL_NETTY --server-cpuset 2,3
+  --mode NON_VIRTUAL_NETTY --server-cpuset 2,3 --mock-cpuset 6,7 \
+  --load-cpuset 0,1,4,5 --mock-think-time 1 --perf-stat
 
 # Quick comparison (all configs, 3 runs each)
 ./run-quick-comparison.sh 3
 ```
+
+### Output files
+
+Each run produces in the output directory:
+
+| File | Flag | Content |
+|---|---|---|
+| `wrk-results.txt` | (always) | Latency percentiles, throughput |
+| `pidstat.log` | (default on) | Per-thread CPU, context switches, %wait |
+| `perf-stat.txt` | `--perf-stat` | Hardware counters, CPUs utilized |
+| `perf-sched-latency.txt` | `--perf-sched` | Per-thread scheduling delay (avg/max) |
+| `perf-sched-distribution.txt` | `--perf-sched` | Per-thread CPU distribution |
+| `perf-sched-our-migrations.txt` | `--perf-sched` | Carrier migration events |
+| `wakeup-trace-summary.txt` | `--wakeup-trace` | Who wakes whom (eventfd vs network) |
+| `wakeup-trace.txt` | `--wakeup-trace` | Raw bpftrace aggregation with kernel stacks |
+| `server-threads.txt` | `--perf-sched` or `--wakeup-trace` | jcmd Thread.print for all components |

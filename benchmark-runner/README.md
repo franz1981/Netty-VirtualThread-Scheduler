@@ -63,6 +63,8 @@ Run `./run-benchmark.sh --help` for the full list.
 | `--poller-mode` | `SERVER_POLLER_MODE` | | jdk.pollerMode: 1, 2, or 3 |
 | `--fj-parallelism` | `SERVER_FJ_PARALLELISM` | | ForkJoinPool parallelism |
 | `--server-cpuset` | `SERVER_CPUSET` | 2,3 | CPU pinning |
+| `--idle-spins` | `SERVER_IDLE_SPINS` | | Idle spin iterations before blocking (`io.netty.loom.idleSpins`) |
+| `--vt-mode` | `SERVER_VT_MODE` | longlived | VT mode: `longlived` or `perreq` |
 | `--jvm-args` | `SERVER_JVM_ARGS` | | Additional JVM arguments |
 
 ### Mock Server
@@ -133,13 +135,45 @@ When enabled, pidstat always records three files: handoff server, mock server, a
 | `PIDSTAT_HANDOFF_DETAILED` | true | Include per-thread detail for handoff server |
 
 ### perf stat
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ENABLE_PERF_STAT` | false | Enable perf stat collection |
-| `PERF_STAT_OUTPUT` | perf-stat.txt | Output filename |
-| `PERF_STAT_ARGS` | | Extra perf stat arguments (passed as-is) |
+| CLI flag | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `--perf-stat` | `ENABLE_PERF_STAT` | false | Enable perf stat collection |
+| `--perf-stat-args` | `PERF_STAT_ARGS` | | Extra perf stat arguments |
 
 perf stat uses `PROFILING_DELAY_SECONDS` and `PROFILING_DURATION_SECONDS`.
+
+### perf sched (scheduling tracing)
+| CLI flag | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `--perf-sched` | `ENABLE_PERF_SCHED` | false | Record kernel scheduling events |
+
+Captures `perf sched record` during the profiling window. Requires sudo.
+
+Outputs:
+- `perf-sched.data` — raw perf data (for `perf sched timehist`, `perf sched latency`, etc.)
+- `perf-sched-latency.txt` — per-thread scheduling latency (avg/max wakeup delay)
+- `perf-sched-distribution.txt` — per-thread CPU distribution (which thread runs on which core)
+- `perf-sched-migrations.txt` — all migration events
+- `perf-sched-our-migrations.txt` — migrations of server threads only, with trigger breakdown
+- `server-threads.txt` — `jcmd Thread.print` dump for TID→thread name correlation
+
+### Wakeup trace (bpftrace)
+| CLI flag | Env var | Default | Description |
+|----------|---------|---------|-------------|
+| `--wakeup-trace` | `ENABLE_WAKEUP_TRACE` | false | Trace who wakes server threads |
+
+Uses bpftrace to capture `sched:sched_waking` events for all server threads during the
+profiling window. The kernel stack at each wakeup distinguishes the wakeup mechanism:
+- `eventfd_write` — explicit wakeup (Master-Poller submitting VT, wakeIdleSibling)
+- `sock_def_readable` — network packet arrival (TCP data on a socket fd in the thread's epoll)
+- `futex_wake` — JVM internal (GC safepoints, etc.)
+
+Outputs:
+- `wakeup-trace.txt` — bpftrace aggregation: wakeup counts by (waker thread, target TID, kernel stack)
+- `server-threads.txt` — `jcmd Thread.print` dump for TID→thread name correlation
+
+Cross-reference target TIDs in `wakeup-trace.txt` with `server-threads.txt` to map TIDs to
+thread names. Both `--perf-sched` and `--wakeup-trace` share the same thread dump.
 
 ### General
 | Variable | Default | Description |
@@ -277,15 +311,18 @@ SERVER_JVM_ARGS="-XX:+PrintGCDetails" ./run-benchmark.sh --mode VIRTUAL_NETTY --
 
 Results are saved to `./benchmark-results/` (configurable via `OUTPUT_DIR`):
 
-- `wrk-results.txt` - Load generator output with throughput/latency
-- `profile.html` - Flamegraph (if profiling enabled)
-- `netty-loom.jfr` - JFR recording (if JFR events enabled)
-- `netty-loom-timeline.jsonl` - Timeline export (if JFR enabled and `JFR_TIMELINE_OUTPUT` set)
-- `pidstat.log` - Handoff server thread-level CPU usage (if pidstat enabled)
-- `pidstat.log` includes per-thread command lines when `PIDSTAT_HANDOFF_DETAILED=true`. Note: Linux thread names are limited (comm is 15 chars), so very long JVM thread names may still appear truncated.
-- `pidstat-mock.log` - Mock server thread-level CPU usage (if pidstat enabled)
-- `pidstat-loadgen.log` - Load generator CPU usage (if pidstat enabled)
-- `benchmark-config.txt` - Captured configuration summary for the run
+- `wrk-results.txt` — load generator output with throughput/latency
+- `benchmark-config.txt` — captured configuration summary for the run
+- `profile.html` — flamegraph (if `--profiler`)
+- `netty-loom.jfr` — JFR recording (if `--jfr`)
+- `netty-loom-timeline.jsonl` — timeline export (if `--jfr`)
+- `pidstat.log` — handoff server thread-level CPU usage (default on)
+- `pidstat-mock.log` — mock server CPU usage
+- `pidstat-loadgen.log` — load generator CPU usage
+- `perf-stat.txt` — hardware counters (if `--perf-stat`)
+- `perf-sched*.txt` — scheduling analysis (if `--perf-sched`, see above)
+- `wakeup-trace.txt` — wakeup source aggregation (if `--wakeup-trace`, see above)
+- `server-threads.txt` — jcmd thread dump for TID correlation (if `--perf-sched` or `--wakeup-trace`)
 
 ## Architecture
 

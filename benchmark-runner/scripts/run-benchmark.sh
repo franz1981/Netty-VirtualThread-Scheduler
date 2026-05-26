@@ -87,6 +87,9 @@ PERF_STAT_ARGS="${PERF_STAT_ARGS:-}"
 ENABLE_PERF_SCHED="${ENABLE_PERF_SCHED:-false}"
 PERF_SCHED_OUTPUT="${PERF_SCHED_OUTPUT:-perf-sched.data}"
 
+# Wakeup trace configuration (bpftrace: who wakes carrier threads)
+ENABLE_WAKEUP_TRACE="${ENABLE_WAKEUP_TRACE:-false}"
+
 # Output directory
 OUTPUT_DIR="${OUTPUT_DIR:-./benchmark-results}"
 CONFIG_OUTPUT="${CONFIG_OUTPUT:-benchmark-config.txt}"
@@ -657,6 +660,30 @@ start_perf_stat() {
 
 # Note: perf stat stops automatically after the sleep duration, no explicit stop needed
 
+capture_all_threads() {
+    if [[ -n "${THREADS_CAPTURED:-}" ]]; then
+        return
+    fi
+    THREADS_CAPTURED=true
+
+    local thread_dump="$OUTPUT_DIR/server-threads.txt"
+    {
+        echo "=== Server (PID: $SERVER_PID) ==="
+        "$JAVA_HOME/bin/jcmd" "$SERVER_PID" Thread.print 2>/dev/null || true
+        if [[ -n "${MOCK_PID:-}" ]]; then
+            echo ""
+            echo "=== Mock (PID: $MOCK_PID) ==="
+            "$JAVA_HOME/bin/jcmd" "$MOCK_PID" Thread.print 2>/dev/null || true
+        fi
+    } > "$thread_dump"
+    log "Thread dump: $thread_dump"
+
+    SERVER_TIDS=()
+    for tid_dir in /proc/$SERVER_PID/task/*/; do
+        SERVER_TIDS+=("$(basename "$tid_dir")")
+    done
+}
+
 start_perf_sched() {
     if [[ "$ENABLE_PERF_SCHED" != "true" ]]; then
         return
@@ -664,16 +691,7 @@ start_perf_sched() {
 
     log "Starting perf sched record for handoff server (PID: $SERVER_PID)..."
 
-    # Capture thread names + TIDs via jcmd for later correlation
-    local thread_dump="$OUTPUT_DIR/perf-sched-threads.txt"
-    "$JAVA_HOME/bin/jcmd" "$SERVER_PID" Thread.print -l > "$thread_dump" 2>/dev/null || true
-    log "Thread dump: $thread_dump"
-
-    # Collect all TIDs for filtering
-    SERVER_TIDS=()
-    for tid_dir in /proc/$SERVER_PID/task/*/; do
-        SERVER_TIDS+=("$(basename "$tid_dir")")
-    done
+    capture_all_threads
 
     local output_file="$OUTPUT_DIR/$PERF_SCHED_OUTPUT"
     local profiling_duration=$PROFILING_DURATION_SECONDS
@@ -731,6 +749,80 @@ stop_perf_sched() {
 }
 
 # ============================================================================
+# Wakeup Trace (bpftrace: who wakes carrier threads)
+# ============================================================================
+
+start_wakeup_trace() {
+    if [[ "$ENABLE_WAKEUP_TRACE" != "true" ]]; then
+        return
+    fi
+
+    if ! command -v bpftrace &>/dev/null; then
+        log "WARNING: bpftrace not found, skipping wakeup trace"
+        return
+    fi
+
+    capture_all_threads
+
+    log "Starting wakeup trace for server threads (PID: $SERVER_PID)..."
+
+    # Build bpftrace pid filter from all server TIDs
+    local filter=""
+    local tid_list=""
+    for tid in "${SERVER_TIDS[@]}"; do
+        [[ -n "$filter" ]] && filter="$filter || "
+        filter="${filter}args->pid == $tid"
+        [[ -n "$tid_list" ]] && tid_list="$tid_list,"
+        tid_list="${tid_list}$tid"
+    done
+
+    log "Server TIDs for wakeup trace: ${#SERVER_TIDS[@]} threads"
+
+    local output="$OUTPUT_DIR/wakeup-trace.txt"
+    local profiling_duration=$PROFILING_DURATION_SECONDS
+
+    # bpftrace aggregation: count wakeups by (waker, target, kernel stack).
+    # kstack(12) captures enough frames to see eventfd_write, sock_def_readable,
+    # futex_wake — stable kernel functions that classify the wakeup type.
+    # Compact output at END — no multi-million-line raw file.
+    sudo timeout "$profiling_duration" bpftrace -e "
+tracepoint:sched:sched_waking /$filter/ {
+    @by_waker_target[comm, pid, args->pid] = count();
+    @by_stack[comm, pid, args->pid, kstack(12)] = count();
+}" > "$output" 2>/dev/null &
+    WAKEUP_TRACE_PID=$!
+
+    log "Wakeup trace recording (PID: $WAKEUP_TRACE_PID) for ${profiling_duration}s"
+}
+
+stop_wakeup_trace() {
+    if [[ -z "${WAKEUP_TRACE_PID:-}" ]]; then
+        return
+    fi
+
+    wait "$WAKEUP_TRACE_PID" 2>/dev/null || true
+    local output="$OUTPUT_DIR/wakeup-trace.txt"
+
+    if [[ ! -s "$output" ]]; then
+        log "WARNING: wakeup trace produced no output"
+        return
+    fi
+
+    # Build TID→thread name map from jcmd Thread.print dump
+    local thread_dump="$OUTPUT_DIR/server-threads.txt"
+    local summary="$OUTPUT_DIR/wakeup-trace-summary.txt"
+
+    if [[ -f "$thread_dump" ]]; then
+        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        jbang "$script_dir/SummarizeWakeupTrace.java" "$thread_dump" "$output" > "$summary"
+
+        log "Wakeup trace summary: $summary"
+    fi
+
+    log "Wakeup trace raw: $output"
+}
+
+# ============================================================================
 # Run Load Test
 # ============================================================================
 
@@ -767,6 +859,22 @@ run_load_test() {
     fi
 
     LOAD_GEN_PID=$!
+
+    # Capture load gen threads (Hyperfoil JVM launched by jbang)
+    if [[ "$ENABLE_WAKEUP_TRACE" == "true" || "$ENABLE_PERF_SCHED" == "true" ]]; then
+        sleep 2
+        local loadgen_jvm_pid
+        loadgen_jvm_pid=$("$JAVA_HOME/bin/jcmd" 2>/dev/null | grep -i hyperfoil | awk '{print $1}' | head -1)
+        if [[ -n "$loadgen_jvm_pid" ]]; then
+            local thread_dump="$OUTPUT_DIR/server-threads.txt"
+            {
+                echo ""
+                echo "=== LoadGen (PID: $loadgen_jvm_pid) ==="
+                "$JAVA_HOME/bin/jcmd" "$loadgen_jvm_pid" Thread.print 2>/dev/null || true
+            } >> "$thread_dump"
+            log "Load gen thread dump appended (PID: $loadgen_jvm_pid)"
+        fi
+    fi
 
     if [[ "$ENABLE_PIDSTAT" == "true" ]]; then
         log "Starting pidstat for load generator (PID: $LOAD_GEN_PID)..."
@@ -911,6 +1019,7 @@ main() {
             --jfr-events)       JFR_EVENTS="$2"; shift 2 ;;
             --perf-stat)        ENABLE_PERF_STAT=true; shift ;;
             --perf-sched)      ENABLE_PERF_SCHED=true; shift ;;
+            --wakeup-trace)    ENABLE_WAKEUP_TRACE=true; shift ;;
             --perf-stat-args)   PERF_STAT_ARGS="$2"; shift 2 ;;
             --no-pidstat)       ENABLE_PIDSTAT=false; shift ;;
             # Output
@@ -963,6 +1072,11 @@ Profiling:
   --jfr-events <events>     Comma-separated JFR events or "all" (JFR_EVENTS, default: all)
   --perf-stat               Enable perf stat (ENABLE_PERF_STAT)
   --perf-stat-args <args>   Extra perf stat arguments (PERF_STAT_ARGS)
+  --perf-sched              Enable perf sched recording (ENABLE_PERF_SCHED)
+  --wakeup-trace            Trace thread wakeup sources via bpftrace (ENABLE_WAKEUP_TRACE)
+                            Outputs wakeup counts by (waker, target, kernel stack).
+                            Cross-reference TIDs with server-threads.txt for names.
+                            Requires bpftrace + sudo.
   --no-pidstat              Disable pidstat collection (ENABLE_PIDSTAT)
 
 Output:
@@ -1032,11 +1146,13 @@ EOF
     start_pidstat
     start_perf_stat
     start_perf_sched
+    start_wakeup_trace
 
     # Run actual load test
     run_load_test
 
     # Stop monitoring
+    stop_wakeup_trace
     stop_perf_sched
     stop_profiler
     stop_pidstat
