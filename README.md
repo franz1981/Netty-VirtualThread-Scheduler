@@ -122,7 +122,7 @@ A carrier can optionally host a **pinned poller** — a long-running virtual thr
 ## Prerequisites
 
 - A Loom-enabled JDK (Java 27+, [builds.shipilev.net](https://builds.shipilev.net/openjdk-jdk-loom/) or build from [openjdk/loom](https://github.com/openjdk/loom))
-- JVM flag: `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler`
+- JVM flag: `-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler`
 - Maven 3.6+
 
 ## Usage
@@ -185,7 +185,7 @@ class MyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
 ### Locality-first scheduling without Netty
 
-Use the scheduler directly. No Netty dependency needed — just the core module.
+Use the scheduler directly. No Netty dependency needed — just the bootstrap module.
 
 ```java
 var group = EventLoopSchedulerGroup.instance();
@@ -572,16 +572,34 @@ Each event records:
 
 | Module | Description |
 |---|---|
-| `netty-virtualthread-bootstrap` | JDK-only shim (`NettyScheduler` + `NettySchedulerSpi`). Must be on the system classloader. |
-| `netty-virtualthread-core` | Scheduler + Netty integration. Discovered via ServiceLoader (TCCL). |
+| `netty-virtualthread-bootstrap` | Scheduling core (`io.netty.loom.scheduler`): `NettyScheduler`, `EventLoopScheduler`, `EventLoopSchedulerGroup`, JFR events. Must be on the system classloader. |
+| `netty-virtualthread-core` | Netty integration layer (`io.netty.loom`): `VirtualIoNativePollerEventLoopGroup`, `VirtualIoNioPollerEventLoopGroup`, `VirtualIoEventLoopGroup`. |
+| `example-echo` | Self-contained HTTP server demonstrating blocking VT handlers, structured concurrency, and carrier affinity. |
 
-## Fat JAR / application server deployment
+All scheduling state (carrier pool singleton, `ScopedValue`, `instanceof` checks) lives in bootstrap, loaded once by the system classloader. This prevents per-classloader duplication in app servers and fat JAR deployments.
 
-The JVM loads the scheduler via the system classloader. Frameworks like Spring Boot use isolated classloaders. The bootstrap module must be visible to the system classloader; the core module is discovered via ServiceLoader through the TCCL.
+## Classloader constraints
 
-### Spring Boot
+The JDK loads the scheduler via `Class.forName(cn, true, ClassLoader.getSystemClassLoader())` during `VirtualThread.<clinit>`. This means the bootstrap JAR must be visible to the **system classloader**, not just the application classloader.
 
-Use Multi-Release JAR entries to expose bootstrap classes to the system classloader:
+If the bootstrap JAR is not on the system classpath (e.g., packaged inside a Spring Boot fat JAR without MRJAR, or only in an app server's per-deployment classloader), the JDK cannot find `NettyScheduler` and the scheduler does not activate. Any attempt to use the scheduler API (`EventLoopSchedulerGroup.instance()`, `VirtualIoNativePollerEventLoopGroup`, etc.) throws `IllegalStateException` — there is no silent fallback.
+
+## Deployment
+
+### Flat classpath (plain `java -cp`)
+
+Add bootstrap and core JARs to the classpath. Everything works:
+
+```sh
+java --enable-preview \
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler \
+  -cp "bootstrap.jar:core.jar:netty-all.jar:app.jar" \
+  com.example.Main
+```
+
+### Spring Boot fat JAR
+
+Spring Boot's `LaunchedClassLoader` loads app classes from `BOOT-INF/classes/`. The system classloader cannot see them. The solution: unpack bootstrap classes into the Multi-Release JAR layer (`META-INF/versions/27/`), and exclude bootstrap from `BOOT-INF/lib/` so it's not loaded twice.
 
 ```xml
 <!-- Mark as Multi-Release -->
@@ -613,8 +631,8 @@ Use Multi-Release JAR entries to expose bootstrap classes to the system classloa
                         <artifactId>netty-virtualthread-bootstrap</artifactId>
                         <version>${netty-loom.version}</version>
                         <type>jar</type>
-                        <includes>io/netty/loom/spi/**</includes>
-                        <outputDirectory>${project.build.outputDirectory}/META-INF/versions/27</outputDirectory>
+                        <includes>io/netty/loom/scheduler/**</includes>
+                        <outputDirectory>${project.build.outputDirectory}/META-INF/versions/${java.version}</outputDirectory>
                     </artifactItem>
                 </artifactItems>
             </configuration>
@@ -637,9 +655,48 @@ Use Multi-Release JAR entries to expose bootstrap classes to the system classloa
 </plugin>
 ```
 
-### Application servers (OpenLiberty, WildFly)
+### Quarkus
 
-Place the bootstrap JAR on the system classpath or `-Xbootclasspath/a:`. The core JAR stays inside the application deployment (WAR/EAR).
+Verified on Quarkus 3.21.3 with fast-jar (default packaging). The bootstrap JAR goes on `-Xbootclasspath/a:` and the Maven dependency must be `<scope>provided</scope>` to avoid duplication into Quarkus's `lib/`:
+
+```xml
+<dependency>
+    <groupId>io.netty.loom</groupId>
+    <artifactId>netty-virtualthread-bootstrap</artifactId>
+    <version>${netty-loom.version}</version>
+    <scope>provided</scope>
+</dependency>
+```
+
+```sh
+java --enable-preview \
+  -Xbootclasspath/a:/path/to/netty-virtualthread-bootstrap.jar \
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler \
+  -jar target/quarkus-app/quarkus-run.jar
+```
+
+**Legacy-jar** (`quarkus.package.jar.type=legacy-jar`): uses a flat system classpath — no `-Xbootclasspath/a:` needed, but the `provided` scope still applies.
+
+### OpenLiberty
+
+Verified on OpenLiberty 26.0.0.5 (which uses Netty 4.2.12 internally). Place the bootstrap JAR on `-Xbootclasspath/a:` and add the scheduler flag to `jvm.options`:
+
+```
+--enable-preview
+-Xbootclasspath/a:/path/to/netty-virtualthread-bootstrap.jar
+-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler
+```
+
+The core JAR stays inside the application deployment (WAR/EAR). Multiple deployments sharing the same JVM share a single carrier pool.
+
+### Summary
+
+| Deployment | System CL sees bootstrap? | Action needed |
+|---|---|---|
+| Flat classpath (`java -cp`) | Yes | None |
+| Spring Boot fat JAR | No | MRJAR unpack (see above) |
+| Quarkus | No | Bootstrap on `-Xbootclasspath/a:`, dependency `provided` |
+| OpenLiberty (WAR/EAR) | No | Bootstrap on `-Xbootclasspath/a:` |
 
 ## Dev container
 

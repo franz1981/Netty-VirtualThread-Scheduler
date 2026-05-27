@@ -15,7 +15,7 @@
 package io.netty.loom.benchmark.runner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.netty.loom.EventLoopSchedulerGroup;
+import io.netty.loom.scheduler.EventLoopSchedulerGroup;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;

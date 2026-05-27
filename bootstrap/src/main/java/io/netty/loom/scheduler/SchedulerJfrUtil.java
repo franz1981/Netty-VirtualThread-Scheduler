@@ -12,52 +12,13 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom;
+package io.netty.loom.scheduler;
 
-import io.netty.loom.jfr.*;
+import io.netty.loom.scheduler.jfr.*;
 
 final class SchedulerJfrUtil {
 
 	private SchedulerJfrUtil() {
-	}
-
-	public static NettyRunIoEvent beginRunIoEvent() {
-		if (!NettyRunIoEvent.isEventEnabled()) {
-			return null;
-		}
-		var event = new NettyRunIoEvent();
-		event.begin();
-		return event;
-	}
-
-	public static void commitRunIoEvent(NettyRunIoEvent event, Thread carrierThread, boolean ranBlocking,
-			int ioEventsHandled) {
-		event.end();
-		event.eventLoopThread = Thread.currentThread();
-		event.carrierThread = carrierThread;
-		event.canBlock = ranBlocking;
-		event.ioEventsHandled = ioEventsHandled;
-		event.commit();
-	}
-
-	public static NettyRunTasksEvent beginRunTasksEvent() {
-		if (!NettyRunTasksEvent.isEventEnabled()) {
-			return null;
-		}
-		var event = new NettyRunTasksEvent();
-		event.begin();
-		return event;
-	}
-
-	public static void commitRunTasksEvent(NettyRunTasksEvent event, Thread carrierThread, int tasksHandled,
-			int queueDepthBefore, int queueDepthAfter) {
-		event.end();
-		event.eventLoopThread = Thread.currentThread();
-		event.carrierThread = carrierThread;
-		event.tasksHandled = tasksHandled;
-		event.queueDepthBefore = queueDepthBefore;
-		event.queueDepthAfter = queueDepthAfter;
-		event.commit();
 	}
 
 	public static VirtualThreadTaskRunsEvent beginVirtualThreadTaskRunsEvent() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The Netty VirtualThread Scheduler Project
+ * Copyright 2025 The Netty VirtualThread Scheduler Project
  *
  * The Netty VirtualThread Scheduler Project licenses this file to you under the Apache License,
  * version 2.0 (the "License"); you may not use this file except in compliance with the
@@ -12,7 +12,7 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom.jfr;
+package io.netty.loom.scheduler.jfr;
 
 import jdk.jfr.Category;
 import jdk.jfr.Description;
@@ -23,31 +23,27 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-@Name("io.netty.loom.WorkSteal")
-@Label("Work Steal")
-@Description("A virtual thread task was stolen from a busy carrier by an idle one.")
+@Name("io.netty.loom.VirtualThreadTaskRuns")
+@Label("Virtual Thread Task Runs")
+@Description("Batch of virtual thread task runs drained by the scheduler.")
 @Category({"Netty", "Scheduler"})
 @Enabled(false)
 @StackTrace(false)
-public final class WorkStealEvent extends Event {
+public final class VirtualThreadTaskRunsEvent extends Event {
 
-	private static final EventType EVENT_TYPE = EventType.getEventType(WorkStealEvent.class);
+	private static final EventType EVENT_TYPE = EventType.getEventType(VirtualThreadTaskRunsEvent.class);
 
-	@Label("Stolen Virtual Thread")
-	public Thread virtualThread;
+	@Label("Carrier Thread")
+	public Thread carrierThread;
 
-	@Label("Source Carrier")
-	public Thread sourceCarrier;
+	@Label("Tasks Executed")
+	public int tasksExecuted;
 
-	@Label("Stealer Carrier")
-	public Thread stealerCarrier;
+	@Label("Queue Depth Before")
+	public int queueDepthBefore;
 
-	@Label("Source Queue Depth")
-	public int sourceQueueDepth;
-
-	@Label("From Carrier Loop")
-	@Description("True if stolen from the carrier loop; false if stolen from the pinned poller via maybeYield.")
-	public boolean fromCarrierLoop;
+	@Label("Queue Depth After")
+	public int queueDepthAfter;
 
 	public static boolean isEventEnabled() {
 		return EVENT_TYPE.isEnabled();

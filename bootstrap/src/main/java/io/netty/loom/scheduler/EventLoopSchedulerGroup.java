@@ -12,14 +12,11 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom;
-
-import java.util.concurrent.ThreadFactory;
+package io.netty.loom.scheduler;
 
 /**
  * Global pool of carrier threads, each running an {@link EventLoopScheduler}.
- * Created once at SPI init time (or lazily on first access) and never shut
- * down.
+ * Created eagerly by {@link NettyScheduler} at JVM startup and never shut down.
  *
  * <p>
  * Size defaults to {@code availableProcessors()} and can be overridden with
@@ -32,48 +29,21 @@ public class EventLoopSchedulerGroup {
 	private static final int RESUMED_CONTINUATIONS_EXPECTED_COUNT = Integer
 			.getInteger("io.netty.loom.resumed.continuations", 1024);
 
-	private static final EventLoopSchedulerGroup INSTANCE;
-	private static final Throwable UNAVAILABILITY_CAUSE;
-
-	static {
-		EventLoopSchedulerGroup group = null;
-		Throwable cause = null;
-		try {
-			if (!io.netty.loom.spi.NettyScheduler.isAvailable()) {
-				cause = new IllegalStateException(
-						"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler is required");
-			} else {
-				group = new EventLoopSchedulerGroup(DEFAULT_SIZE);
-			}
-		} catch (Throwable t) {
-			cause = t;
-		}
-		INSTANCE = group;
-		UNAVAILABILITY_CAUSE = cause;
-	}
-
-	private static void ensureAvailability() {
-		if (UNAVAILABILITY_CAUSE != null) {
-			throw new IllegalStateException("EventLoopSchedulerGroup is not available", UNAVAILABILITY_CAUSE);
-		}
-	}
-
-	/** Returns the global singleton. */
-	public static EventLoopSchedulerGroup instance() {
-		ensureAvailability();
-		return INSTANCE;
-	}
-
 	private final EventLoopScheduler[] schedulers;
 
-	private EventLoopSchedulerGroup(int size) {
+	EventLoopSchedulerGroup(NettyScheduler scheduler) {
+		this(DEFAULT_SIZE, scheduler);
+	}
+
+	private EventLoopSchedulerGroup(int size, NettyScheduler scheduler) {
 		if (size <= 0) {
 			throw new IllegalArgumentException("size must be > 0");
 		}
 		var carrierThreadFactory = Thread.ofPlatform().daemon(true).factory();
 		schedulers = new EventLoopScheduler[size];
 		for (int i = 0; i < size; i++) {
-			schedulers[i] = new EventLoopScheduler(i, carrierThreadFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT);
+			schedulers[i] = new EventLoopScheduler(i, carrierThreadFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT,
+					scheduler);
 		}
 		if (EventLoopScheduler.WORK_STEALING_ENABLED && size > 1) {
 			for (int i = 0; i < size; i++) {
@@ -87,6 +57,13 @@ public class EventLoopSchedulerGroup {
 				schedulers[i].setSiblings(siblings);
 			}
 		}
+	}
+
+	/**
+	 * Returns the global singleton. Shortcut for {@link NettyScheduler#group()}.
+	 */
+	public static EventLoopSchedulerGroup instance() {
+		return NettyScheduler.group();
 	}
 
 	/** Returns the number of carriers in the pool. */
@@ -103,7 +80,7 @@ public class EventLoopSchedulerGroup {
 	 * Returns {@code count} schedulers that have no registered pinned poller, or
 	 * {@code null} if not enough are available.
 	 */
-	EventLoopScheduler[] availableSchedulers(int count) {
+	public EventLoopScheduler[] availableSchedulers(int count) {
 		var result = new EventLoopScheduler[count];
 		int found = 0;
 		for (int i = 0; i < schedulers.length && found < count; i++) {

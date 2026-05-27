@@ -12,9 +12,8 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom;
+package io.netty.loom.scheduler;
 
-import io.netty.loom.spi.NettyScheduler;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
