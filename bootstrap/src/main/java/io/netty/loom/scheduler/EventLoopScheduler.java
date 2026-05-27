@@ -12,7 +12,7 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom;
+package io.netty.loom.scheduler;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -26,8 +26,7 @@ import java.util.function.BooleanSupplier;
 
 import org.jctools.queues.MpscUnboundedArrayQueue;
 
-import io.netty.loom.jfr.VirtualThreadTaskSubmitEvent;
-import io.netty.loom.spi.NettyScheduler;
+import io.netty.loom.scheduler.jfr.VirtualThreadTaskSubmitEvent;
 
 /**
  * A single-carrier virtual thread scheduler with an MPSC run queue. Virtual
@@ -59,7 +58,7 @@ public final class EventLoopScheduler {
 		}
 	}
 
-	static final long YIELD_DURATION_NS = TimeUnit.MICROSECONDS
+	public static final long YIELD_DURATION_NS = TimeUnit.MICROSECONDS
 			.toNanos(Integer.getInteger("io.netty.loom.yield.us", 50));
 	private static final int WAKE_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.wake.queue", 8);
 	private static final int STEAL_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.steal.queue", 2);
@@ -82,9 +81,9 @@ public final class EventLoopScheduler {
 	 * factory) from accidentally using the parent's scheduler. See
 	 * {@code VirtualIoNativePollerEventLoopGroupTest.schedulerIsNotInheritedByForkedVT}.
 	 * <li><b>VirtualThreadTask attachment ({@link #eventLoopScheduler})</b> —
-	 * internal, used by {@code NettySchedulerProviderImpl.onStart/onContinue}. Safe
-	 * to access directly (no ID check) because attachments are only set on
-	 * continuations we explicitly created with our factory.
+	 * internal, used by {@code NettyScheduler.onStart/onContinue}. Safe to access
+	 * directly (no ID check) because attachments are only set on continuations we
+	 * explicitly created with our factory.
 	 * </ul>
 	 */
 	static final class SchedulingContext {
@@ -95,7 +94,7 @@ public final class EventLoopScheduler {
 		// Set to the carrier that last mounted this VT (in runContinuation,
 		// never cleared). Differs from eventLoopScheduler when the VT was
 		// stolen. Used in execute() to skip self-wakeup and in
-		// NettySchedulerProviderImpl to route JDK pollers to the running
+		// NettyScheduler.onStart to route JDK pollers to the running
 		// carrier, not the home carrier.
 		EventLoopScheduler runningScheduler;
 
@@ -140,6 +139,15 @@ public final class EventLoopScheduler {
 		return currentThreadSchedulerContext().scheduler();
 	}
 
+	/**
+	 * Returns the scheduler of the carrier currently running the calling virtual
+	 * thread. Differs from {@link #currentScheduler()} when the VT was stolen by
+	 * another carrier.
+	 */
+	static EventLoopScheduler currentRunningScheduler() {
+		return currentThreadSchedulerContext().runningScheduler();
+	}
+
 	static SchedulingContext currentThreadSchedulerContext() {
 		return CURRENT_SCHEDULER.orElse(EMPTY_SCHEDULER_CONTEXT);
 	}
@@ -161,11 +169,12 @@ public final class EventLoopScheduler {
 	@SuppressWarnings("FieldMayBeFinal")
 	private long schedulerHeartbeat = System.nanoTime();
 
-	EventLoopScheduler(int id, ThreadFactory threadFactory, int resumedContinuationsExpectedCount) {
+	EventLoopScheduler(int id, ThreadFactory threadFactory, int resumedContinuationsExpectedCount,
+			NettyScheduler nettyScheduler) {
 		this.id = id;
 		runQueue = new MpscUnboundedArrayQueue<>(resumedContinuationsExpectedCount);
-		vThreadFactory = newVThreadFactory(this, VThreadType.VT);
-		pinnedPollerThreadFactory = newVThreadFactory(this, VThreadType.PINNED_POLLER);
+		vThreadFactory = newVThreadFactory(this, VThreadType.VT, nettyScheduler);
+		pinnedPollerThreadFactory = newVThreadFactory(this, VThreadType.PINNED_POLLER, nettyScheduler);
 		carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
 		carrierThread.setDaemon(true);
 		carrierThread.start();
@@ -325,9 +334,9 @@ public final class EventLoopScheduler {
 		return !hasRunnableContinuations();
 	}
 
-	private static ThreadFactory newVThreadFactory(EventLoopScheduler scheduler, VThreadType type) {
+	private static ThreadFactory newVThreadFactory(EventLoopScheduler scheduler, VThreadType type,
+			NettyScheduler nettyScheduler) {
 		var unstartedBuilder = Thread.ofVirtual();
-		NettyScheduler nettyScheduler = NettyScheduler.instance();
 		return runnable -> {
 			var schedulingContext = new SchedulingContext(-1, scheduler, type);
 			var vTask = nettyScheduler.newThread(unstartedBuilder, null,
@@ -341,7 +350,7 @@ public final class EventLoopScheduler {
 	/**
 	 * Returns the number of virtual thread continuations waiting in the run queue.
 	 */
-	int runnableCount() {
+	public int runnableCount() {
 		return runQueue.size();
 	}
 

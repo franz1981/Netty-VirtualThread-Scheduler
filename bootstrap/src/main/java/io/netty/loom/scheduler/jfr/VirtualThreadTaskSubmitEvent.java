@@ -12,7 +12,7 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom.jfr;
+package io.netty.loom.scheduler.jfr;
 
 import jdk.jfr.Category;
 import jdk.jfr.Description;

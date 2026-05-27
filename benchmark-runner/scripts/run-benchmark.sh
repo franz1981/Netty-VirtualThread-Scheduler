@@ -134,19 +134,16 @@ resolve_jfr_events() {
     local selection="$1"
     local -a default_events=(
         "io.netty.loom.NettyRunIo"
-        "io.netty.loom.NettyRunTasks"
         "io.netty.loom.VirtualThreadTaskRuns"
         "io.netty.loom.VirtualThreadTaskRun"
         "io.netty.loom.VirtualThreadTaskSubmit"
     )
     local -A event_map=(
         ["NettyRunIo"]="io.netty.loom.NettyRunIo"
-        ["NettyRunTasks"]="io.netty.loom.NettyRunTasks"
         ["VirtualThreadTaskRuns"]="io.netty.loom.VirtualThreadTaskRuns"
         ["VirtualThreadTaskRun"]="io.netty.loom.VirtualThreadTaskRun"
         ["VirtualThreadTaskSubmit"]="io.netty.loom.VirtualThreadTaskSubmit"
         ["io.netty.loom.NettyRunIo"]="io.netty.loom.NettyRunIo"
-        ["io.netty.loom.NettyRunTasks"]="io.netty.loom.NettyRunTasks"
         ["io.netty.loom.VirtualThreadTaskRuns"]="io.netty.loom.VirtualThreadTaskRuns"
         ["io.netty.loom.VirtualThreadTaskRun"]="io.netty.loom.VirtualThreadTaskRun"
         ["io.netty.loom.VirtualThreadTaskSubmit"]="io.netty.loom.VirtualThreadTaskSubmit"
@@ -395,7 +392,7 @@ start_handoff_server() {
     local poller_mode="$SERVER_POLLER_MODE"
     case "$SERVER_MODE" in
         NETTY_SCHEDULER)
-            jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler"
+            jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler"
             # Default pollerMode to 3 for custom scheduler if not explicitly set
             poller_mode="${poller_mode:-3}"
             ;;

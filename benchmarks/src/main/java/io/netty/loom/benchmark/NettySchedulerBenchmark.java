@@ -60,7 +60,7 @@ public class NettySchedulerBenchmark {
 	@Benchmark
 	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
 			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
-			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler", "-Djdk.pollerMode=3"})
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler", "-Djdk.pollerMode=3"})
 	public void scheduleToFjFromNetty() {
 		CountDownLatch countDown = new CountDownLatch(tasks);
 		vtFactory.newThread(() -> {
@@ -95,7 +95,7 @@ public class NettySchedulerBenchmark {
 	@Benchmark
 	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
 			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
-			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler", "-Djdk.pollerMode=3"})
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler", "-Djdk.pollerMode=3"})
 	public void scheduleToFjFromFjWithCustomScheduler() {
 		CountDownLatch countDown = new CountDownLatch(tasks);
 		Thread.startVirtualThread(() -> {
@@ -113,7 +113,7 @@ public class NettySchedulerBenchmark {
 	@Benchmark
 	@Fork(value = 2, jvmArgs = {"--add-opens=java.base/java.lang=ALL-UNNAMED", "-XX:+UnlockExperimentalVMOptions",
 			"-XX:-DoJVMTIVirtualThreadTransitions", "-Djdk.trackAllThreads=false",
-			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler", "-Djdk.pollerMode=3"})
+			"-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler", "-Djdk.pollerMode=3"})
 	public void scheduleToNettyFromNetty() {
 		CountDownLatch countDown = new CountDownLatch(tasks);
 		vtFactory.newThread(() -> {

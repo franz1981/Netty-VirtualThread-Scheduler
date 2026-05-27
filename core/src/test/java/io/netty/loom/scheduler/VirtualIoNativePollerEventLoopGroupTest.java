@@ -12,7 +12,7 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom;
+package io.netty.loom.scheduler;
 
 import static java.util.concurrent.StructuredTaskScope.Joiner.allSuccessfulOrThrow;
 import static org.junit.jupiter.api.Assertions.*;
@@ -34,6 +34,9 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
+
+import io.netty.loom.VirtualIoNativePollerEventLoopGroup;
+import io.netty.loom.VirtualIoNioPollerEventLoopGroup;
 
 import io.netty.channel.*;
 import io.netty.channel.epoll.Epoll;
@@ -784,7 +787,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		try {
 			awaitUnresponsive(schedulerA);
 			factoryA.newThread(() -> {
-				runningRef.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+				runningRef.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
 			blockerB.set(false);
 			var running = runningRef.get(5, TimeUnit.SECONDS);
@@ -863,7 +866,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			try {
 				awaitUnresponsive(schedulerA);
 				factoryA.newThread(() -> {
-					runningRef.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+					runningRef.complete(EventLoopScheduler.currentRunningScheduler());
 				}).start();
 				var running = runningRef.get(5, TimeUnit.SECONDS);
 				assertNotSame(schedulerA, running,
@@ -996,7 +999,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			assertTrue(pollersStarted.await(2, TimeUnit.SECONDS));
 			awaitUnresponsive(schedulerB);
 			schedulerB.virtualThreadFactory().newThread(() -> {
-				vtRan.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
 			spinnerA.set(false);
 			var running = vtRan.get(5, TimeUnit.SECONDS);
@@ -1040,7 +1043,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		try {
 			awaitUnresponsive(schedulerB);
 			schedulerB.virtualThreadFactory().newThread(() -> {
-				vtRan.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
 			var running = vtRan.get(5, TimeUnit.SECONDS);
 			assertSame(schedulerA, running, "parked carrier A should be woken to steal VT from unresponsive B");
@@ -1085,7 +1088,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			assertTrue(spinnerStarted.await(2, TimeUnit.SECONDS));
 			awaitUnresponsive(schedulerB);
 			schedulerB.virtualThreadFactory().newThread(() -> {
-				vtRan.complete(EventLoopScheduler.currentThreadSchedulerContext().runningScheduler());
+				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
 			var running = vtRan.get(5, TimeUnit.SECONDS);
 			assertSame(schedulerA, running, "parked carrier A with descheduled poller should be woken to steal from B");

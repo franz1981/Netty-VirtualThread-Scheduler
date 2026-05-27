@@ -17,6 +17,7 @@ package io.netty.loom;
 import io.netty.channel.IoEventLoop;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.loom.scheduler.EventLoopSchedulerGroup;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadFactory;

@@ -12,7 +12,7 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package io.netty.loom.jfr;
+package io.netty.loom.scheduler.jfr;
 
 import jdk.jfr.Category;
 import jdk.jfr.Description;
@@ -23,27 +23,27 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-@Name("io.netty.loom.VirtualThreadTaskRuns")
-@Label("Virtual Thread Task Runs")
-@Description("Batch of virtual thread task runs drained by the scheduler.")
+@Name("io.netty.loom.VirtualThreadTaskRun")
+@Label("Virtual Thread Task Run")
+@Description("Virtual thread task execution by the scheduler.")
 @Category({"Netty", "Scheduler"})
 @Enabled(false)
 @StackTrace(false)
-public final class VirtualThreadTaskRunsEvent extends Event {
+public final class VirtualThreadTaskRunEvent extends Event {
 
-	private static final EventType EVENT_TYPE = EventType.getEventType(VirtualThreadTaskRunsEvent.class);
+	private static final EventType EVENT_TYPE = EventType.getEventType(VirtualThreadTaskRunEvent.class);
 
 	@Label("Carrier Thread")
 	public Thread carrierThread;
 
-	@Label("Tasks Executed")
-	public int tasksExecuted;
+	@Label("Virtual Thread")
+	public Thread virtualThread;
 
-	@Label("Queue Depth Before")
-	public int queueDepthBefore;
+	@Label("Is Poller")
+	public boolean isPoller;
 
-	@Label("Queue Depth After")
-	public int queueDepthAfter;
+	@Label("Is Event Loop")
+	public boolean isEventLoop;
 
 	public static boolean isEventEnabled() {
 		return EVENT_TYPE.isEnabled();
