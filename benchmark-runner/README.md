@@ -113,7 +113,6 @@ Both the async-profiler and perf stat use `PROFILING_DELAY_SECONDS` and `PROFILI
 
 Supported event names (short or full):
 - `NettyRunIo` (`io.netty.loom.NettyRunIo`)
-- `NettyRunTasks` (`io.netty.loom.NettyRunTasks`)
 - `VirtualThreadTaskRuns` (`io.netty.loom.VirtualThreadTaskRuns`)
 - `VirtualThreadTaskRun` (`io.netty.loom.VirtualThreadTaskRun`)
 - `VirtualThreadTaskSubmit` (`io.netty.loom.VirtualThreadTaskSubmit`)

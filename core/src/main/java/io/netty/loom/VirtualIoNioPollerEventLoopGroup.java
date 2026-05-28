@@ -153,20 +153,6 @@ public class VirtualIoNioPollerEventLoopGroup extends MultiThreadIoEventLoopGrou
 		return ioEventsHandled;
 	}
 
-	private static int runNonBlockingTasks(EventLoopScheduler scheduler, ManualIoEventLoop ioEventLoop,
-			long deadlineNs) {
-		var event = NettyJfrUtil.beginRunTasksEvent();
-		if (event == null) {
-			return ioEventLoop.runNonBlockingTasks(deadlineNs);
-		}
-		int queueDepthBefore = scheduler.runnableCount();
-		int tasksHandled = ioEventLoop.runNonBlockingTasks(deadlineNs);
-		int queueDepthAfter = scheduler.runnableCount();
-		NettyJfrUtil.commitRunTasksEvent(event, scheduler.carrierThread(), tasksHandled, queueDepthBefore,
-				queueDepthAfter);
-		return tasksHandled;
-	}
-
 	@SuppressWarnings("unchecked")
 	@Override
 	protected IoEventLoop newChild(Executor executor, IoHandlerFactory ioHandlerFactory,

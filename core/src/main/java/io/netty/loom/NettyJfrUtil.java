@@ -40,24 +40,4 @@ final class NettyJfrUtil {
 		event.commit();
 	}
 
-	public static NettyRunTasksEvent beginRunTasksEvent() {
-		if (!NettyRunTasksEvent.isEventEnabled()) {
-			return null;
-		}
-		var event = new NettyRunTasksEvent();
-		event.begin();
-		return event;
-	}
-
-	public static void commitRunTasksEvent(NettyRunTasksEvent event, Thread carrierThread, int tasksHandled,
-			int queueDepthBefore, int queueDepthAfter) {
-		event.end();
-		event.eventLoopThread = Thread.currentThread();
-		event.carrierThread = carrierThread;
-		event.tasksHandled = tasksHandled;
-		event.queueDepthBefore = queueDepthBefore;
-		event.queueDepthAfter = queueDepthAfter;
-		event.commit();
-	}
-
 }

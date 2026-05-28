@@ -15,7 +15,6 @@ import jdk.jfr.consumer.RecordingFile;
 public class JfrToTimeline {
     private static final String[] NETTY_EVENTS = {
             "io.netty.loom.NettyRunIo",
-            "io.netty.loom.NettyRunTasks",
             "io.netty.loom.VirtualThreadTaskRuns",
             "io.netty.loom.VirtualThreadTaskRun",
             "io.netty.loom.VirtualThreadTaskSubmit",
