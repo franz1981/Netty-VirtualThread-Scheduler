@@ -14,7 +14,7 @@
         <module>core</module>
         <module>benchmarks</module>
         <module>benchmark-runner</module>
-        <module>spring-example</module>
+        <module>example-echo</module>
         <module>concurrency-tests</module>
     </modules>
 

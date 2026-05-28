@@ -1,58 +1,73 @@
 # example-echo
 
-A tiny HTTP example that shows how to use VirtualIoNioPollerEventLoopGroup and its
-`vThreadFactory()` to spawn virtual threads from Netty handlers.
+HTTP server on Netty with epoll pinned pollers. Demonstrates blocking virtual
+thread handlers with carrier affinity and structured concurrency.
 
-Prerequisites
-- A recent Loom-enabled JDK (set `JAVA_HOME` to it).
-- Maven (for build and runtime classpath).
-- curl for the smoke test; jbang if you want to run the optional wrk/Hyperfoil test.
+## What it shows
 
-How to build and run (minimal)
+- **Blocking handlers on virtual threads** — each HTTP request is dispatched to a VT
+  from the scheduler's factory. The VT can block freely (the carrier runs other VTs
+  while it sleeps).
+- **Carrier affinity** — each connection is handled by the carrier whose poller
+  accepted it. The handler VT stays on that carrier.
+- **Structured concurrency** — the `/parallel` endpoint forks two tasks using
+  `StructuredTaskScope` with the carrier's thread factory. Both tasks run on the
+  same carrier.
 
-Note: This project requires a Loom-enabled JDK for both building and running because
-the code targets a recent Java release with preview features. Set `JAVA_HOME` to your
-Loom JDK before running the build and the server.
+## Endpoints
 
-1) Build (from repository root)
+| Path | Description |
+|---|---|
+| `GET /` | Blocking handler (50ms sleep), returns VT name + carrier info |
+| `GET /parallel` | `StructuredTaskScope` fork/join — two tasks on the same carrier |
 
-```bash
-# point to a Loom-enabled JDK first
-export JAVA_HOME=/path/to/loom/build/linux-x86_64-server-release/jdk/
-
-# build the example-echo module and produce the shaded (uber) jar
-mvn -DskipTests -pl example-echo -am package
-```
-
-The shade plugin in `example-echo/pom.xml` creates an executable jar in
-`example-echo/target/` (artifact name: `example-echo-<version>.jar`).
-
-2) Start the server (using the same Loom JDK)
+## Build and run
 
 ```bash
-"$JAVA_HOME/bin/java" --enable-preview \
-  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.spi.NettyScheduler \
-  -jar example-echo/target/example-echo-1.0-SNAPSHOT.jar &
+export JAVA_HOME=/path/to/loom/build/linux-x86_64-server-release/jdk
 
-# note the PID in $!
+# build from repository root
+mvn -DskipTests package
+
+# run
+cd example-echo
+DEPS=$(mvn -q dependency:build-classpath -Dmdep.outputFile=/dev/stdout)
+"$JAVA_HOME/bin/java" --enable-preview --enable-native-access=ALL-UNNAMED \
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler \
+  -cp "target/classes:$DEPS" io.netty.loom.example.EchoServer
 ```
 
-Quick smoke & load tests
+## Expected output
 
-- Simple curl smoke test:
-
-```bash
-curl -v http://localhost:8080/
+```
+Echo server started on http://localhost:8080/
+  GET /         — blocking handler with carrier info
+  GET /parallel — structured concurrency on same carrier
 ```
 
-- Short wrk/Hyperfoil test via jbang (uses the Hyperfoil catalog):
+### Blocking handler — each connection lands on a different carrier
 
-```bash
-# short 5s test
-jbang wrk@hyperfoil -t1 -c10 -d5s http://localhost:8080/
+Netty round-robins accepted connections across the event loop group's pollers.
+Each poller is pinned to a carrier. `group.vThreadFactory()` detects the current
+carrier (via `EventLoopScheduler.currentScheduler()`) and returns that carrier's
+factory — so the handler VT inherits the connection's carrier affinity.
+
+```
+$ curl http://localhost:8080/
+HELLO from VirtualThread[#107]/runnable@Thread-1 on carrier Thread-1 (scheduler 1)
+
+$ curl http://localhost:8080/
+HELLO from VirtualThread[#109]/runnable@Thread-2 on carrier Thread-2 (scheduler 2)
+
+$ curl http://localhost:8080/
+HELLO from VirtualThread[#111]/runnable@Thread-3 on carrier Thread-3 (scheduler 3)
 ```
 
-Notes
-- `-Djdk.pollerMode=3` is optional; only add it if you need per-carrier pollers for blocking I/O tests.
-- Use a Loom-enabled JDK and set `JAVA_HOME` accordingly before build and run.
-- If anything fails, paste the exact output here and I'll help debug.
+### Structured concurrency — both tasks on the same carrier
+
+```
+$ curl http://localhost:8080/parallel
+A from VirtualThread[#114]/runnable@Thread-4 | B from VirtualThread[#115]/runnable@Thread-4
+```
+
+Both forked tasks run on Thread-4 — carrier affinity preserved through `StructuredTaskScope`.
