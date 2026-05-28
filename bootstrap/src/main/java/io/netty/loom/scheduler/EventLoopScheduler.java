@@ -105,11 +105,27 @@ public final class EventLoopScheduler {
 			this.type = type;
 		}
 
+		void setVThreadId(long id) {
+			this.vThreadId = id;
+		}
+
+		EventLoopScheduler assignedScheduler() {
+			return eventLoopScheduler;
+		}
+
+		VThreadType type() {
+			return type;
+		}
+
+		void mountedOn(EventLoopScheduler carrier) {
+			this.runningScheduler = carrier;
+		}
+
 		/**
 		 * Returns the home scheduler for the current thread, or {@code null} if the
 		 * calling thread is not the VT that owns this context.
 		 */
-		public EventLoopScheduler scheduler() {
+		EventLoopScheduler scheduler() {
 			return (Thread.currentThread().threadId() == vThreadId) ? eventLoopScheduler : null;
 		}
 
@@ -117,7 +133,7 @@ public final class EventLoopScheduler {
 		 * Returns the scheduler of the carrier currently running this VT. Differs from
 		 * {@link #scheduler()} when the VT was stolen by another carrier.
 		 */
-		public EventLoopScheduler runningScheduler() {
+		EventLoopScheduler runningScheduler() {
 			if (Thread.currentThread().threadId() != vThreadId) {
 				return null;
 			}
@@ -286,8 +302,8 @@ public final class EventLoopScheduler {
 	private boolean isValidPinnedPoller() {
 		SchedulingContext ctx;
 		return Thread.currentThread().isVirtual()
-				&& ((ctx = currentThreadSchedulerContext()).type == VThreadType.PINNED_POLLER
-						&& ctx.eventLoopScheduler == this);
+				&& ((ctx = currentThreadSchedulerContext()).type() == VThreadType.PINNED_POLLER
+						&& ctx.assignedScheduler() == this);
 	}
 
 	private void virtualThreadSchedulerLoop() {
@@ -341,7 +357,7 @@ public final class EventLoopScheduler {
 			var schedulingContext = new SchedulingContext(-1, scheduler, type);
 			var vTask = nettyScheduler.newThread(unstartedBuilder, null,
 					() -> EventLoopScheduler.runWithContext(runnable, schedulingContext));
-			schedulingContext.vThreadId = vTask.thread().threadId();
+			schedulingContext.setVThreadId(vTask.thread().threadId());
 			vTask.attach(schedulingContext);
 			return vTask.thread();
 		};
@@ -419,7 +435,7 @@ public final class EventLoopScheduler {
 	}
 
 	private static boolean isPinnedPoller(Thread.VirtualThreadTask task) {
-		return ((SchedulingContext) task.attachment()).type == VThreadType.PINNED_POLLER;
+		return ((SchedulingContext) task.attachment()).type() == VThreadType.PINNED_POLLER;
 	}
 
 	void execute(Thread.VirtualThreadTask task) {
@@ -428,7 +444,7 @@ public final class EventLoopScheduler {
 		boolean submitEventEnabled = VirtualThreadTaskSubmitEvent.isEventEnabled();
 		boolean pinnedTask = false;
 		if (isPinnedPoller(task) && pinnedContinuationToRun == null) {
-			assert (task.attachment() instanceof SchedulingContext ctx) && ctx.eventLoopScheduler == this;
+			assert (task.attachment() instanceof SchedulingContext ctx) && ctx.assignedScheduler() == this;
 			pinnedContinuationToRun = task;
 			pinnedTask = true;
 		}
@@ -437,7 +453,7 @@ public final class EventLoopScheduler {
 		}
 		if (submitEventEnabled) {
 			SchedulerJfrUtil.commitVirtualThreadTaskSubmitEvent(task, currentThread, carrierThread,
-					context.type == VThreadType.JDK_POLLER, pinnedTask);
+					context.type() == VThreadType.JDK_POLLER, pinnedTask);
 		}
 		// skip for yield/re-enqueue on the same carrier (onContinue path)
 		if (currentThread != carrierThread) {
@@ -564,13 +580,13 @@ public final class EventLoopScheduler {
 
 	private void runContinuation(Thread.VirtualThreadTask task) {
 		var context = (SchedulingContext) task.attachment();
-		context.runningScheduler = this;
+		context.mountedOn(this);
 		var event = SchedulerJfrUtil.beginVirtualThreadTaskRunEvent();
 		if (event == null) {
 			task.run();
 		} else {
-			boolean isPinned = context.type == VThreadType.PINNED_POLLER;
-			boolean isPoller = context.type == VThreadType.JDK_POLLER;
+			boolean isPinned = context.type() == VThreadType.PINNED_POLLER;
+			boolean isPoller = context.type() == VThreadType.JDK_POLLER;
 			task.run();
 			SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task.thread(), isPoller, isPinned);
 		}
