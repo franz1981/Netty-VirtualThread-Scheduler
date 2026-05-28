@@ -66,7 +66,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 	@Override
 	public void onStart(Thread.VirtualThreadTask task) {
 		if (task.attachment() instanceof EventLoopScheduler.SchedulingContext context) {
-			var scheduler = context.eventLoopScheduler;
+			var scheduler = context.assignedScheduler();
 			if (scheduler != null) {
 				scheduler.execute(task);
 				return;
@@ -89,7 +89,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 	@Override
 	public void onContinue(Thread.VirtualThreadTask task) {
 		if (task.attachment() instanceof EventLoopScheduler.SchedulingContext context) {
-			var scheduler = context.eventLoopScheduler;
+			var scheduler = context.assignedScheduler();
 			if (scheduler != null) {
 				scheduler.execute(task);
 				return;
