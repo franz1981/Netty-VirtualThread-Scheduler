@@ -48,11 +48,20 @@ final class ClusterState {
 	}
 
 	boolean tryStartSearcher() {
-		return N_SEARCHING.compareAndSet(this, 0, 1);
+		if (N_SEARCHING.compareAndSet(this, 0, 1)) {
+			return true;
+		}
+		assert (int) N_SEARCHING.getVolatile(this) >= 0 : "nSearching is negative: " + N_SEARCHING.getVolatile(this);
+		return false;
 	}
 
 	void stoppedSearching() {
-		N_SEARCHING.getAndAdd(this, -1);
+		int prev = (int) N_SEARCHING.getAndAdd(this, -1);
+		assert prev > 0 : "nSearching went negative: was " + prev;
+	}
+
+	int nSearching() {
+		return (int) N_SEARCHING.getVolatile(this);
 	}
 
 	IdleCarrierTracker idleTracker() {

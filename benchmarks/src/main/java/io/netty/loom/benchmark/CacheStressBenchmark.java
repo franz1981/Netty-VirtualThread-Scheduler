@@ -87,40 +87,24 @@ import io.netty.loom.scheduler.NettyScheduler;
  * <pre>{@code
  * # 16 physical cores (taskset 0-15):
  * taskset -c 0-15 $JAVA_HOME/bin/java -jar benchmarks/target/benchmarks.jar \
- *   "CacheStressBenchmark.(fjp|customPinWs$)" \
+ *   "CacheStressBenchmark.(fjp|customPinWs$|customPinWsPoller$)" \
  *   -p numTasks=128 -p arraySizeKB=4 -wi 5 -i 5 -f 2 -t 1
  * taskset -c 0-15 $JAVA_HOME/bin/java -jar benchmarks/target/benchmarks.jar \
- *   "CacheStressBenchmark.(fjp|customPinWs$)" \
+ *   "CacheStressBenchmark.(fjp|customPinWs$|customPinWsPoller$)" \
  *   -p numTasks=32 -p arraySizeKB=32768 -wi 5 -i 5 -f 2 -t 1
- *
- * # 32 logical cores including SMT (taskset 0-31):
- * taskset -c 0-31 $JAVA_HOME/bin/java -jar benchmarks/target/benchmarks.jar \
- *   "CacheStressBenchmark.(fjp|customPinWs$)" \
- *   -p numTasks=128 -p arraySizeKB=4 -wi 5 -i 5 -f 2 -t 1
- * taskset -c 0-31 $JAVA_HOME/bin/java -jar benchmarks/target/benchmarks.jar \
- *   "CacheStressBenchmark.(fjp|customPinWs$)" \
- *   -p numTasks=64 -p arraySizeKB=32768 -wi 5 -i 5 -f 2 -t 1
  * }</pre>
  *
- * <h3>Reference results (2026-05-30, Ryzen 9 7950X)</h3>
+ * <h3>Reference results (2026-06-01, Ryzen 9 7950X)</h3>
  *
  * <p>
- * nSearching chain + bitmap scan + state-encoded steal target:
+ * tryPark/unpark + pinned poller park protocol + getAndSet:
  *
  * <pre>
- * 16 cores (taskset 0-15):
+ * 16 cores (taskset 0-15), 2 forks, 5wu, 5i:
  *                              128×4KB (ops/s)    32×32MB (ops/s)
- * custom (no WS)                 44,991               5
- * customPinWs (global WS)        42,192             474
- * customPinWsCluster (cluster)   38,391             472
- * FJP                            28,314             440
- *
- * 32 cores including SMT (taskset 0-31):
- *                              128×4KB (ops/s)    64×32MB (ops/s)
- * custom (no WS)                 42,279               3
- * customPinWs (global WS)        42,214             303
- * customPinWsCluster (cluster)   43,037             304
- * FJP                            32,307             347
+ * customPinWs (no poller)     36,596 ± 1,047       457 ± 37
+ * customPinWsPoller (epoll)   36,368 ± 1,286       437 ± 33
+ * FJP                         27,642 ± 928         429 ± 13
  * </pre>
  */
 @BenchmarkMode(Mode.Throughput)
@@ -171,6 +155,7 @@ public class CacheStressBenchmark {
 	int[] taskCounter;
 	long totalDistinct;
 	long totalInvocations;
+	AutoCloseable pollerGroup;
 
 	@Setup(Level.Trial)
 	public void setup() {
@@ -179,14 +164,42 @@ public class CacheStressBenchmark {
 
 		if (NettyScheduler.isAvailable()) {
 			vtFactory = EventLoopSchedulerGroup.instance().virtualThreadFactory();
+			if (Boolean.getBoolean("io.netty.loom.benchmark.epollPoller")) {
+				try {
+					pollerGroup = createEpollPollerGroup();
+					System.out.println("[setup] epoll pinned poller group created");
+				} catch (Exception e) {
+					throw new RuntimeException("Failed to create epoll poller group", e);
+				}
+			} else if (Boolean.getBoolean("io.netty.loom.benchmark.nioPoller")) {
+				try {
+					pollerGroup = createNioPollerGroup();
+					System.out.println("[setup] NIO poller group created");
+				} catch (Exception e) {
+					throw new RuntimeException("Failed to create NIO poller group", e);
+				}
+			}
 		} else {
 			vtFactory = Thread.ofVirtual().factory();
 		}
 
-		System.out.println("[setup] scheduler=" + (NettyScheduler.isAvailable()
-				? "custom(" + EventLoopSchedulerGroup.instance().size() + " carriers, "
-						+ EventLoopSchedulerGroup.instance().clusterCount() + " clusters)"
-				: "FJP") + " array=" + arraySizeKB + "KB tasks=" + numTasks);
+		System.out.println("[setup] scheduler="
+				+ (NettyScheduler.isAvailable()
+						? "custom(" + EventLoopSchedulerGroup.instance().size() + " carriers, "
+								+ EventLoopSchedulerGroup.instance().clusterCount() + " clusters)"
+						: "FJP")
+				+ " array=" + arraySizeKB + "KB tasks=" + numTasks + " poller="
+				+ (pollerGroup != null ? "epoll" : "none"));
+	}
+
+	private static AutoCloseable createEpollPollerGroup() {
+		var epollFactory = io.netty.channel.epoll.EpollIoHandler.newFactory();
+		return new io.netty.loom.VirtualIoNativePollerEventLoopGroup(epollFactory);
+	}
+
+	private static AutoCloseable createNioPollerGroup() {
+		var nioFactory = io.netty.channel.nio.NioIoHandler.newFactory();
+		return new io.netty.loom.VirtualIoNioPollerEventLoopGroup(nioFactory);
 	}
 
 	private int cacheStress() throws InterruptedException {
@@ -227,6 +240,14 @@ public class CacheStressBenchmark {
 		}
 		if (!carrierCounts.isEmpty()) {
 			System.out.println("[carriers] " + carrierCounts);
+		}
+		if (pollerGroup != null) {
+			try {
+				pollerGroup.close();
+				System.out.println("[teardown] poller group closed");
+			} catch (Exception e) {
+				System.err.println("[teardown] poller group close failed: " + e);
+			}
 		}
 	}
 
@@ -357,6 +378,58 @@ public class CacheStressBenchmark {
 			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
 			"-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL"})
 	public int customPinWsCluster() throws InterruptedException {
+		return cacheStress();
+	}
+
+	/** Custom scheduler, pinned, NO WS, epoll pinned poller on all carriers. */
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--enable-preview", "--add-opens=java.base/java.lang=ALL-UNNAMED",
+			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
+			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
+			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
+			"-Dio.netty.loom.benchmark.epollPoller=true"})
+	public int customPinPoller() throws InterruptedException {
+		return cacheStress();
+	}
+
+	/**
+	 * Custom scheduler, pinned, WS (global), epoll pinned poller on all carriers.
+	 */
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--enable-preview", "--add-opens=java.base/java.lang=ALL-UNNAMED",
+			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
+			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
+			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
+			"-Dio.netty.loom.benchmark.epollPoller=true"})
+	public int customPinWsPoller() throws InterruptedException {
+		return cacheStress();
+	}
+
+	/** Custom scheduler, pinned, WS (global), NIO poller on all carriers. */
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--enable-preview", "--add-opens=java.base/java.lang=ALL-UNNAMED",
+			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
+			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
+			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
+			"-Dio.netty.loom.benchmark.nioPoller=true"})
+	public int customPinWsNioPoller() throws InterruptedException {
+		return cacheStress();
+	}
+
+	/**
+	 * Custom scheduler, pinned, WS (cluster-local), epoll pinned poller on all
+	 * carriers.
+	 */
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--enable-preview", "--add-opens=java.base/java.lang=ALL-UNNAMED",
+			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
+			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
+			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
+			"-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL", "-Dio.netty.loom.benchmark.epollPoller=true"})
+	public int customPinWsClusterPoller() throws InterruptedException {
 		return cacheStress();
 	}
 

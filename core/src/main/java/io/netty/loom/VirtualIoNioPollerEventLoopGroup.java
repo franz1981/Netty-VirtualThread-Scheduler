@@ -103,8 +103,9 @@ public class VirtualIoNioPollerEventLoopGroup extends MultiThreadIoEventLoopGrou
 			}
 		};
 
-		// Loom-friendly: carrier is not pinned during blocking I/O
-		var termination = scheduler.registerPinnedPoller(() -> false, () -> {
+		// Loom-friendly: carrier is not pinned during blocking I/O — wakeup is a no-op
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
 			eventLoop.setOwningThread(Thread.currentThread());
 			FastThreadLocalThread.runWithFastThreadLocal(() -> eventLoop(scheduler, eventLoop, pollerRunning));
 		});

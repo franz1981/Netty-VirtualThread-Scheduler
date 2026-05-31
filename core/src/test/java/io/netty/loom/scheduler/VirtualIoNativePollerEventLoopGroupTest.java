@@ -699,7 +699,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
 		assumeTrue(available != null, "no free scheduler slots available");
 		var scheduler = available[0];
-		var termination = scheduler.registerPinnedPoller(() -> false, () -> {
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
 		});
 		termination.toCompletableFuture().join();
 		assertFalse(scheduler.hasRegisteredPinnedPoller());
@@ -710,7 +711,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
 		assumeTrue(available != null, "no free scheduler slots available");
 		var scheduler = available[0];
-		var termination = scheduler.registerPinnedPoller(() -> false, () -> {
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
 			throw new RuntimeException("poller crashed");
 		});
 		termination.toCompletableFuture().join();
@@ -978,7 +980,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var pollerLatch = new CountDownLatch(1);
 		var pollersStarted = new CountDownLatch(2);
 		var vtRan = new CompletableFuture<EventLoopScheduler>();
-		var pollerATermination = schedulerA.registerPinnedPoller(() -> false, () -> {
+		var pollerATermination = schedulerA.registerPinnedPoller(() -> {
+		}, () -> {
 			pollersStarted.countDown();
 			while (spinnerA.get()) {
 				Thread.onSpinWait();
@@ -989,7 +992,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				Thread.currentThread().interrupt();
 			}
 		});
-		var pollerBTermination = schedulerB.registerPinnedPoller(() -> false, () -> {
+		var pollerBTermination = schedulerB.registerPinnedPoller(() -> {
+		}, () -> {
 			pollersStarted.countDown();
 			while (spinnerB.get()) {
 				Thread.onSpinWait();
@@ -1066,7 +1070,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var spinnerStarted = new CountDownLatch(1);
 		var spinnerB = new AtomicBoolean(true);
 		var vtRan = new CompletableFuture<EventLoopScheduler>();
-		var pollerTermination = schedulerA.registerPinnedPoller(() -> false, () -> {
+		var pollerTermination = schedulerA.registerPinnedPoller(() -> {
+		}, () -> {
 			pollerStarted.countDown();
 			try {
 				pollerLatch.await();
@@ -1096,6 +1101,118 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			spinnerB.set(false);
 			pollerLatch.countDown();
 			pollerTermination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+		}
+	}
+
+	@Test
+	@Timeout(10)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void carrierReclaimsSearchingStateWhenPollerDescheduled() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2, "need at least 2 carriers");
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+
+		var pollerParked = new CountDownLatch(1);
+		var pollerResume = new CountDownLatch(1);
+		var lock = new java.util.concurrent.locks.ReentrantLock();
+
+		var termination = schedulerA.registerPinnedPoller(() -> {
+		}, () -> {
+			if (schedulerA.tryPark()) {
+				pollerParked.countDown();
+				lock.lock();
+				try {
+					schedulerA.unpark();
+				} finally {
+					lock.unlock();
+				}
+			}
+			try {
+				pollerResume.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+
+		try {
+			lock.lock();
+			try {
+				assertTrue(pollerParked.await(5, TimeUnit.SECONDS));
+				// Carrier A: state=PARKED, idle in bitmap, poller VT blocked on lock.
+				// Simulate the full WS chain: tryStartSearcher (nSearching 0→1) +
+				// wakeupAsSearcher (CAS PARKED → SEARCHING+B.id).
+				var cs = schedulerA.clusterState;
+				assertNotNull(cs);
+				assertTrue(cs.tryStartSearcher(), "nSearching should go 0 → 1");
+				assertTrue(schedulerA.wakeupAsSearcher(schedulerB), "CAS should succeed — carrier A is PARKED");
+				long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+				while (cs.nSearching() != 0 && System.nanoTime() < deadline) {
+					Thread.onSpinWait();
+				}
+				assertEquals(0, cs.nSearching(),
+						"carrier loop must reclaim SEARCHING state via unpark — nSearching should be 0");
+			} finally {
+				lock.unlock();
+			}
+		} finally {
+			pollerResume.countDown();
+			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+		}
+	}
+
+	@Test
+	@Timeout(10)
+	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
+	void carrierReclaimsSearchingStateWhenPollerYields() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 2, "need at least 2 carriers");
+		var schedulerA = group.scheduler(0);
+		var schedulerB = group.scheduler(1);
+		assumeTrue(!schedulerA.hasRegisteredPinnedPoller() && !schedulerB.hasRegisteredPinnedPoller());
+
+		var pollerParked = new CountDownLatch(1);
+		var pollerResume = new CountDownLatch(1);
+		var searchingHandled = new CompletableFuture<Boolean>();
+
+		var termination = schedulerA.registerPinnedPoller(() -> {
+		}, () -> {
+			if (schedulerA.tryPark()) {
+				pollerParked.countDown();
+				// Yield — unmounts the VT, carrier loop takes over.
+				// State is PARKED, carrier is in bitmap.
+				Thread.yield();
+				// After resuming: unpark to clean up
+				schedulerA.unpark();
+			}
+			try {
+				pollerResume.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+
+		try {
+			assertTrue(pollerParked.await(5, TimeUnit.SECONDS));
+			// Brief sleep to let the yield take effect and carrier loop run
+			Thread.sleep(10);
+			var cs = schedulerA.clusterState;
+			assertNotNull(cs);
+			assertTrue(cs.tryStartSearcher(), "nSearching should go 0 → 1");
+			// State might be PARKED or RUNNING (carrier loop may have reclaimed via unpark)
+			// Either wakeupAsSearcher succeeds (PARKED) or fails (RUNNING — already
+			// reclaimed)
+			boolean woke = schedulerA.wakeupAsSearcher(schedulerB);
+			long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+			while (cs.nSearching() != 0 && System.nanoTime() < deadline) {
+				Thread.onSpinWait();
+			}
+			assertEquals(0, cs.nSearching(),
+					"nSearching must be 0 — either carrier loop reclaimed or wakeupAsSearcher was handled");
+		} finally {
+			pollerResume.countDown();
+			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
 		}
 	}
 
