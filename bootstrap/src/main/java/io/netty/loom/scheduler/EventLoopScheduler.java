@@ -43,7 +43,6 @@ public final class EventLoopScheduler {
 	private static final VarHandle PINNED_POLLER_WAKEUP;
 	private static final VarHandle CONSUMER_TICKET;
 	private static final VarHandle CONSUMER_SERVING;
-	private static final VarHandle SCHEDULER_HEARTBEAT;
 	private static final VarHandle CARRIER_STATE;
 
 	// @formatter:off
@@ -95,7 +94,6 @@ public final class EventLoopScheduler {
 					BooleanSupplier.class);
 			CONSUMER_TICKET = lookup.findVarHandle(EventLoopScheduler.class, "consumerTicket", int.class);
 			CONSUMER_SERVING = lookup.findVarHandle(EventLoopScheduler.class, "consumerServing", int.class);
-			SCHEDULER_HEARTBEAT = lookup.findVarHandle(EventLoopScheduler.class, "schedulerHeartbeat", long.class);
 			CARRIER_STATE = lookup.findVarHandle(EventLoopScheduler.class, "carrierState", int.class);
 		} catch (ReflectiveOperationException e) {
 			throw new ExceptionInInitializerError(e);
@@ -104,13 +102,8 @@ public final class EventLoopScheduler {
 
 	public static final long YIELD_DURATION_NS = TimeUnit.MICROSECONDS
 			.toNanos(Integer.getInteger("io.netty.loom.yield.us", 50));
-	private static final int WAKE_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.wake.queue", 8);
-	private static final int STEAL_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.steal.queue", 2);
 	static final boolean WORK_STEALING_ENABLED = Boolean
 			.parseBoolean(System.getProperty("io.netty.loom.workstealing.enabled", "false"));
-	private static final long UNRESPONSIVE_THRESHOLD_NS = TimeUnit.MICROSECONDS
-			.toNanos(Long.getLong("io.netty.loom.workstealing.unresponsive.us", 200_000));
-	private static final boolean ALWAYS_UNRESPONSIVE = WORK_STEALING_ENABLED && UNRESPONSIVE_THRESHOLD_NS == 0;
 	private static final int IDLE_SPINS = Integer.getInteger("io.netty.loom.idleSpinsBeforePark", 0);
 
 	enum VThreadType {
@@ -232,8 +225,6 @@ public final class EventLoopScheduler {
 	EventLoopSchedulerGroup group;
 	ClusterState clusterState;
 	private boolean searching;
-	@SuppressWarnings("FieldMayBeFinal")
-	private long schedulerHeartbeat = System.nanoTime();
 	private Runnable onCarrierStart;
 
 	EventLoopScheduler(int id, ThreadFactory threadFactory, int resumedContinuationsExpectedCount,
@@ -329,10 +320,8 @@ public final class EventLoopScheduler {
 
 	/**
 	 * Scheduling checkpoint for the pinned poller. Must be called between phases of
-	 * the poller loop. Yields the carrier if external VTs have work queued, and
-	 * updates the scheduler heartbeat so siblings can detect unresponsive carriers.
-	 * When no I/O work was done, the scheduler may steal from an overloaded
-	 * sibling.
+	 * the poller loop. Yields the carrier if external VTs have work queued. When no
+	 * I/O work was done, the scheduler may steal from an overloaded sibling.
 	 *
 	 * @param hadIoWork
 	 *            true if the poller processed I/O events or tasks since the last
@@ -340,7 +329,6 @@ public final class EventLoopScheduler {
 	 */
 	public boolean maybeYield(boolean hadIoWork) {
 		assert isValidPinnedPoller();
-		touchHeartbeat();
 		if (hasRunnableContinuations()) {
 			Thread.yield();
 			return true;
@@ -389,7 +377,7 @@ public final class EventLoopScheduler {
 						}
 					}
 				}
-				touchHeartbeat();
+
 				resetSearching();
 				if (canParkScheduler() && CARRIER_STATE.compareAndSet(this, RUNNING, PARKED)) {
 					var cs = clusterState;
@@ -415,7 +403,7 @@ public final class EventLoopScheduler {
 							runContinuation(task);
 						}
 					}
-					touchHeartbeat();
+
 				}
 			} else if (WORK_STEALING_ENABLED && hasRunnableContinuations()) {
 				signalWork();
@@ -425,12 +413,6 @@ public final class EventLoopScheduler {
 
 	private boolean hasRunnableContinuations() {
 		return !runQueue.isEmpty();
-	}
-
-	private void touchHeartbeat() {
-		if (WORK_STEALING_ENABLED && !ALWAYS_UNRESPONSIVE) {
-			SCHEDULER_HEARTBEAT.setOpaque(this, System.nanoTime());
-		}
 	}
 
 	/**
@@ -577,23 +559,6 @@ public final class EventLoopScheduler {
 			return true;
 		}
 		return false;
-	}
-
-	private long heartbeat() {
-		assert WORK_STEALING_ENABLED : "heartbeat is only valid when work stealing is enabled";
-		return (long) SCHEDULER_HEARTBEAT.getOpaque(this);
-	}
-
-	public boolean isUnresponsive(long nowNanos) {
-		return ALWAYS_UNRESPONSIVE || (nowNanos - heartbeat()) > UNRESPONSIVE_THRESHOLD_NS;
-	}
-
-	private boolean isUnresponsive() {
-		return ALWAYS_UNRESPONSIVE || (System.nanoTime() - heartbeat()) > UNRESPONSIVE_THRESHOLD_NS;
-	}
-
-	private boolean needsHelp() {
-		return isUnresponsive() && hasRunnableContinuations();
 	}
 
 	boolean worthStealing() {
