@@ -12,6 +12,7 @@
     <modules>
         <module>bootstrap</module>
         <module>core</module>
+        <module>topology</module>
         <module>benchmarks</module>
         <module>benchmark-runner</module>
         <module>example-echo</module>

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "intellij": {
+      "type": "stdio",
+      "env": {
+        "IJ_MCP_SERVER_PORT": "64342"
+      },
+      "command": "/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/jbr/bin/java",
+      "args": [
+        "-classpath",
+        "/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/plugins/mcpserver/lib/mcpserver-frontend.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/util-8.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.kotlinx.coroutines.core.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.ktor.client.cio.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.ktor.client.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.ktor.network.tls.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.ktor.io.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.ktor.utils.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.kotlinx.io.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.kotlinx.serialization.core.jar:/home/forked_franz/.local/share/JetBrains/Toolbox/apps/intellij-idea-ultimate/lib/intellij.libraries.kotlinx.serialization.json.jar",
+        "com.intellij.mcpserver.stdio.McpStdioRunnerKt"
+      ]
+    }
+  }
+}

@@ -1112,4 +1112,85 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			default -> throw new IllegalArgumentException("unexpected group type: " + group.getClass());
 		};
 	}
+
+	@Test
+	void ioUringRingFdsClosedAfterGroupClose() throws Exception {
+		assumeTrue(IoUring.isAvailable(), "io_uring not available");
+		int before = countIoUringFds();
+		var group = new VirtualIoNativePollerEventLoopGroup(1, IoUringIoHandler.newFactory());
+		Thread.sleep(200);
+		int during = countIoUringFds();
+		assertTrue(during > before, "expected at least one ring fd while group is open");
+		group.close();
+		Thread.sleep(200);
+		int after = countIoUringFds();
+		assertEquals(before, after, "ring fds leaked after close: before=" + before + " after=" + after);
+	}
+
+	@Test
+	void ioUringRingFdsClosedAfterGroupCloseWithActiveConnections() throws Exception {
+		assumeTrue(IoUring.isAvailable(), "io_uring not available");
+		int before = countIoUringFds();
+		var group = new VirtualIoNativePollerEventLoopGroup(1, IoUringIoHandler.newFactory());
+
+		var bootstrap = new ServerBootstrap().group(group).channel(IoUringServerSocketChannel.class)
+				.childHandler(new ChannelInitializer<SocketChannel>() {
+					@Override
+					protected void initChannel(SocketChannel ch) {
+						ch.pipeline().addLast(new HttpServerCodec());
+						ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+							@Override
+							public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
+								if (msg instanceof DefaultHttpRequest) {
+									var content = ctx.alloc().directBuffer();
+									content.writeCharSequence("OK", CharsetUtil.US_ASCII);
+									var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
+											HttpResponseStatus.OK, content);
+									response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
+									response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
+									ctx.writeAndFlush(response, ctx.voidPromise());
+								}
+								ReferenceCountUtil.release(msg);
+							}
+						});
+					}
+				});
+
+		Channel serverChannel = bootstrap.bind(0).sync().channel();
+		int port = ((InetSocketAddress) serverChannel.localAddress()).getPort();
+		try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+			for (int i = 0; i < 5; i++) {
+				var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:" + port + "/")).GET().build();
+				var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+				assertEquals(200, response.statusCode());
+			}
+		}
+
+		int during = countIoUringFds();
+		assertTrue(during > before, "expected ring fds while group is open with active server");
+
+		group.close();
+		Thread.sleep(200);
+		int after = countIoUringFds();
+		assertEquals(before, after,
+				"ring fds leaked after close with active connections: before=" + before + " after=" + after);
+	}
+
+	private static int countIoUringFds() {
+		int count = 0;
+		var fds = new java.io.File("/proc/self/fd").listFiles();
+		if (fds == null) {
+			return 0;
+		}
+		for (var f : fds) {
+			try {
+				String link = java.nio.file.Files.readSymbolicLink(f.toPath()).toString();
+				if (link.contains("io_uring")) {
+					count++;
+				}
+			} catch (Exception _) {
+			}
+		}
+		return count;
+	}
 }

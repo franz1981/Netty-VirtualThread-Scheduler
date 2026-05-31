@@ -1,0 +1,1204 @@
+--- Execution profile ---
+Total samples       : 9963
+
+--- 98662509481 ns (99.01%), 9864 samples
+  [ 0] jdk.internal.util.ArraysSupport.hashCode
+  [ 1] java.util.Arrays.hashCode
+  [ 2] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [ 3] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [ 4] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [ 5] jdk.internal.vm.ScopedValueContainer.run
+  [ 6] java.lang.ScopedValue$Carrier.runWith
+  [ 7] java.lang.ScopedValue$Carrier.run
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [ 9] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [10] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [11] java.lang.Thread.runWith
+  [12] java.lang.VirtualThread.run
+  [13] java.lang.VirtualThread$VThreadContinuation$1.run
+  [14] jdk.internal.vm.Continuation.enter0
+  [15] jdk.internal.vm.Continuation.enter
+  [16] jdk.internal.vm.Continuation.enterSpecial
+  [17] jdk.internal.vm.Continuation.run
+  [18] java.lang.VirtualThread.runContinuation
+  [19] java.lang.VirtualThread$VThreadTask.run
+  [20] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [21] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [22] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [23] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [24] java.lang.Thread.runWith
+  [25] java.lang.Thread.run
+
+--- 360001060 ns (0.36%), 36 samples
+  [ 0] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 1] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 2] java.lang.Thread.runWith
+  [ 3] java.lang.Thread.run
+
+--- 40014100 ns (0.04%), 4 samples
+  [ 0] AccessInternal::PostRuntimeDispatch<G1BarrierSet::AccessBarrier<548964ul, G1BarrierSet>, (AccessInternal::BarrierType)0, 548964ul>::oop_access_barrier
+  [ 1] JavaThread::rebind_to_jvmti_thread_state_of
+  [ 2] OptoRuntime::vthread_start_final_transition_C
+  [ 3] vthread_start_final_transition_blob (C2 runtime)
+  [ 4] java.lang.VirtualThread$VThreadContinuation$1.run
+  [ 5] jdk.internal.vm.Continuation.enter0
+  [ 6] jdk.internal.vm.Continuation.enter
+  [ 7] jdk.internal.vm.Continuation.enterSpecial
+  [ 8] jdk.internal.vm.Continuation.run
+  [ 9] java.lang.VirtualThread.runContinuation
+  [10] java.lang.VirtualThread$VThreadTask.run
+  [11] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [12] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [13] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [14] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [15] java.lang.Thread.runWith
+  [16] java.lang.Thread.run
+
+--- 30231400 ns (0.03%), 3 samples
+  [ 0] _raw_spin_unlock_irqrestore_[k]
+  [ 1] try_to_wake_up_[k]
+  [ 2] wake_up_q_[k]
+  [ 3] futex_wake_[k]
+  [ 4] do_futex_[k]
+  [ 5] __x64_sys_futex_[k]
+  [ 6] do_syscall_64_[k]
+  [ 7] entry_SYSCALL_64_after_hwframe_[k]
+  [ 8] __GI___pthread_cond_signal
+  [ 9] Unsafe_Unpark
+  [10] jdk.internal.misc.Unsafe.unpark
+  [11] java.util.concurrent.locks.LockSupport.unpark
+  [12] io.netty.loom.scheduler.EventLoopScheduler.wakeup
+  [13] io.netty.loom.scheduler.EventLoopScheduler.execute
+  [14] io.netty.loom.scheduler.NettyScheduler.onStart
+  [15] java.lang.VirtualThread.start
+  [16] java.lang.VirtualThread.start
+  [17] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [18] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [19] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [20] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [21] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [22] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [23] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [24] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [25] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [26] java.lang.reflect.Method.invoke
+  [27] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [28] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [29] java.util.concurrent.FutureTask.run
+  [30] java.util.concurrent.Executors$RunnableAdapter.call
+  [31] java.util.concurrent.FutureTask.run
+  [32] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [33] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [34] java.lang.Thread.runWith
+  [35] java.lang.Thread.run
+
+--- 30042810 ns (0.03%), 3 samples
+  [ 0] do_syscall_64_[k]
+  [ 1] entry_SYSCALL_64_after_hwframe_[k]
+  [ 2] __syscall_cancel_arch
+  [ 3] __internal_syscall_cancel
+  [ 4] __futex_abstimed_wait_common
+  [ 5] ___pthread_cond_wait
+  [ 6] Parker::park
+  [ 7] Unsafe_Park
+  [ 8] jdk.internal.misc.Unsafe.park
+  [ 9] java.util.concurrent.locks.LockSupport.park
+  [10] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [11] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [12] java.lang.Thread.runWith
+  [13] java.lang.Thread.run
+
+--- 30001720 ns (0.03%), 3 samples
+  [ 0] java.lang.VirtualThread.runContinuation
+  [ 1] java.lang.VirtualThread$VThreadTask.run
+  [ 2] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [ 3] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [ 4] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 6] java.lang.Thread.runWith
+  [ 7] java.lang.Thread.run
+
+--- 20007560 ns (0.02%), 2 samples
+  [ 0] jdk.jfr.EventType.isEnabled
+  [ 1] io.netty.loom.scheduler.jfr.VirtualThreadTaskRunsEvent.isEventEnabled
+  [ 2] io.netty.loom.scheduler.SchedulerJfrUtil.beginVirtualThreadTaskRunsEvent
+  [ 3] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [ 4] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 6] java.lang.Thread.runWith
+  [ 7] java.lang.Thread.run
+
+--- 20006120 ns (0.02%), 2 samples
+  [ 0] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [ 1] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [ 2] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [ 3] jdk.internal.vm.ScopedValueContainer.run
+  [ 4] java.lang.ScopedValue$Carrier.runWith
+  [ 5] java.lang.ScopedValue$Carrier.run
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [ 9] java.lang.Thread.runWith
+  [10] java.lang.VirtualThread.run
+  [11] java.lang.VirtualThread$VThreadContinuation$1.run
+  [12] jdk.internal.vm.Continuation.enter0
+  [13] jdk.internal.vm.Continuation.enter
+  [14] jdk.internal.vm.Continuation.enterSpecial
+  [15] jdk.internal.vm.Continuation.run
+  [16] java.lang.VirtualThread.runContinuation
+  [17] java.lang.VirtualThread$VThreadTask.run
+  [18] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [19] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [20] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [21] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [22] java.lang.Thread.runWith
+  [23] java.lang.Thread.run
+
+--- 20005170 ns (0.02%), 2 samples
+  [ 0] JavaThread::rebind_to_jvmti_thread_state_of
+  [ 1] OptoRuntime::vthread_start_final_transition_C
+  [ 2] vthread_start_final_transition_blob (C2 runtime)
+  [ 3] java.lang.VirtualThread$VThreadContinuation$1.run
+  [ 4] jdk.internal.vm.Continuation.enter0
+  [ 5] jdk.internal.vm.Continuation.enter
+  [ 6] jdk.internal.vm.Continuation.enterSpecial
+  [ 7] jdk.internal.vm.Continuation.run
+  [ 8] java.lang.VirtualThread.runContinuation
+  [ 9] java.lang.VirtualThread$VThreadTask.run
+  [10] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [11] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [12] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [13] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [14] java.lang.Thread.runWith
+  [15] java.lang.Thread.run
+
+--- 20004830 ns (0.02%), 2 samples
+  [ 0] oopDesc::address_field
+  [ 1] JavaThread::rebind_to_jvmti_thread_state_of
+  [ 2] OptoRuntime::vthread_start_final_transition_C
+  [ 3] vthread_start_final_transition_blob (C2 runtime)
+  [ 4] java.lang.VirtualThread$VThreadContinuation$1.run
+  [ 5] jdk.internal.vm.Continuation.enter0
+  [ 6] jdk.internal.vm.Continuation.enter
+  [ 7] jdk.internal.vm.Continuation.enterSpecial
+  [ 8] jdk.internal.vm.Continuation.run
+  [ 9] java.lang.VirtualThread.runContinuation
+  [10] java.lang.VirtualThread$VThreadTask.run
+  [11] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [12] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [13] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [14] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [15] java.lang.Thread.runWith
+  [16] java.lang.Thread.run
+
+--- 19999660 ns (0.02%), 2 samples
+  [ 0] java.util.concurrent.locks.AbstractQueuedSynchronizer.compareAndSetState
+  [ 1] java.util.concurrent.CountDownLatch$Sync.tryReleaseShared
+  [ 2] java.util.concurrent.locks.AbstractQueuedSynchronizer.releaseShared
+  [ 3] java.util.concurrent.CountDownLatch.countDown
+  [ 4] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [ 5] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [ 6] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [ 7] jdk.internal.vm.ScopedValueContainer.run
+  [ 8] java.lang.ScopedValue$Carrier.runWith
+  [ 9] java.lang.ScopedValue$Carrier.run
+  [10] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [11] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [12] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [13] java.lang.Thread.runWith
+  [14] java.lang.VirtualThread.run
+  [15] java.lang.VirtualThread$VThreadContinuation$1.run
+  [16] jdk.internal.vm.Continuation.enter0
+  [17] jdk.internal.vm.Continuation.enter
+  [18] jdk.internal.vm.Continuation.enterSpecial
+  [19] jdk.internal.vm.Continuation.run
+  [20] java.lang.VirtualThread.runContinuation
+  [21] java.lang.VirtualThread$VThreadTask.run
+  [22] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [23] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [24] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [25] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [26] java.lang.Thread.runWith
+  [27] java.lang.Thread.run
+
+--- 19997690 ns (0.02%), 2 samples
+  [ 0] java.lang.invoke.VarHandleLongs$FieldInstanceReadWrite.weakCompareAndSetRelease
+  [ 1] java.lang.invoke.VarHandleGuards.guard_LJJ_Z
+  [ 2] java.util.concurrent.atomic.Striped64$Cell.cas
+  [ 3] java.util.concurrent.atomic.LongAdder.add
+  [ 4] jdk.internal.vm.ThreadContainers$RootContainer$CountingRootContainer.onExit
+  [ 5] jdk.internal.vm.ThreadContainer.remove
+  [ 6] java.lang.VirtualThread.afterDone
+  [ 7] java.lang.VirtualThread.afterDone
+  [ 8] java.lang.VirtualThread.runContinuation
+  [ 9] java.lang.VirtualThread$VThreadTask.run
+  [10] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [11] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [12] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [13] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [14] java.lang.Thread.runWith
+  [15] java.lang.Thread.run
+
+--- 10089340 ns (0.01%), 1 sample
+  [ 0] wake_q_add_safe_[k]
+  [ 1] futex_wake_[k]
+  [ 2] do_futex_[k]
+  [ 3] __x64_sys_futex_[k]
+  [ 4] do_syscall_64_[k]
+  [ 5] entry_SYSCALL_64_after_hwframe_[k]
+  [ 6] __GI___pthread_cond_signal
+  [ 7] Unsafe_Unpark
+  [ 8] jdk.internal.misc.Unsafe.unpark
+  [ 9] java.util.concurrent.locks.LockSupport.unpark
+  [10] io.netty.loom.scheduler.EventLoopScheduler.wakeup
+  [11] io.netty.loom.scheduler.EventLoopScheduler.execute
+  [12] io.netty.loom.scheduler.NettyScheduler.onStart
+  [13] java.lang.VirtualThread.start
+  [14] java.lang.VirtualThread.start
+  [15] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [16] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [17] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [18] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [19] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [20] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [21] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [22] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [23] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [24] java.lang.reflect.Method.invoke
+  [25] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [26] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [27] java.util.concurrent.FutureTask.run
+  [28] java.util.concurrent.Executors$RunnableAdapter.call
+  [29] java.util.concurrent.FutureTask.run
+  [30] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [31] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [32] java.lang.Thread.runWith
+  [33] java.lang.Thread.run
+
+--- 10084070 ns (0.01%), 1 sample
+  [ 0] __GI___pthread_mutex_unlock_usercnt
+  [ 1] Parker::unpark
+  [ 2] Unsafe_Unpark
+  [ 3] jdk.internal.misc.Unsafe.unpark
+  [ 4] java.util.concurrent.locks.LockSupport.unpark
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler.wakeup
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler.execute
+  [ 7] io.netty.loom.scheduler.NettyScheduler.onStart
+  [ 8] java.lang.VirtualThread.start
+  [ 9] java.lang.VirtualThread.start
+  [10] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [11] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [12] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [13] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [14] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [15] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [16] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [17] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [18] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [19] java.lang.reflect.Method.invoke
+  [20] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [21] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [22] java.util.concurrent.FutureTask.run
+  [23] java.util.concurrent.Executors$RunnableAdapter.call
+  [24] java.util.concurrent.FutureTask.run
+  [25] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [26] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [27] java.lang.Thread.runWith
+  [28] java.lang.Thread.run
+
+--- 10076130 ns (0.01%), 1 sample
+  [ 0] Unsafe_Park
+  [ 1] jdk.internal.misc.Unsafe.park
+  [ 2] java.util.concurrent.locks.LockSupport.park
+  [ 3] java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire
+  [ 4] java.util.concurrent.locks.AbstractQueuedSynchronizer.acquireSharedInterruptibly
+  [ 5] java.util.concurrent.CountDownLatch.await
+  [ 6] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [ 7] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [ 8] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [ 9] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [10] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [11] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [12] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [13] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [14] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [15] java.lang.reflect.Method.invoke
+  [16] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [17] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [18] java.util.concurrent.FutureTask.run
+  [19] java.util.concurrent.Executors$RunnableAdapter.call
+  [20] java.util.concurrent.FutureTask.run
+  [21] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [22] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [23] java.lang.Thread.runWith
+  [24] java.lang.Thread.run
+
+--- 10069680 ns (0.01%), 1 sample
+  [ 0] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$0
+  [ 1] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f126f00.newThread
+  [ 2] io.netty.loom.benchmark.CacheStressBenchmark.lambda$setup$0
+  [ 3] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f127a00.newThread
+  [ 4] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [ 5] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [ 6] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [ 7] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [ 8] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [ 9] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [10] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [11] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [12] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [13] java.lang.reflect.Method.invoke
+  [14] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [15] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [16] java.util.concurrent.FutureTask.run
+  [17] java.util.concurrent.Executors$RunnableAdapter.call
+  [18] java.util.concurrent.FutureTask.run
+  [19] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [20] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [21] java.lang.Thread.runWith
+  [22] java.lang.Thread.run
+
+--- 10068770 ns (0.01%), 1 sample
+  [ 0] java.lang.Thread$ThreadIdentifiers.next
+  [ 1] java.lang.Thread.<init>
+  [ 2] java.lang.BaseVirtualThread.<init>
+  [ 3] java.lang.VirtualThread.<init>
+  [ 4] java.lang.ThreadBuilders.newVirtualThread
+  [ 5] java.lang.ThreadBuilders$VirtualThreadBuilder.unstarted
+  [ 6] java.lang.Thread$VirtualThreadScheduler.newThread
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$0
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f126f00.newThread
+  [ 9] io.netty.loom.benchmark.CacheStressBenchmark.lambda$setup$0
+  [10] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f127a00.newThread
+  [11] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [12] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [13] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [14] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [15] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [16] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [17] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [18] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [19] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [20] java.lang.reflect.Method.invoke
+  [21] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [22] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [23] java.util.concurrent.FutureTask.run
+  [24] java.util.concurrent.Executors$RunnableAdapter.call
+  [25] java.util.concurrent.FutureTask.run
+  [26] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [27] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [28] java.lang.Thread.runWith
+  [29] java.lang.Thread.run
+
+--- 10066840 ns (0.01%), 1 sample
+  [ 0] __rcu_read_lock_[k]
+  [ 1] futex_hash_[k]
+  [ 2] futex_wake_[k]
+  [ 3] do_futex_[k]
+  [ 4] __x64_sys_futex_[k]
+  [ 5] do_syscall_64_[k]
+  [ 6] entry_SYSCALL_64_after_hwframe_[k]
+  [ 7] __GI___pthread_cond_signal
+  [ 8] Unsafe_Unpark
+  [ 9] jdk.internal.misc.Unsafe.unpark
+  [10] java.util.concurrent.locks.LockSupport.unpark
+  [11] io.netty.loom.scheduler.EventLoopScheduler.wakeup
+  [12] io.netty.loom.scheduler.EventLoopScheduler.execute
+  [13] io.netty.loom.scheduler.NettyScheduler.onStart
+  [14] java.lang.VirtualThread.start
+  [15] java.lang.VirtualThread.start
+  [16] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [17] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [18] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [19] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [20] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [21] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [22] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [23] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [24] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [25] java.lang.reflect.Method.invoke
+  [26] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [27] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [28] java.util.concurrent.FutureTask.run
+  [29] java.util.concurrent.Executors$RunnableAdapter.call
+  [30] java.util.concurrent.FutureTask.run
+  [31] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [32] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [33] java.lang.Thread.runWith
+  [34] java.lang.Thread.run
+
+--- 10063010 ns (0.01%), 1 sample
+  [ 0] java.lang.Thread.<init>
+  [ 1] java.lang.BaseVirtualThread.<init>
+  [ 2] java.lang.VirtualThread.<init>
+  [ 3] java.lang.ThreadBuilders.newVirtualThread
+  [ 4] java.lang.ThreadBuilders$VirtualThreadBuilder.unstarted
+  [ 5] java.lang.Thread$VirtualThreadScheduler.newThread
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$0
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f126f00.newThread
+  [ 8] io.netty.loom.benchmark.CacheStressBenchmark.lambda$setup$0
+  [ 9] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f127a00.newThread
+  [10] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [11] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [12] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [13] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [14] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [15] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [16] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [17] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [18] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [19] java.lang.reflect.Method.invoke
+  [20] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [21] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [22] java.util.concurrent.FutureTask.run
+  [23] java.util.concurrent.Executors$RunnableAdapter.call
+  [24] java.util.concurrent.FutureTask.run
+  [25] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [26] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [27] java.lang.Thread.runWith
+  [28] java.lang.Thread.run
+
+--- 10061320 ns (0.01%), 1 sample
+  [ 0] futex_wake_mark_[k]
+  [ 1] futex_wake_[k]
+  [ 2] do_futex_[k]
+  [ 3] __x64_sys_futex_[k]
+  [ 4] do_syscall_64_[k]
+  [ 5] entry_SYSCALL_64_after_hwframe_[k]
+  [ 6] __GI___pthread_cond_signal
+  [ 7] Unsafe_Unpark
+  [ 8] jdk.internal.misc.Unsafe.unpark
+  [ 9] java.util.concurrent.locks.LockSupport.unpark
+  [10] io.netty.loom.scheduler.EventLoopScheduler.wakeup
+  [11] io.netty.loom.scheduler.EventLoopScheduler.execute
+  [12] io.netty.loom.scheduler.NettyScheduler.onStart
+  [13] java.lang.VirtualThread.start
+  [14] java.lang.VirtualThread.start
+  [15] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [16] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [17] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [18] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [19] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [20] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [21] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [22] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [23] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [24] java.lang.reflect.Method.invoke
+  [25] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [26] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [27] java.util.concurrent.FutureTask.run
+  [28] java.util.concurrent.Executors$RunnableAdapter.call
+  [29] java.util.concurrent.FutureTask.run
+  [30] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [31] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [32] java.lang.Thread.runWith
+  [33] java.lang.Thread.run
+
+--- 10054930 ns (0.01%), 1 sample
+  [ 0] java_lang_Thread::thread_acquire
+  [ 1] Unsafe_Unpark
+  [ 2] jdk.internal.misc.Unsafe.unpark
+  [ 3] java.util.concurrent.locks.LockSupport.unpark
+  [ 4] io.netty.loom.scheduler.EventLoopScheduler.wakeup
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler.execute
+  [ 6] io.netty.loom.scheduler.NettyScheduler.onStart
+  [ 7] java.lang.VirtualThread.start
+  [ 8] java.lang.VirtualThread.start
+  [ 9] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [10] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [11] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [12] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [13] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [14] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [15] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [16] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [17] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [18] java.lang.reflect.Method.invoke
+  [19] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [20] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [21] java.util.concurrent.FutureTask.run
+  [22] java.util.concurrent.Executors$RunnableAdapter.call
+  [23] java.util.concurrent.FutureTask.run
+  [24] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [25] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [26] java.lang.Thread.runWith
+  [27] java.lang.Thread.run
+
+--- 10052270 ns (0.01%), 1 sample
+  [ 0] pthread_mutex_lock@@GLIBC_2.2.5
+  [ 1] Parker::unpark
+  [ 2] Unsafe_Unpark
+  [ 3] jdk.internal.misc.Unsafe.unpark
+  [ 4] java.util.concurrent.locks.LockSupport.unpark
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler.wakeup
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler.execute
+  [ 7] io.netty.loom.scheduler.NettyScheduler.onStart
+  [ 8] java.lang.VirtualThread.start
+  [ 9] java.lang.VirtualThread.start
+  [10] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [11] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [12] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [13] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [14] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [15] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [16] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [17] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [18] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [19] java.lang.reflect.Method.invoke
+  [20] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [21] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [22] java.util.concurrent.FutureTask.run
+  [23] java.util.concurrent.Executors$RunnableAdapter.call
+  [24] java.util.concurrent.FutureTask.run
+  [25] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [26] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [27] java.lang.Thread.runWith
+  [28] java.lang.Thread.run
+
+--- 10050580 ns (0.01%), 1 sample
+  [ 0] java.util.concurrent.atomic.AtomicInteger.getAndIncrement
+  [ 1] io.netty.loom.benchmark.CacheStressBenchmark.lambda$setup$0
+  [ 2] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f127a00.newThread
+  [ 3] io.netty.loom.benchmark.CacheStressBenchmark.cacheStress
+  [ 4] io.netty.loom.benchmark.CacheStressBenchmark.custom
+  [ 5] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_thrpt_jmhStub
+  [ 6] io.netty.loom.benchmark.jmh_generated.CacheStressBenchmark_custom_jmhTest.custom_Throughput
+  [ 7] java.lang.invoke.LambdaForm$DMH.0x000000005f080c00.invokeSpecial
+  [ 8] java.lang.invoke.LambdaForm$MH.0x000000005f11d400.invoke
+  [ 9] java.lang.invoke.LambdaForm$MH.0x000000005f11d800.invokeExact_MT
+  [10] jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl
+  [11] jdk.internal.reflect.DirectMethodHandleAccessor.invoke
+  [12] java.lang.reflect.Method.invoke
+  [13] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [14] org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+  [15] java.util.concurrent.FutureTask.run
+  [16] java.util.concurrent.Executors$RunnableAdapter.call
+  [17] java.util.concurrent.FutureTask.run
+  [18] java.util.concurrent.ThreadPoolExecutor.runWorker
+  [19] java.util.concurrent.ThreadPoolExecutor$Worker.run
+  [20] java.lang.Thread.runWith
+  [21] java.lang.Thread.run
+
+--- 10020140 ns (0.01%), 1 sample
+  [ 0] irqentry_exit_[k]
+  [ 1] asm_sysvec_call_function_single_[k]
+  [ 2] jdk.internal.util.ArraysSupport.hashCode
+  [ 3] java.util.Arrays.hashCode
+  [ 4] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [ 5] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [ 6] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [ 7] jdk.internal.vm.ScopedValueContainer.run
+  [ 8] java.lang.ScopedValue$Carrier.runWith
+  [ 9] java.lang.ScopedValue$Carrier.run
+  [10] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [11] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [12] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [13] java.lang.Thread.runWith
+  [14] java.lang.VirtualThread.run
+  [15] java.lang.VirtualThread$VThreadContinuation$1.run
+  [16] jdk.internal.vm.Continuation.enter0
+  [17] jdk.internal.vm.Continuation.enter
+  [18] jdk.internal.vm.Continuation.enterSpecial
+  [19] jdk.internal.vm.Continuation.run
+  [20] java.lang.VirtualThread.runContinuation
+  [21] java.lang.VirtualThread$VThreadTask.run
+  [22] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [23] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [24] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [25] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [26] java.lang.Thread.runWith
+  [27] java.lang.Thread.run
+
+--- 10015880 ns (0.01%), 1 sample
+  [ 0] java.lang.VirtualThread.compareAndSetState
+  [ 1] java.lang.VirtualThread.runContinuation
+  [ 2] java.lang.VirtualThread$VThreadTask.run
+  [ 3] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [ 4] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 7] java.lang.Thread.runWith
+  [ 8] java.lang.Thread.run
+
+--- 10015090 ns (0.01%), 1 sample
+  [ 0] PhaseChaitin::interfere_with_live
+  [ 1] PhaseChaitin::build_ifg_physical
+  [ 2] PhaseChaitin::Register_Allocate
+  [ 3] Compile::Code_Gen
+  [ 4] Compile::Compile
+  [ 5] C2Compiler::compile_method
+  [ 6] CompileBroker::invoke_compiler_on_method
+  [ 7] CompileBroker::compiler_thread_loop
+  [ 8] JavaThread::thread_main_inner
+  [ 9] Thread::call_run
+  [10] thread_native_entry
+  [11] start_thread
+  [12] __clone3
+
+--- 10011280 ns (0.01%), 1 sample
+  [ 0] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [ 1] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [ 2] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [ 3] jdk.internal.vm.ScopedValueContainer.run
+  [ 4] java.lang.ScopedValue$Carrier.runWith
+  [ 5] java.lang.ScopedValue$Carrier.run
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [ 9] java.lang.Thread.runWith
+  [10] java.lang.VirtualThread.run
+  [11] java.lang.VirtualThread$VThreadContinuation$1.run
+  [12] jdk.internal.vm.Continuation.enter0
+  [13] jdk.internal.vm.Continuation.enter
+  [14] jdk.internal.vm.Continuation.enterSpecial
+  [15] jdk.internal.vm.Continuation.run
+  [16] java.lang.VirtualThread.runContinuation
+  [17] java.lang.VirtualThread$VThreadTask.run
+  [18] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [19] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [20] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [21] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [22] java.lang.Thread.runWith
+  [23] java.lang.Thread.run
+
+--- 10010510 ns (0.01%), 1 sample
+  [ 0] plist_add_[k]
+  [ 1] __futex_queue_[k]
+  [ 2] futex_wait_setup_[k]
+  [ 3] __futex_wait_[k]
+  [ 4] futex_wait_[k]
+  [ 5] do_futex_[k]
+  [ 6] __x64_sys_futex_[k]
+  [ 7] do_syscall_64_[k]
+  [ 8] entry_SYSCALL_64_after_hwframe_[k]
+  [ 9] __syscall_cancel_arch
+  [10] __internal_syscall_cancel
+  [11] __futex_abstimed_wait_common
+  [12] ___pthread_cond_wait
+  [13] Parker::park
+  [14] Unsafe_Park
+  [15] jdk.internal.misc.Unsafe.park
+  [16] java.util.concurrent.locks.LockSupport.park
+  [17] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [18] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [19] java.lang.Thread.runWith
+  [20] java.lang.Thread.run
+
+--- 10009580 ns (0.01%), 1 sample
+  [ 0] _raw_spin_unlock_irqrestore_[k]
+  [ 1] xhci_urb_enqueue_[k]
+  [ 2] usb_hcd_submit_urb_[k]
+  [ 3] hid_irq_in_[k]
+  [ 4] __usb_hcd_giveback_urb_[k]
+  [ 5] usb_giveback_urb_bh_[k]
+  [ 6] process_one_work_[k]
+  [ 7] bh_worker_[k]
+  [ 8] tasklet_hi_action_[k]
+  [ 9] handle_softirqs_[k]
+  [10] __irq_exit_rcu_[k]
+  [11] common_interrupt_[k]
+  [12] asm_common_interrupt_[k]
+  [13] jdk.internal.util.ArraysSupport.hashCode
+  [14] java.util.Arrays.hashCode
+  [15] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [16] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [17] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [18] jdk.internal.vm.ScopedValueContainer.run
+  [19] java.lang.ScopedValue$Carrier.runWith
+  [20] java.lang.ScopedValue$Carrier.run
+  [21] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [22] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [23] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [24] java.lang.Thread.runWith
+  [25] java.lang.VirtualThread.run
+  [26] java.lang.VirtualThread$VThreadContinuation$1.run
+  [27] jdk.internal.vm.Continuation.enter0
+  [28] jdk.internal.vm.Continuation.enter
+  [29] jdk.internal.vm.Continuation.enterSpecial
+  [30] jdk.internal.vm.Continuation.run
+  [31] java.lang.VirtualThread.runContinuation
+  [32] java.lang.VirtualThread$VThreadTask.run
+  [33] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [34] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [35] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [36] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [37] java.lang.Thread.runWith
+  [38] java.lang.Thread.run
+
+--- 10008570 ns (0.01%), 1 sample
+  [ 0] MountUnmountDisabler::end_transition
+  [ 1] OptoRuntime::vthread_end_transition_C
+  [ 2] vthread_end_transition_blob (C2 runtime)
+  [ 3] java.lang.VirtualThread.unmount
+  [ 4] java.lang.VirtualThread.runContinuation
+  [ 5] java.lang.VirtualThread$VThreadTask.run
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 9] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [10] java.lang.Thread.runWith
+  [11] java.lang.Thread.run
+
+--- 10008320 ns (0.01%), 1 sample
+  [ 0] futex_wake_mark_[k]
+  [ 1] futex_wake_[k]
+  [ 2] do_futex_[k]
+  [ 3] __x64_sys_futex_[k]
+  [ 4] do_syscall_64_[k]
+  [ 5] entry_SYSCALL_64_after_hwframe_[k]
+  [ 6] __GI___pthread_cond_signal
+  [ 7] Unsafe_Unpark
+  [ 8] jdk.internal.misc.Unsafe.unpark
+  [ 9] java.util.concurrent.locks.LockSupport.unpark
+  [10] java.util.concurrent.locks.AbstractQueuedSynchronizer.signalNext
+  [11] java.util.concurrent.locks.AbstractQueuedSynchronizer.releaseShared
+  [12] java.util.concurrent.CountDownLatch.countDown
+  [13] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [14] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [15] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [16] jdk.internal.vm.ScopedValueContainer.run
+  [17] java.lang.ScopedValue$Carrier.runWith
+  [18] java.lang.ScopedValue$Carrier.run
+  [19] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [20] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [21] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [22] java.lang.Thread.runWith
+  [23] java.lang.VirtualThread.run
+  [24] java.lang.VirtualThread$VThreadContinuation$1.run
+  [25] jdk.internal.vm.Continuation.enter0
+  [26] jdk.internal.vm.Continuation.enter
+  [27] jdk.internal.vm.Continuation.enterSpecial
+  [28] jdk.internal.vm.Continuation.run
+  [29] java.lang.VirtualThread.runContinuation
+  [30] java.lang.VirtualThread$VThreadTask.run
+  [31] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [32] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [33] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [34] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [35] java.lang.Thread.runWith
+  [36] java.lang.Thread.run
+
+--- 10005529 ns (0.01%), 1 sample
+  [ 0] handle_softirqs_[k]
+  [ 1] __irq_exit_rcu_[k]
+  [ 2] common_interrupt_[k]
+  [ 3] asm_common_interrupt_[k]
+  [ 4] jdk.internal.util.ArraysSupport.hashCode
+  [ 5] java.util.Arrays.hashCode
+  [ 6] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [ 7] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [ 8] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [ 9] jdk.internal.vm.ScopedValueContainer.run
+  [10] java.lang.ScopedValue$Carrier.runWith
+  [11] java.lang.ScopedValue$Carrier.run
+  [12] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [13] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [14] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [15] java.lang.Thread.runWith
+  [16] java.lang.VirtualThread.run
+  [17] java.lang.VirtualThread$VThreadContinuation$1.run
+  [18] jdk.internal.vm.Continuation.enter0
+  [19] jdk.internal.vm.Continuation.enter
+  [20] jdk.internal.vm.Continuation.enterSpecial
+  [21] jdk.internal.vm.Continuation.run
+  [22] java.lang.VirtualThread.runContinuation
+  [23] java.lang.VirtualThread$VThreadTask.run
+  [24] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [25] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [26] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [27] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [28] java.lang.Thread.runWith
+  [29] java.lang.Thread.run
+
+--- 10004220 ns (0.01%), 1 sample
+  [ 0] __schedule_[k]
+  [ 1] schedule_[k]
+  [ 2] futex_do_wait_[k]
+  [ 3] __futex_wait_[k]
+  [ 4] futex_wait_[k]
+  [ 5] do_futex_[k]
+  [ 6] __x64_sys_futex_[k]
+  [ 7] do_syscall_64_[k]
+  [ 8] entry_SYSCALL_64_after_hwframe_[k]
+  [ 9] __syscall_cancel_arch
+  [10] __internal_syscall_cancel
+  [11] __futex_abstimed_wait_common
+  [12] ___pthread_cond_wait
+  [13] Parker::park
+  [14] Unsafe_Park
+  [15] jdk.internal.misc.Unsafe.park
+  [16] java.util.concurrent.locks.LockSupport.park
+  [17] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [18] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [19] java.lang.Thread.runWith
+  [20] java.lang.Thread.run
+
+--- 10003890 ns (0.01%), 1 sample
+  [ 0] futex_do_wait_[k]
+  [ 1] __futex_wait_[k]
+  [ 2] futex_wait_[k]
+  [ 3] do_futex_[k]
+  [ 4] __x64_sys_futex_[k]
+  [ 5] do_syscall_64_[k]
+  [ 6] entry_SYSCALL_64_after_hwframe_[k]
+  [ 7] __syscall_cancel_arch
+  [ 8] __internal_syscall_cancel
+  [ 9] __futex_abstimed_wait_common
+  [10] ___pthread_cond_wait
+  [11] Parker::park
+  [12] Unsafe_Park
+  [13] jdk.internal.misc.Unsafe.park
+  [14] java.util.concurrent.locks.LockSupport.park
+  [15] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [16] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [17] java.lang.Thread.runWith
+  [18] java.lang.Thread.run
+
+--- 10003370 ns (0.01%), 1 sample
+  [ 0] java.lang.VirtualThread$VThreadContinuation$1.run
+  [ 1] jdk.internal.vm.Continuation.enter0
+  [ 2] jdk.internal.vm.Continuation.enter
+  [ 3] jdk.internal.vm.Continuation.enterSpecial
+  [ 4] jdk.internal.vm.Continuation.run
+  [ 5] java.lang.VirtualThread.runContinuation
+  [ 6] java.lang.VirtualThread$VThreadTask.run
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [ 9] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [10] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [11] java.lang.Thread.runWith
+  [12] java.lang.Thread.run
+
+--- 10003270 ns (0.01%), 1 sample
+  [ 0] io.netty.loom.scheduler.EventLoopScheduler.runPinnedContinuation
+  [ 1] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 2] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 3] java.lang.Thread.runWith
+  [ 4] java.lang.Thread.run
+
+--- 10003100 ns (0.01%), 1 sample
+  [ 0] MountUnmountDisabler::start_transition
+  [ 1] OptoRuntime::vthread_start_final_transition_C
+  [ 2] vthread_start_final_transition_blob (C2 runtime)
+  [ 3] java.lang.VirtualThread$VThreadContinuation$1.run
+  [ 4] jdk.internal.vm.Continuation.enter0
+  [ 5] jdk.internal.vm.Continuation.enter
+  [ 6] jdk.internal.vm.Continuation.enterSpecial
+  [ 7] jdk.internal.vm.Continuation.run
+  [ 8] java.lang.VirtualThread.runContinuation
+  [ 9] java.lang.VirtualThread$VThreadTask.run
+  [10] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [11] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [12] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [13] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [14] java.lang.Thread.runWith
+  [15] java.lang.Thread.run
+
+--- 10002620 ns (0.01%), 1 sample
+  [ 0] java.lang.System$1.setScopedValueCache
+  [ 1] jdk.internal.vm.Continuation.run
+  [ 2] java.lang.VirtualThread.runContinuation
+  [ 3] java.lang.VirtualThread$VThreadTask.run
+  [ 4] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 8] java.lang.Thread.runWith
+  [ 9] java.lang.Thread.run
+
+--- 10002510 ns (0.01%), 1 sample
+  [ 0] Unsafe_Park
+  [ 1] jdk.internal.misc.Unsafe.park
+  [ 2] java.util.concurrent.locks.LockSupport.park
+  [ 3] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 4] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 5] java.lang.Thread.runWith
+  [ 6] java.lang.Thread.run
+
+--- 10002160 ns (0.01%), 1 sample
+  [ 0] do_syscall_64_[k]
+  [ 1] entry_SYSCALL_64_after_hwframe_[k]
+  [ 2] __GI___pthread_cond_signal
+  [ 3] Unsafe_Unpark
+  [ 4] jdk.internal.misc.Unsafe.unpark
+  [ 5] java.util.concurrent.locks.LockSupport.unpark
+  [ 6] java.util.concurrent.locks.AbstractQueuedSynchronizer.signalNext
+  [ 7] java.util.concurrent.locks.AbstractQueuedSynchronizer.releaseShared
+  [ 8] java.util.concurrent.CountDownLatch.countDown
+  [ 9] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [10] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [11] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [12] jdk.internal.vm.ScopedValueContainer.run
+  [13] java.lang.ScopedValue$Carrier.runWith
+  [14] java.lang.ScopedValue$Carrier.run
+  [15] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [16] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [17] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [18] java.lang.Thread.runWith
+  [19] java.lang.VirtualThread.run
+  [20] java.lang.VirtualThread$VThreadContinuation$1.run
+  [21] jdk.internal.vm.Continuation.enter0
+  [22] jdk.internal.vm.Continuation.enter
+  [23] jdk.internal.vm.Continuation.enterSpecial
+  [24] jdk.internal.vm.Continuation.run
+  [25] java.lang.VirtualThread.runContinuation
+  [26] java.lang.VirtualThread$VThreadTask.run
+  [27] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [28] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [29] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [30] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [31] java.lang.Thread.runWith
+  [32] java.lang.Thread.run
+
+--- 10001080 ns (0.01%), 1 sample
+  [ 0] io.netty.loom.scheduler.EventLoopScheduler.canParkScheduler
+  [ 1] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 2] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 3] java.lang.Thread.runWith
+  [ 4] java.lang.Thread.run
+
+--- 10000940 ns (0.01%), 1 sample
+  [ 0] java.lang.Thread.scopedValueBindings
+  [ 1] java.lang.VirtualThread.run
+  [ 2] java.lang.VirtualThread$VThreadContinuation$1.run
+  [ 3] jdk.internal.vm.Continuation.enter0
+  [ 4] jdk.internal.vm.Continuation.enter
+  [ 5] jdk.internal.vm.Continuation.enterSpecial
+  [ 6] jdk.internal.vm.Continuation.run
+  [ 7] java.lang.VirtualThread.runContinuation
+  [ 8] java.lang.VirtualThread$VThreadTask.run
+  [ 9] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [10] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [11] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [12] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [13] java.lang.Thread.runWith
+  [14] java.lang.Thread.run
+
+--- 10000380 ns (0.01%), 1 sample
+  [ 0] java.util.concurrent.CountDownLatch.countDown
+  [ 1] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [ 2] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [ 3] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [ 4] jdk.internal.vm.ScopedValueContainer.run
+  [ 5] java.lang.ScopedValue$Carrier.runWith
+  [ 6] java.lang.ScopedValue$Carrier.run
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [ 9] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [10] java.lang.Thread.runWith
+  [11] java.lang.VirtualThread.run
+  [12] java.lang.VirtualThread$VThreadContinuation$1.run
+  [13] jdk.internal.vm.Continuation.enter0
+  [14] jdk.internal.vm.Continuation.enter
+  [15] jdk.internal.vm.Continuation.enterSpecial
+  [16] jdk.internal.vm.Continuation.run
+  [17] java.lang.VirtualThread.runContinuation
+  [18] java.lang.VirtualThread$VThreadTask.run
+  [19] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [20] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [21] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [22] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [23] java.lang.Thread.runWith
+  [24] java.lang.Thread.run
+
+--- 9999990 ns (0.01%), 1 sample
+  [ 0] pthread_mutex_lock@@GLIBC_2.2.5
+  [ 1] Parker::unpark
+  [ 2] Unsafe_Unpark
+  [ 3] jdk.internal.misc.Unsafe.unpark
+  [ 4] java.util.concurrent.locks.LockSupport.unpark
+  [ 5] java.util.concurrent.locks.AbstractQueuedSynchronizer.signalNext
+  [ 6] java.util.concurrent.locks.AbstractQueuedSynchronizer.releaseShared
+  [ 7] java.util.concurrent.CountDownLatch.countDown
+  [ 8] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [ 9] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [10] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [11] jdk.internal.vm.ScopedValueContainer.run
+  [12] java.lang.ScopedValue$Carrier.runWith
+  [13] java.lang.ScopedValue$Carrier.run
+  [14] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [15] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [16] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [17] java.lang.Thread.runWith
+  [18] java.lang.VirtualThread.run
+  [19] java.lang.VirtualThread$VThreadContinuation$1.run
+  [20] jdk.internal.vm.Continuation.enter0
+  [21] jdk.internal.vm.Continuation.enter
+  [22] jdk.internal.vm.Continuation.enterSpecial
+  [23] jdk.internal.vm.Continuation.run
+  [24] java.lang.VirtualThread.runContinuation
+  [25] java.lang.VirtualThread$VThreadTask.run
+  [26] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [27] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [28] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [29] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [30] java.lang.Thread.runWith
+  [31] java.lang.Thread.run
+
+--- 9999930 ns (0.01%), 1 sample
+  [ 0] java.util.concurrent.atomic.AtomicLong.getAndAdd
+  [ 1] java.util.concurrent.ThreadLocalRandom.nextSecondarySeed
+  [ 2] java.util.concurrent.ThreadLocalRandom$Access$1.nextSecondaryThreadLocalRandomSeed
+  [ 3] java.lang.ScopedValue$Cache.chooseVictim
+  [ 4] java.lang.ScopedValue$Cache.put
+  [ 5] java.lang.ScopedValue.findBinding
+  [ 6] java.lang.ScopedValue.orElse
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler.currentThreadSchedulerContext
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler.currentRunningScheduler
+  [ 9] io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+  [10] io.netty.loom.benchmark.CacheStressBenchmark$$Lambda.0x000000005f12c210.run
+  [11] jdk.internal.vm.ScopedValueContainer.runWithoutScope
+  [12] jdk.internal.vm.ScopedValueContainer.run
+  [13] java.lang.ScopedValue$Carrier.runWith
+  [14] java.lang.ScopedValue$Carrier.run
+  [15] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [16] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [17] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [18] java.lang.Thread.runWith
+  [19] java.lang.VirtualThread.run
+  [20] java.lang.VirtualThread$VThreadContinuation$1.run
+  [21] jdk.internal.vm.Continuation.enter0
+  [22] jdk.internal.vm.Continuation.enter
+  [23] jdk.internal.vm.Continuation.enterSpecial
+  [24] jdk.internal.vm.Continuation.run
+  [25] java.lang.VirtualThread.runContinuation
+  [26] java.lang.VirtualThread$VThreadTask.run
+  [27] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [28] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [29] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [30] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [31] java.lang.Thread.runWith
+  [32] java.lang.Thread.run
+
+--- 9999630 ns (0.01%), 1 sample
+  [ 0] java.lang.ScopedValue$Snapshot.<init>
+  [ 1] java.lang.ScopedValue$Carrier.run
+  [ 2] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [ 3] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [ 4] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [ 5] java.lang.Thread.runWith
+  [ 6] java.lang.VirtualThread.run
+  [ 7] java.lang.VirtualThread$VThreadContinuation$1.run
+  [ 8] jdk.internal.vm.Continuation.enter0
+  [ 9] jdk.internal.vm.Continuation.enter
+  [10] jdk.internal.vm.Continuation.enterSpecial
+  [11] jdk.internal.vm.Continuation.run
+  [12] java.lang.VirtualThread.runContinuation
+  [13] java.lang.VirtualThread$VThreadTask.run
+  [14] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [15] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [16] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [17] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [18] java.lang.Thread.runWith
+  [19] java.lang.Thread.run
+
+--- 9999490 ns (0.01%), 1 sample
+  [ 0] AccessInternal::PostRuntimeDispatch<G1BarrierSet::AccessBarrier<548964ul, G1BarrierSet>, (AccessInternal::BarrierType)2, 548964ul>::oop_access_barrier
+  [ 1] MountUnmountDisabler::start_transition
+  [ 2] OptoRuntime::vthread_start_final_transition_C
+  [ 3] vthread_start_final_transition_blob (C2 runtime)
+  [ 4] java.lang.VirtualThread$VThreadContinuation$1.run
+  [ 5] jdk.internal.vm.Continuation.enter0
+  [ 6] jdk.internal.vm.Continuation.enter
+  [ 7] jdk.internal.vm.Continuation.enterSpecial
+  [ 8] jdk.internal.vm.Continuation.run
+  [ 9] java.lang.VirtualThread.runContinuation
+  [10] java.lang.VirtualThread$VThreadTask.run
+  [11] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [12] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [13] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [14] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [15] java.lang.Thread.runWith
+  [16] java.lang.Thread.run
+
+--- 9999490 ns (0.01%), 1 sample
+  [ 0] java.lang.ScopedValue.scopedValueCache
+  [ 1] java.lang.ScopedValue$Cache.invalidate
+  [ 2] java.lang.ScopedValue$Carrier.runWith
+  [ 3] java.lang.ScopedValue$Carrier.run
+  [ 4] io.netty.loom.scheduler.EventLoopScheduler.runWithContext
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$1
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f12c440.run
+  [ 7] java.lang.Thread.runWith
+  [ 8] java.lang.VirtualThread.run
+  [ 9] java.lang.VirtualThread$VThreadContinuation$1.run
+  [10] jdk.internal.vm.Continuation.enter0
+  [11] jdk.internal.vm.Continuation.enter
+  [12] jdk.internal.vm.Continuation.enterSpecial
+  [13] jdk.internal.vm.Continuation.run
+  [14] java.lang.VirtualThread.runContinuation
+  [15] java.lang.VirtualThread$VThreadTask.run
+  [16] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [17] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [18] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [19] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [20] java.lang.Thread.runWith
+  [21] java.lang.Thread.run
+
+--- 9998640 ns (0.01%), 1 sample
+  [ 0] java.lang.System$1.currentCarrierThread
+  [ 1] jdk.internal.vm.Continuation.currentCarrierThread
+  [ 2] jdk.internal.vm.Continuation.run
+  [ 3] java.lang.VirtualThread.runContinuation
+  [ 4] java.lang.VirtualThread$VThreadTask.run
+  [ 5] io.netty.loom.scheduler.EventLoopScheduler.runContinuation
+  [ 6] io.netty.loom.scheduler.EventLoopScheduler.drainContinuations
+  [ 7] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 8] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 9] java.lang.Thread.runWith
+  [10] java.lang.Thread.run
+
+--- 9994710 ns (0.01%), 1 sample
+  [ 0] jdk.internal.misc.Unsafe.park
+  [ 1] java.util.concurrent.locks.LockSupport.park
+  [ 2] io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+  [ 3] io.netty.loom.scheduler.EventLoopScheduler$$Lambda.0x000000005f127130.run
+  [ 4] java.lang.Thread.runWith
+  [ 5] java.lang.Thread.run
+
+          ns  percent  samples  top
+  ----------  -------  -------  ---
+ 98662509481   99.01%     9864  jdk.internal.util.ArraysSupport.hashCode
+   360001060    0.36%       36  io.netty.loom.scheduler.EventLoopScheduler.virtualThreadSchedulerLoop
+    40240980    0.04%        4  _raw_spin_unlock_irqrestore_[k]
+    40044970    0.04%        4  do_syscall_64_[k]
+    40014100    0.04%        4  AccessInternal::PostRuntimeDispatch<G1BarrierSet::AccessBarrier<548964ul, G1BarrierSet>, (AccessInternal::BarrierType)0, 548964ul>::oop_access_barrier
+    30017400    0.03%        3  io.netty.loom.benchmark.CacheStressBenchmark.lambda$cacheStress$0
+    30001720    0.03%        3  java.lang.VirtualThread.runContinuation
+    20078640    0.02%        2  Unsafe_Park
+    20069640    0.02%        2  futex_wake_mark_[k]
+    20052260    0.02%        2  pthread_mutex_lock@@GLIBC_2.2.5
+    20007560    0.02%        2  jdk.jfr.EventType.isEnabled
+    20005170    0.02%        2  JavaThread::rebind_to_jvmti_thread_state_of
+    20004830    0.02%        2  oopDesc::address_field
+    19999660    0.02%        2  java.util.concurrent.locks.AbstractQueuedSynchronizer.compareAndSetState
+    19997690    0.02%        2  java.lang.invoke.VarHandleLongs$FieldInstanceReadWrite.weakCompareAndSetRelease
+    10089340    0.01%        1  wake_q_add_safe_[k]
+    10084070    0.01%        1  __GI___pthread_mutex_unlock_usercnt
+    10069680    0.01%        1  io.netty.loom.scheduler.EventLoopScheduler.lambda$newVThreadFactory$0
+    10068770    0.01%        1  java.lang.Thread$ThreadIdentifiers.next
+    10066840    0.01%        1  __rcu_read_lock_[k]
+    10063010    0.01%        1  java.lang.Thread.<init>
+    10054930    0.01%        1  java_lang_Thread::thread_acquire
+    10050580    0.01%        1  java.util.concurrent.atomic.AtomicInteger.getAndIncrement
+    10020140    0.01%        1  irqentry_exit_[k]
+    10015880    0.01%        1  java.lang.VirtualThread.compareAndSetState
+    10015090    0.01%        1  PhaseChaitin::interfere_with_live
+    10010510    0.01%        1  plist_add_[k]
+    10008570    0.01%        1  MountUnmountDisabler::end_transition
+    10005529    0.01%        1  handle_softirqs_[k]
+    10004220    0.01%        1  __schedule_[k]
+    10003890    0.01%        1  futex_do_wait_[k]
+    10003370    0.01%        1  java.lang.VirtualThread$VThreadContinuation$1.run
+    10003270    0.01%        1  io.netty.loom.scheduler.EventLoopScheduler.runPinnedContinuation
+    10003100    0.01%        1  MountUnmountDisabler::start_transition
+    10002620    0.01%        1  java.lang.System$1.setScopedValueCache
+    10001080    0.01%        1  io.netty.loom.scheduler.EventLoopScheduler.canParkScheduler
+    10000940    0.01%        1  java.lang.Thread.scopedValueBindings
+    10000380    0.01%        1  java.util.concurrent.CountDownLatch.countDown
+     9999930    0.01%        1  java.util.concurrent.atomic.AtomicLong.getAndAdd
+     9999630    0.01%        1  java.lang.ScopedValue$Snapshot.<init>
+     9999490    0.01%        1  java.lang.ScopedValue.scopedValueCache
+     9999490    0.01%        1  AccessInternal::PostRuntimeDispatch<G1BarrierSet::AccessBarrier<548964ul, G1BarrierSet>, (AccessInternal::BarrierType)2, 548964ul>::oop_access_barrier
+     9998640    0.01%        1  java.lang.System$1.currentCarrierThread
+     9994710    0.01%        1  jdk.internal.misc.Unsafe.park

@@ -88,8 +88,6 @@ public class HandoffHttpServer {
 		NON_VIRTUAL_NETTY, REACTIVE, VIRTUAL_NETTY, NETTY_SCHEDULER
 	}
 
-	private static final String VT_MODE = System.getProperty("io.netty.loom.benchmark.vtmode", "longlived");
-
 	private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 	private static final ByteBuf HEALTH_RESPONSE = Unpooled
 			.unreleasableBuffer(Unpooled.copiedBuffer("OK", CharsetUtil.UTF_8));
@@ -178,16 +176,12 @@ public class HandoffHttpServer {
 				switch (io) {
 					case NIO -> {
 						var nioGroup = new VirtualIoNioPollerEventLoopGroup(ioHandlerFactory);
-						threadFactorySupplier = VT_MODE.equals("balanced")
-								? nioGroup::balancedThreadFactory
-								: nioGroup::vThreadFactory;
+						threadFactorySupplier = nioGroup::vThreadFactory;
 						workerGroup = nioGroup;
 					}
 					case EPOLL, IO_URING -> {
 						var nativeGroup = new VirtualIoNativePollerEventLoopGroup(ioHandlerFactory);
-						threadFactorySupplier = VT_MODE.equals("balanced")
-								? nativeGroup::balancedThreadFactory
-								: nativeGroup::vThreadFactory;
+						threadFactorySupplier = nativeGroup::vThreadFactory;
 						workerGroup = nativeGroup;
 					}
 				}
@@ -254,7 +248,7 @@ public class HandoffHttpServer {
 			serverChannel.close();
 		}
 		if (workerGroup != null) {
-			workerGroup.shutdownGracefully();
+			workerGroup.shutdownGracefully(0, 0, java.util.concurrent.TimeUnit.SECONDS).syncUninterruptibly();
 		}
 		if (!silent) {
 			System.out.println("Server stopped");
@@ -305,13 +299,15 @@ public class HandoffHttpServer {
 			}
 
 			if (uri.equals("/") || uri.startsWith("/fruits")) {
-				Runnable work = mockless
-						? () -> doMocklessProcessing(ctx, eventLoop, keepAlive)
-						: () -> doBlockingProcessing(ctx, eventLoop, keepAlive);
-				if (VT_MODE.equals("longlived")) {
-					orderedExecutorService.execute(work);
+				// Hand off to virtual thread for processing
+				if (mockless) {
+					orderedExecutorService.execute(() -> {
+						doMocklessProcessing(ctx, eventLoop, keepAlive);
+					});
 				} else {
-					threadFactorySupplier.get().newThread(work).start();
+					orderedExecutorService.execute(() -> {
+						doBlockingProcessing(ctx, eventLoop, keepAlive);
+					});
 				}
 				return;
 			}

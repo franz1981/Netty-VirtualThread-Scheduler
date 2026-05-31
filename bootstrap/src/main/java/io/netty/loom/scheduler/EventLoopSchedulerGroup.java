@@ -14,6 +14,10 @@
  */
 package io.netty.loom.scheduler;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.ServiceLoader;
+
 /**
  * Global pool of carrier threads, each running an {@link EventLoopScheduler}.
  * Created eagerly by {@link NettyScheduler} at JVM startup and never shut down.
@@ -30,6 +34,8 @@ public class EventLoopSchedulerGroup {
 			.getInteger("io.netty.loom.resumed.continuations", 1024);
 
 	private final EventLoopScheduler[] schedulers;
+	private final EventLoopScheduler[][] clusters;
+	private final ClusterState[] clusterStates;
 
 	EventLoopSchedulerGroup(NettyScheduler scheduler) {
 		this(DEFAULT_SIZE, scheduler);
@@ -39,24 +45,84 @@ public class EventLoopSchedulerGroup {
 		if (size <= 0) {
 			throw new IllegalArgumentException("size must be > 0");
 		}
+		var topology = loadTopology();
 		var carrierThreadFactory = Thread.ofPlatform().daemon(true).factory();
 		schedulers = new EventLoopScheduler[size];
 		for (int i = 0; i < size; i++) {
+			final int idx = i;
+			Runnable onStart = (topology != null) ? () -> {
+				topology.bindCarrier(idx, size, Thread.currentThread());
+				Thread.currentThread()
+						.setName("carrier-" + idx + "-cluster" + topology.cluster(idx) + "-core" + topology.core(idx));
+			} : null;
 			schedulers[i] = new EventLoopScheduler(i, carrierThreadFactory, RESUMED_CONTINUATIONS_EXPECTED_COUNT,
-					scheduler);
+					scheduler, onStart);
 		}
-		if (EventLoopScheduler.WORK_STEALING_ENABLED && size > 1) {
+		if (topology != null) {
+			var clusterMap = new LinkedHashMap<Integer, ArrayList<EventLoopScheduler>>();
 			for (int i = 0; i < size; i++) {
-				var siblings = new EventLoopScheduler[size - 1];
-				int idx = 0;
-				for (int j = 0; j < size; j++) {
-					if (j != i) {
-						siblings[idx++] = schedulers[j];
-					}
+				clusterMap.computeIfAbsent(topology.cluster(i), k -> new ArrayList<>()).add(schedulers[i]);
+			}
+			clusters = clusterMap.values().stream().map(l -> l.toArray(new EventLoopScheduler[0]))
+					.toArray(EventLoopScheduler[][]::new);
+		} else {
+			clusters = new EventLoopScheduler[][]{schedulers.clone()};
+		}
+
+		var scope = topology != null ? topology.stealScope() : CarrierTopology.StealScope.GLOBAL;
+		if (scope == CarrierTopology.StealScope.GLOBAL) {
+			var global = new ClusterState(schedulers);
+			this.clusterStates = new ClusterState[]{global};
+			for (int i = 0; i < size; i++) {
+				schedulers[i].clusterState = global;
+			}
+		} else {
+			this.clusterStates = new ClusterState[clusters.length];
+			for (int c = 0; c < clusters.length; c++) {
+				clusterStates[c] = new ClusterState(clusters[c]);
+				for (var carrier : clusters[c]) {
+					carrier.clusterState = clusterStates[c];
 				}
-				schedulers[i].setSiblings(siblings);
 			}
 		}
+		for (int i = 0; i < size; i++) {
+			schedulers[i].group = this;
+		}
+
+		if (EventLoopScheduler.WORK_STEALING_ENABLED && size > 1) {
+			for (int i = 0; i < size; i++) {
+				var allowed = new ArrayList<EventLoopScheduler>();
+				for (int j = 0; j < size; j++) {
+					if (j != i && isAllowedPeer(i, j, scope, topology)) {
+						allowed.add(schedulers[j]);
+					}
+				}
+				if (!allowed.isEmpty()) {
+					schedulers[i].setSiblings(allowed.toArray(new EventLoopScheduler[0]));
+				}
+			}
+		}
+	}
+
+	private static boolean isAllowedPeer(int self, int other, CarrierTopology.StealScope scope,
+			CarrierTopology topology) {
+		return switch (scope) {
+			case GLOBAL -> true;
+			case CLUSTER_LOCAL -> topology.cluster(self) == topology.cluster(other);
+			case SMT_LOCAL -> topology.core(self) == topology.core(other);
+		};
+	}
+
+	private static CarrierTopology loadTopology() {
+		String className = System.getProperty("io.netty.loom.topology");
+		if (className != null) {
+			try {
+				return (CarrierTopology) Class.forName(className).getDeclaredConstructor().newInstance();
+			} catch (Exception e) {
+				throw new RuntimeException("Failed to load carrier topology: " + className, e);
+			}
+		}
+		return ServiceLoader.load(CarrierTopology.class).findFirst().orElse(null);
 	}
 
 	/**
@@ -74,6 +140,68 @@ public class EventLoopSchedulerGroup {
 	/** Returns the scheduler for the carrier at the given index. */
 	public EventLoopScheduler scheduler(int index) {
 		return schedulers[index];
+	}
+
+	/** Returns the number of clusters. */
+	public int clusterCount() {
+		return clusters.length;
+	}
+
+	/** Returns the schedulers in the given cluster. */
+	public EventLoopScheduler[] cluster(int clusterIndex) {
+		return clusters[clusterIndex];
+	}
+
+	/**
+	 * Returns any idle carrier's ID, or -1 if none are idle.
+	 */
+	public int idleCarrierId() {
+		for (var cs : clusterStates) {
+			int idle = cs.findIdle();
+			if (idle >= 0) {
+				return idle;
+			}
+		}
+		return -1;
+	}
+
+	/**
+	 * Returns a thread factory for external submissions. Sticks to a carrier —
+	 * concentrating bursts like FJP's per-thread probe. Prefers the current cluster
+	 * when re-targeting.
+	 */
+	public java.util.concurrent.ThreadFactory virtualThreadFactory() {
+		var current = new int[]{-1};
+		return runnable -> {
+			int idx = current[0];
+			if (idx >= 0 && !schedulers[idx].clusterState.idleTracker().isIdle(idx)) {
+				return schedulers[idx].virtualThreadFactory().newThread(runnable);
+			}
+			int idle = findIdlePreferCluster(idx);
+			if (idle >= 0) {
+				idx = idle;
+			} else if (idx < 0) {
+				idx = 0;
+			}
+			current[0] = idx;
+			return schedulers[idx].virtualThreadFactory().newThread(runnable);
+		};
+	}
+
+	private int findIdlePreferCluster(int currentIdx) {
+		if (currentIdx >= 0) {
+			int idle = schedulers[currentIdx].clusterState.findIdle();
+			if (idle >= 0) {
+				return idle;
+			}
+		}
+		for (var cs : clusterStates) {
+			int idle = cs.findIdle();
+			if (idle >= 0) {
+				return idle;
+			}
+		}
+		return -1;
 	}
 
 	/**

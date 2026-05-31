@@ -21,6 +21,7 @@ import io.netty.loom.scheduler.EventLoopSchedulerGroup;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Lightweight event loop group for loom-friendly transports (NIO). Each event
@@ -58,6 +59,16 @@ public class VirtualIoEventLoopGroup extends MultiThreadIoEventLoopGroup {
 	 */
 	public VirtualIoEventLoopGroup(int nThreads, IoHandlerFactory factory, ThreadFactory threadFactory) {
 		super(nThreads, (Executor) null, factory, threadFactory);
+	}
+
+	@Override
+	public void close() {
+		try {
+			shutdownGracefully(0, 0, TimeUnit.SECONDS).get();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		} catch (Throwable _) {
+		}
 	}
 
 	@Override

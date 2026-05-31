@@ -1,0 +1,361 @@
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# JMH version: 1.37
+# VM version: JDK 27-internal, OpenJDK 64-Bit Server VM, 27-internal-adhoc.forkedfranz.loom
+# VM invoker: /home/forked_franz/CLionProjects/loom/build/linux-x86_64-server-release/jdk/bin/java
+# VM options: --enable-preview --add-opens=java.base/java.lang=ALL-UNNAMED --enable-native-access=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UseNUMA -Xms1g -Xmx1g -XX:+AlwaysPreTouch -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: io.netty.loom.benchmark.CacheStressBenchmark.custom
+# Parameters: (multiplier = 1, numTasks = 8)
+
+# Run progress: 0.00% complete, ETA 00:06:00
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+59.510 ops/s
+# Warmup Iteration   2: 72.844 ops/s
+# Warmup Iteration   3: 64.774 ops/s
+# Warmup Iteration   4: 237.212 ops/s
+# Warmup Iteration   5: 553.736 ops/s
+Iteration   1: 516.786 ops/s
+Iteration   2: 548.673 ops/s
+Iteration   3: 508.137 ops/s
+Iteration   4: 492.328 ops/s
+Iteration   5: 540.090 ops/s
+
+# Run progress: 8.33% complete, ETA 00:05:36
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+66.539 ops/s
+# Warmup Iteration   2: 71.604 ops/s
+# Warmup Iteration   3: 67.429 ops/s
+# Warmup Iteration   4: 366.285 ops/s
+# Warmup Iteration   5: 511.888 ops/s
+Iteration   1: 501.357 ops/s
+Iteration   2: 515.253 ops/s
+Iteration   3: 528.047 ops/s
+Iteration   4: 505.985 ops/s
+Iteration   5: 513.337 ops/s
+
+
+Result "io.netty.loom.benchmark.CacheStressBenchmark.custom":
+  516.999 ±(99.9%) 26.323 ops/s [Average]
+  (min, avg, max) = (492.328, 516.999, 548.673), stdev = 17.411
+  CI (99.9%): [490.677, 543.322] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 27-internal, OpenJDK 64-Bit Server VM, 27-internal-adhoc.forkedfranz.loom
+# VM invoker: /home/forked_franz/CLionProjects/loom/build/linux-x86_64-server-release/jdk/bin/java
+# VM options: --enable-preview --add-opens=java.base/java.lang=ALL-UNNAMED --enable-native-access=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UseNUMA -Xms1g -Xmx1g -XX:+AlwaysPreTouch -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: io.netty.loom.benchmark.CacheStressBenchmark.customPin
+# Parameters: (multiplier = 1, numTasks = 8)
+
+# Run progress: 16.67% complete, ETA 00:05:05
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+77.983 ops/s
+# Warmup Iteration   2: 82.013 ops/s
+# Warmup Iteration   3: 125.233 ops/s
+# Warmup Iteration   4: 545.494 ops/s
+# Warmup Iteration   5: 583.526 ops/s
+Iteration   1: 624.365 ops/s
+Iteration   2: 617.760 ops/s
+Iteration   3: 620.317 ops/s
+Iteration   4: 635.276 ops/s
+Iteration   5: 598.325 ops/s
+
+# Run progress: 25.00% complete, ETA 00:04:34
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+76.729 ops/s
+# Warmup Iteration   2: 81.508 ops/s
+# Warmup Iteration   3: 100.650 ops/s
+# Warmup Iteration   4: 573.246 ops/s
+# Warmup Iteration   5: 612.337 ops/s
+Iteration   1: 630.877 ops/s
+Iteration   2: 579.683 ops/s
+Iteration   3: 580.834 ops/s
+Iteration   4: 618.236 ops/s
+Iteration   5: 596.375 ops/s
+
+
+Result "io.netty.loom.benchmark.CacheStressBenchmark.customPin":
+  610.205 ±(99.9%) 30.266 ops/s [Average]
+  (min, avg, max) = (579.683, 610.205, 635.276), stdev = 20.019
+  CI (99.9%): [579.939, 640.471] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 27-internal, OpenJDK 64-Bit Server VM, 27-internal-adhoc.forkedfranz.loom
+# VM invoker: /home/forked_franz/CLionProjects/loom/build/linux-x86_64-server-release/jdk/bin/java
+# VM options: --enable-preview --add-opens=java.base/java.lang=ALL-UNNAMED --enable-native-access=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UseNUMA -Xms1g -Xmx1g -XX:+AlwaysPreTouch -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology -Dio.netty.loom.workstealing.enabled=true -Dio.netty.loom.workstealing.unresponsive.ms=0
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: io.netty.loom.benchmark.CacheStressBenchmark.customPinWs
+# Parameters: (multiplier = 1, numTasks = 8)
+
+# Run progress: 33.33% complete, ETA 00:04:04
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+78.022 ops/s
+# Warmup Iteration   2: 82.472 ops/s
+# Warmup Iteration   3: 113.560 ops/s
+# Warmup Iteration   4: 598.846 ops/s
+# Warmup Iteration   5: 538.207 ops/s
+Iteration   1: 587.200 ops/s
+Iteration   2: 600.717 ops/s
+Iteration   3: 591.281 ops/s
+Iteration   4: 592.849 ops/s
+Iteration   5: 540.924 ops/s
+
+# Run progress: 41.67% complete, ETA 00:03:33
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+78.497 ops/s
+# Warmup Iteration   2: 81.710 ops/s
+# Warmup Iteration   3: 110.935 ops/s
+# Warmup Iteration   4: 601.388 ops/s
+# Warmup Iteration   5: 586.551 ops/s
+Iteration   1: 620.758 ops/s
+Iteration   2: 590.712 ops/s
+Iteration   3: 616.342 ops/s
+Iteration   4: 612.384 ops/s
+Iteration   5: 594.904 ops/s
+
+
+Result "io.netty.loom.benchmark.CacheStressBenchmark.customPinWs":
+  594.807 ±(99.9%) 33.714 ops/s [Average]
+  (min, avg, max) = (540.924, 594.807, 620.758), stdev = 22.299
+  CI (99.9%): [561.093, 628.521] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 27-internal, OpenJDK 64-Bit Server VM, 27-internal-adhoc.forkedfranz.loom
+# VM invoker: /home/forked_franz/CLionProjects/loom/build/linux-x86_64-server-release/jdk/bin/java
+# VM options: --enable-preview --add-opens=java.base/java.lang=ALL-UNNAMED --enable-native-access=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UseNUMA -Xms1g -Xmx1g -XX:+AlwaysPreTouch -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology -Dio.netty.loom.workstealing.enabled=true -Dio.netty.loom.workstealing.unresponsive.ms=0 -Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: io.netty.loom.benchmark.CacheStressBenchmark.customPinWsCluster
+# Parameters: (multiplier = 1, numTasks = 8)
+
+# Run progress: 50.00% complete, ETA 00:03:03
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+78.224 ops/s
+# Warmup Iteration   2: 81.524 ops/s
+# Warmup Iteration   3: 103.308 ops/s
+# Warmup Iteration   4: 594.621 ops/s
+# Warmup Iteration   5: 575.540 ops/s
+Iteration   1: 612.889 ops/s
+Iteration   2: 610.160 ops/s
+Iteration   3: 611.114 ops/s
+Iteration   4: 599.159 ops/s
+Iteration   5: 614.392 ops/s
+
+# Run progress: 58.33% complete, ETA 00:02:32
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+77.660 ops/s
+# Warmup Iteration   2: 82.428 ops/s
+# Warmup Iteration   3: 149.600 ops/s
+# Warmup Iteration   4: 570.522 ops/s
+# Warmup Iteration   5: 617.645 ops/s
+Iteration   1: 618.977 ops/s
+Iteration   2: 616.195 ops/s
+Iteration   3: 614.227 ops/s
+Iteration   4: 595.026 ops/s
+Iteration   5: 617.514 ops/s
+
+
+Result "io.netty.loom.benchmark.CacheStressBenchmark.customPinWsCluster":
+  610.965 ±(99.9%) 11.868 ops/s [Average]
+  (min, avg, max) = (595.026, 610.965, 618.977), stdev = 7.850
+  CI (99.9%): [599.097, 622.833] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 27-internal, OpenJDK 64-Bit Server VM, 27-internal-adhoc.forkedfranz.loom
+# VM invoker: /home/forked_franz/CLionProjects/loom/build/linux-x86_64-server-release/jdk/bin/java
+# VM options: --enable-preview --add-opens=java.base/java.lang=ALL-UNNAMED --enable-native-access=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UseNUMA -Xms1g -Xmx1g -XX:+AlwaysPreTouch -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Dio.netty.loom.workstealing.enabled=true -Dio.netty.loom.workstealing.unresponsive.ms=0
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: io.netty.loom.benchmark.CacheStressBenchmark.customWs
+# Parameters: (multiplier = 1, numTasks = 8)
+
+# Run progress: 66.67% complete, ETA 00:02:02
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+68.187 ops/s
+# Warmup Iteration   2: 68.762 ops/s
+# Warmup Iteration   3: 72.524 ops/s
+# Warmup Iteration   4: 393.802 ops/s
+# Warmup Iteration   5: 601.168 ops/s
+Iteration   1: 560.062 ops/s
+Iteration   2: 584.177 ops/s
+Iteration   3: 553.503 ops/s
+Iteration   4: 546.098 ops/s
+Iteration   5: 575.412 ops/s
+
+# Run progress: 75.00% complete, ETA 00:01:31
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=custom(4 carriers) L3=32768KB array=32768KB tasks=8
+65.734 ops/s
+# Warmup Iteration   2: 73.247 ops/s
+# Warmup Iteration   3: 76.522 ops/s
+# Warmup Iteration   4: 431.631 ops/s
+# Warmup Iteration   5: 579.701 ops/s
+Iteration   1: 548.108 ops/s
+Iteration   2: 549.607 ops/s
+Iteration   3: 527.966 ops/s
+Iteration   4: 546.234 ops/s
+Iteration   5: 535.407 ops/s
+
+
+Result "io.netty.loom.benchmark.CacheStressBenchmark.customWs":
+  552.657 ±(99.9%) 25.639 ops/s [Average]
+  (min, avg, max) = (527.966, 552.657, 584.177), stdev = 16.959
+  CI (99.9%): [527.019, 578.296] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 27-internal, OpenJDK 64-Bit Server VM, 27-internal-adhoc.forkedfranz.loom
+# VM invoker: /home/forked_franz/CLionProjects/loom/build/linux-x86_64-server-release/jdk/bin/java
+# VM options: --enable-preview --add-opens=java.base/java.lang=ALL-UNNAMED --enable-native-access=ALL-UNNAMED -Djdk.trackAllThreads=false -XX:+UseNUMA -Xms1g -Xmx1g -XX:+AlwaysPreTouch
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 5 iterations, 3 s each
+# Measurement: 5 iterations, 3 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: io.netty.loom.benchmark.CacheStressBenchmark.fjp
+# Parameters: (multiplier = 1, numTasks = 8)
+
+# Run progress: 83.33% complete, ETA 00:01:01
+# Fork: 1 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=FJP L3=32768KB array=32768KB tasks=8
+73.831 ops/s
+# Warmup Iteration   2: 81.092 ops/s
+# Warmup Iteration   3: 83.298 ops/s
+# Warmup Iteration   4: 554.660 ops/s
+# Warmup Iteration   5: 594.491 ops/s
+Iteration   1: 589.822 ops/s
+Iteration   2: 578.788 ops/s
+Iteration   3: 600.557 ops/s
+Iteration   4: 571.865 ops/s
+Iteration   5: 605.995 ops/s
+
+# Run progress: 91.67% complete, ETA 00:00:30
+# Fork: 2 of 2
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.openjdk.jmh.util.Utils (file:/home/forked_franz/IdeaProjects/Netty-VirtualThread-Scheduler/benchmarks/target/benchmarks.jar)
+WARNING: Please consider reporting this to the maintainers of class org.openjdk.jmh.util.Utils
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+# Warmup Iteration   1: [setup] scheduler=FJP L3=32768KB array=32768KB tasks=8
+72.172 ops/s
+# Warmup Iteration   2: 76.804 ops/s
+# Warmup Iteration   3: 97.629 ops/s
+# Warmup Iteration   4: 561.295 ops/s
+# Warmup Iteration   5: 587.367 ops/s
+Iteration   1: 561.569 ops/s
+Iteration   2: 608.417 ops/s
+Iteration   3: 559.832 ops/s
+Iteration   4: 532.863 ops/s
+Iteration   5: 588.461 ops/s
+
+
+Result "io.netty.loom.benchmark.CacheStressBenchmark.fjp":
+  579.817 ±(99.9%) 36.023 ops/s [Average]
+  (min, avg, max) = (532.863, 579.817, 608.417), stdev = 23.827
+  CI (99.9%): [543.794, 615.840] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:06:06
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                (multiplier)  (numTasks)   Mode  Cnt    Score    Error  Units
+CacheStressBenchmark.custom                         1           8  thrpt   10  516.999 ± 26.323  ops/s
+CacheStressBenchmark.customPin                      1           8  thrpt   10  610.205 ± 30.266  ops/s
+CacheStressBenchmark.customPinWs                    1           8  thrpt   10  594.807 ± 33.714  ops/s
+CacheStressBenchmark.customPinWsCluster             1           8  thrpt   10  610.965 ± 11.868  ops/s
+CacheStressBenchmark.customWs                       1           8  thrpt   10  552.657 ± 25.639  ops/s
+CacheStressBenchmark.fjp                            1           8  thrpt   10  579.817 ± 36.023  ops/s
