@@ -141,7 +141,7 @@ public class EventLoopSchedulerGroup {
 
 	/** Returns the number of clusters. */
 	public int clusterCount() {
-		return clusters.length;
+		return clusterStates.length;
 	}
 
 	/** Returns an unmodifiable view of the schedulers in the given cluster. */
