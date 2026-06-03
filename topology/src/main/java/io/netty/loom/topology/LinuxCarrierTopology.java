@@ -167,7 +167,7 @@ public class LinuxCarrierTopology implements CarrierTopology {
 			MemorySegment.copy(longs, 0, cpuSet, ValueLayout.JAVA_LONG, 0,
 					Math.min(longs.length, CPU_SET_SIZE / Long.BYTES));
 			int rc = (int) SCHED_SET_AFFINITY.invoke(0, (long) CPU_SET_SIZE, cpuSet);
-			if (rc != 0) {
+			if (rc < 0) {
 				throw new RuntimeException("sched_setaffinity failed: rc=" + rc);
 			}
 		} catch (RuntimeException e) {
