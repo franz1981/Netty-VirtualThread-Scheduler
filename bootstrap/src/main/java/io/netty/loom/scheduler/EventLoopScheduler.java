@@ -403,9 +403,17 @@ public final class EventLoopScheduler {
 	 * {@link #registerPinnedPoller wakeup} will fire. The blocking mechanism must
 	 * handle this race (see {@link #registerPinnedPoller} for details).
 	 */
-	public boolean canBlock() {
+	public boolean canParkPoller() {
 		assert isValidPinnedPoller();
 		return !hasRunnableContinuations() && (int) CARRIER_STATE.getAcquire(this) < SEARCHING;
+	}
+
+	/**
+	 * Poller entry point: pre-check + park in one call. Returns true if the carrier
+	 * transitioned to PARKED and the caller should enter blocking I/O.
+	 */
+	public boolean tryParkPoller() {
+		return canParkPoller() && tryPark();
 	}
 
 	/**

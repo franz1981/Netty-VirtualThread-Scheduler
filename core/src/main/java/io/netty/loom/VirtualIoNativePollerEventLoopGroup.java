@@ -117,7 +117,7 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 				ioExecutor -> new AwakeAwareIoHandler(pollerRunning, ioHandlerFactory.newHandler(ioExecutor))) {
 			@Override
 			public boolean canBlock() {
-				return scheduler.canBlock();
+				return scheduler.canParkPoller();
 			}
 		};
 
@@ -161,7 +161,7 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 		var event = NettyJfrUtil.beginRunIoEvent();
 		int ioEventsHandled;
 		boolean ranBlocking = false;
-		if (canBlock && scheduler.canBlock() && scheduler.tryPark()) {
+		if (canBlock && scheduler.tryParkPoller()) {
 			pollerRunning.set(false);
 			ranBlocking = true;
 			try {
