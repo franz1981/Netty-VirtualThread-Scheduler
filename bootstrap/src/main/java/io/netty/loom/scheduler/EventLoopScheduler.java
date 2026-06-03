@@ -251,6 +251,10 @@ public final class EventLoopScheduler {
 		return pinnedPollerWakeup != null;
 	}
 
+	int carrierState() {
+		return (int) CARRIER_STATE.getAcquire(this);
+	}
+
 	void setSiblings(EventLoopScheduler[] siblings) {
 		this.siblings = siblings;
 	}
