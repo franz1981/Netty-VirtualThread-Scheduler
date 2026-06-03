@@ -16,3 +16,4 @@ target/
 # Benchmark and JCStress results
 benchmark-results*/
 results/
+.mcp.json
