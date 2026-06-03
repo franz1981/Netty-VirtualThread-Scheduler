@@ -24,8 +24,23 @@ jobs:
     
     - name: Install Maven
       run: |
-        apt-get update
-        apt-get install -y maven
+        cat > /tmp/Download.java << 'JAVA'
+        import java.net.URI;
+        import java.nio.file.Files;
+        import java.nio.file.Path;
+        public class Download {
+            public static void main(String[] args) throws Exception {
+                try (var in = new URI(args[0]).toURL().openStream()) {
+                    Files.copy(in, Path.of(args[1]));
+                }
+            }
+        }
+        JAVA
+        java --enable-preview /tmp/Download.java \
+          https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz \
+          /tmp/maven.tar.gz
+        tar xzf /tmp/maven.tar.gz -C /opt
+        ln -s /opt/apache-maven-3.9.9/bin/mvn /usr/local/bin/mvn
     
     - name: Verify Java version
       run: |
