@@ -77,7 +77,7 @@ import io.netty.loom.scheduler.NettyScheduler;
  * Build:
  * 
  * <pre>{@code
- * export JAVA_HOME=/home/forked_franz/CLionProjects/loom/build/linux-x86_64-server-release/jdk
+ * export JAVA_HOME=/path/to/loom/jdk
  * mvn install -DskipTests && mvn -pl benchmarks package -q -DskipTests
  * }</pre>
  *

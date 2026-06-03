@@ -316,7 +316,7 @@ a self-contained script that runs all configurations back-to-back.
 ### CPU-bound configuration (50K req/s, 2 cores)
 
 ```bash
-export JAVA_HOME=/home/forked_franz/CLionProjects/loom/build/linux-x86_64-server-release/jdk
+export JAVA_HOME=/path/to/loom/jdk
 
 # Baseline (no WS, no affinity):
 bash benchmark-runner/scripts/run-benchmark.sh \
