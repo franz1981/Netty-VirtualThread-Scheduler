@@ -1336,8 +1336,14 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				// Lock is still held — poller can't call unpark().
 				assertTrue(vtStarted.await(5, TimeUnit.SECONDS), "VT should start running on carrier A");
 
-				// VT yields repeatedly, carrier drains. SEARCHING should be stuck.
-				Thread.sleep(100);
+				// Carrier loop is draining the yielding VT. The eager SEARCHING
+				// check at the top of each loop iteration should process it.
+				// Poll with a deadline — lock is still held so the poller VT
+				// cannot be the one clearing SEARCHING.
+				long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+				while (cs.nSearching() == 1 && System.nanoTime() < deadline) {
+					Thread.onSpinWait();
+				}
 				if (cs.nSearching() == 1) {
 					searchingStuckAt1.set(true);
 				}
