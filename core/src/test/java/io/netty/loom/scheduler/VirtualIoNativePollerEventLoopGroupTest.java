@@ -1344,6 +1344,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			assertFalse(searchingStuckAt1.get(),
 					"SEARCHING state must be processed eagerly — nSearching should NOT stay stuck at 1 while carrier drains");
 		} finally {
+			vtFinish.set(true);
+			searchingReady.set(true);
 			pollerResume.countDown();
 			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
 		}
