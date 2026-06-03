@@ -307,14 +307,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 				@Override
 				public void wakeup() {
-					int n = wakeupCounter.incrementAndGet();
-					var scheduler = EventLoopScheduler.currentRunningScheduler();
-					var assigned = EventLoopScheduler.currentScheduler();
-					System.err.println("[WAKEUP #" + n + "] thread=" + Thread.currentThread().getName() + " isVirtual="
-							+ Thread.currentThread().isVirtual() + " runningScheduler="
-							+ (scheduler != null ? "carrier-" + scheduler.id() : "null") + " assignedScheduler="
-							+ (assigned != null ? "carrier-" + assigned.id() : "null"));
-					new Exception("WAKEUP #" + n).printStackTrace(System.err);
+					wakeupCounter.incrementAndGet();
 					ioHandler.wakeup();
 				}
 
@@ -341,12 +334,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 									if (msg instanceof DefaultHttpRequest) {
 										var factory = vThreadFactory(group);
 										factory.newThread(() -> {
-											var rs = EventLoopScheduler.currentRunningScheduler();
-											System.err.println("[OUTER-VT] runningScheduler="
-													+ (rs != null ? "carrier-" + rs.id() : "null") + " thread="
-													+ Thread.currentThread().getName());
 											final int beforeInner = wakeupCounter.get();
-											System.err.println("[MEASURE] beforeInner=" + beforeInner);
 											factory.newThread(() -> {
 												var contentBytes = ctx.alloc().directBuffer("HELLO!".length());
 												contentBytes.writeCharSequence("HELLO!", CharsetUtil.US_ASCII);
@@ -357,21 +345,12 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 														.set(HttpHeaderNames.CONTENT_LENGTH,
 																contentBytes.readableBytes())
 														.set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
-												var innerRs = EventLoopScheduler.currentRunningScheduler();
-												System.err.println("[INNER-VT] runningScheduler="
-														+ (innerRs != null ? "carrier-" + innerRs.id() : "null")
-														+ " thread=" + Thread.currentThread().getName());
 												final int beforeWrite = wakeupCounter.get();
-												System.err.println("[MEASURE] beforeWrite=" + beforeWrite);
 												ctx.writeAndFlush(response, ctx.voidPromise());
 												final int afterWrite = wakeupCounter.get();
-												System.err.println("[MEASURE] afterWrite=" + afterWrite + " diff="
-														+ (afterWrite - beforeWrite));
 												innerWriteFromVThread.complete(afterWrite - beforeWrite);
 											}).start();
 											final int afterInner = wakeupCounter.get();
-											System.err.println("[MEASURE] afterInner=" + afterInner + " diff="
-													+ (afterInner - beforeInner));
 											innerVThreadCreationFromVThread.complete(afterInner - beforeInner);
 										}).start();
 									}

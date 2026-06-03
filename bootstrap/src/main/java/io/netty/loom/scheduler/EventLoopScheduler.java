@@ -288,8 +288,8 @@ public final class EventLoopScheduler {
 	 * @param wakeup
 	 *            called from any thread to interrupt the poller's blocking I/O
 	 *            (e.g. eventfd write); must be thread-safe and idempotent. Only
-	 *            called after the scheduler has CAS'd the carrier state to
-	 *            PARKED — never called spuriously.
+	 *            called after the scheduler has CAS'd the carrier state to PARKED —
+	 *            never called spuriously.
 	 * @param body
 	 *            the poller loop; the slot is freed when this returns
 	 * @return completes when {@code body} exits and the slot is freed
