@@ -86,7 +86,7 @@ class LinuxCarrierTopologyTest {
 	@Timeout(15)
 	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
 	void stealingRespectsClusterTopology() throws Exception {
-		// FakeClusterTopology via ServiceLoader: [0,1]=cluster A, [2,3]=cluster B,
+		// FakeClusterTopology via system property: [0,1]=cluster A, [2,3]=cluster B,
 		// clusterLocal=true
 		var group = EventLoopSchedulerGroup.instance();
 		assumeTrue(group.size() >= 4, "need at least 4 carriers");

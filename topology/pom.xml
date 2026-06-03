@@ -52,7 +52,7 @@
                         <phase>test</phase>
                         <goals><goal>test</goal></goals>
                         <configuration>
-                            <argLine>--enable-preview --enable-native-access=ALL-UNNAMED -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=4 --add-opens=java.base/java.lang=ALL-UNNAMED -Dio.netty.loom.workstealing.enabled=true -Dio.netty.loom.workstealing.unresponsive.ms=5 -Djdk.trackAllThreads=true</argLine>
+                            <argLine>--enable-preview --enable-native-access=ALL-UNNAMED -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=4 --add-opens=java.base/java.lang=ALL-UNNAMED -Dio.netty.loom.workstealing.enabled=true -Dio.netty.loom.workstealing.unresponsive.ms=5 -Djdk.trackAllThreads=true -Dio.netty.loom.topology=io.netty.loom.topology.FakeClusterTopology</argLine>
                             <forkedProcessTimeoutInSeconds>120</forkedProcessTimeoutInSeconds>
                             <forkedProcessExitTimeoutInSeconds>30</forkedProcessExitTimeoutInSeconds>
                         </configuration>

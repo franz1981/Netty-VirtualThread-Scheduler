@@ -15,12 +15,12 @@
 package io.netty.loom.scheduler;
 
 /**
- * SPI for carrier thread placement and topology-aware work stealing.
+ * Carrier thread placement and topology-aware work stealing.
  *
  * <p>
- * Discovered via {@code -Dio.netty.loom.topology=<classname>} or
- * {@link java.util.ServiceLoader}. If absent, carriers float and stealing
- * includes all siblings.
+ * Activate via {@code -Dio.netty.loom.topology=<fully-qualified-classname>}.
+ * The class must have a public no-arg constructor and be visible to the system
+ * classloader. If not set, carriers float and stealing includes all siblings.
  *
  * <p>
  * The scheduler builds a flat siblings array per carrier, filtered by the

@@ -675,26 +675,40 @@ Each event records:
 
 ## CPU topology awareness
 
-Enable with `-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology`
-and `--enable-native-access=ALL-UNNAMED`.
+Pins each carrier to its own CPU core and groups carriers by shared L3 cache.
+This eliminates thread migrations and keeps steal coordination within the
+same cache domain.
 
-### What it does
+### How to enable
 
-Each carrier thread is pinned to a specific CPU core via `sched_setaffinity(2)`
-(called through [FFM](https://docs.oracle.com/en/java/javase/22/core/foreign-function-and-memory-api.html)).
-The scheduler discovers the machine's cache topology from sysfs
-(`/sys/devices/system/cpu/cpu{N}/cache/index{i}/shared_cpu_list`) and groups
-carriers that share an L3 cache (LLC) into **clusters**. On this machine
-(AMD Ryzen 9 7950X):
+```
+-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology
+--enable-native-access=ALL-UNNAMED
+```
+
+| Property | Values | Effect |
+|----------|--------|--------|
+| `io.netty.loom.topology` | `io.netty.loom.topology.LinuxCarrierTopology` or absent | Absent (default): carriers float, no pinning. Set: each carrier pinned to a core, clusters discovered from hardware. |
+| `io.netty.loom.workstealing.scope` | `GLOBAL` (default) or `CLUSTER_LOCAL` | `GLOBAL`: steal from any carrier. `CLUSTER_LOCAL`: steal only within the same LLC cluster — avoids cross-CCD/NUMA coherency traffic. |
+
+When enabled, the scheduler:
+1. Reads the process affinity mask (`sched_getaffinity`) to discover available CPUs
+2. Pins each carrier to one CPU via `sched_setaffinity` (one carrier per core)
+3. Reads `/sys/devices/system/cpu/cpu{N}/cache/` to discover LLC clusters
+4. Groups carriers that share an L3 cache into clusters
+
+Carrier thread names reflect the topology: `carrier-0-cluster0-core2`,
+`carrier-1-cluster0-core3`. On an AMD Ryzen 9 7950X (2 CCDs):
 
 ```
 L3 cluster 0: CPUs 0-7, 16-23   (8 cores + 8 SMT threads)
 L3 cluster 1: CPUs 8-15, 24-31  (8 cores + 8 SMT threads)
 ```
 
-With 16 carriers: 8 carriers per cluster, each pinned to its own physical core.
-Carrier thread names reflect the topology: `carrier-0-cluster0-core2`,
-`carrier-1-cluster0-core3`, etc.
+If there are more carriers than available CPUs, extra carriers float with a
+warning logged. If FFM or `sched_setaffinity` is unavailable (e.g., containers
+without native access), the feature degrades gracefully — carriers float and
+all land in a single cluster.
 
 ### Why pinning helps
 
@@ -752,31 +766,15 @@ When both are enabled and `stealScope` is `CLUSTER_LOCAL`:
 - Stolen tasks may still route back to the home carrier's event loop on
   write (cross-carrier hop), but the steal itself stays within the LLC.
 
-### Steal scope options
+### When to use what
 
-| Scope | Property value | Siblings | Use case |
-|-------|---------------|----------|----------|
-| Global | `GLOBAL` (default) | All carriers | Small deployments, uniform topology |
-| Cluster-local | `CLUSTER_LOCAL` | Same LLC cluster | Multi-CCD/NUMA, avoid cross-LLC steals |
-
-Set via `-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL`.
-
-### SPI for custom topologies
-
-`CarrierTopology` is an SPI — implement it for non-Linux platforms or custom
-placement strategies:
-
-```java
-public interface CarrierTopology {
-    default void bindCarrier(int index, int count, Thread carrier) {}
-    default int cluster(int index) { return 0; }
-    default int core(int index) { return index; }
-    StealScope stealScope();
-}
-```
-
-Load via system property (`-Dio.netty.loom.topology=com.example.MyTopology`)
-or `ServiceLoader`.
+| Deployment | Recommendation |
+|------------|---------------|
+| 1-4 cores, single CCD | Topology optional. Pinning helps if CPU-bound (see [PERFORMANCE.md](PERFORMANCE.md)). |
+| 8+ cores, single CCD/socket | Enable topology. Pinning eliminates migrations and keeps queues short. |
+| Multi-CCD/NUMA (AMD EPYC, Ryzen 7000+) | Enable topology + `CLUSTER_LOCAL` scope. Each LLC cluster steals independently — no cross-CCD coherency traffic. |
+| Containers with CPU limits | Topology works if `--enable-native-access` is allowed. Falls back gracefully if `sched_setaffinity` is denied (carriers float, single cluster). |
+| N+1 cores trick | Alternative to pinning: give carriers one extra core (`--server-cpuset 2,3,4` for 2 carriers). The extra core absorbs GC/JIT/Master-Poller without explicit pinning. See [PERFORMANCE.md](PERFORMANCE.md). |
 
 ## Module structure
 
@@ -793,6 +791,8 @@ All scheduling state (carrier pool singleton, `ScopedValue`, `instanceof` checks
 The JDK loads the scheduler via `Class.forName(cn, true, ClassLoader.getSystemClassLoader())` during `VirtualThread.<clinit>`. This means the bootstrap JAR must be visible to the **system classloader**, not just the application classloader.
 
 If the bootstrap JAR is not on the system classpath (e.g., packaged inside a Spring Boot fat JAR without MRJAR, or only in an app server's per-deployment classloader), the JDK cannot find `NettyScheduler` and the scheduler does not activate. Any attempt to use the scheduler API (`EventLoopSchedulerGroup.instance()`, `VirtualIoNativePollerEventLoopGroup`, etc.) throws `IllegalStateException` — there is no silent fallback.
+
+The **topology JAR** has the same constraint: `-Dio.netty.loom.topology=<classname>` loads the class via `Class.forName` from the bootstrap module, which uses the system classloader. The topology implementation must be on the system classpath alongside the bootstrap JAR.
 
 ## Deployment
 

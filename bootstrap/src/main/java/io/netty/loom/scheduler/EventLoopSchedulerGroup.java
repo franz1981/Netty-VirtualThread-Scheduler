@@ -16,7 +16,6 @@ package io.netty.loom.scheduler;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.ServiceLoader;
 
 /**
  * Global pool of carrier threads, each running an {@link EventLoopScheduler}.
@@ -113,14 +112,14 @@ public class EventLoopSchedulerGroup {
 
 	private static CarrierTopology loadTopology() {
 		String className = System.getProperty("io.netty.loom.topology");
-		if (className != null) {
-			try {
-				return (CarrierTopology) Class.forName(className).getDeclaredConstructor().newInstance();
-			} catch (Exception e) {
-				throw new RuntimeException("Failed to load carrier topology: " + className, e);
-			}
+		if (className == null) {
+			return null;
 		}
-		return ServiceLoader.load(CarrierTopology.class).findFirst().orElse(null);
+		try {
+			return (CarrierTopology) Class.forName(className).getDeclaredConstructor().newInstance();
+		} catch (Exception e) {
+			throw new RuntimeException("Failed to load carrier topology: " + className, e);
+		}
 	}
 
 	/**

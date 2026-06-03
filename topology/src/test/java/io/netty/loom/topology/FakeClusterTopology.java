@@ -18,7 +18,8 @@ import io.netty.loom.scheduler.CarrierTopology;
 
 /**
  * Test topology: 2 carriers per cluster, cluster-local stealing. Loaded via
- * ServiceLoader during topology module tests.
+ * {@code -Dio.netty.loom.topology=io.netty.loom.topology.FakeClusterTopology}
+ * in the topology module's surefire WS execution.
  */
 public class FakeClusterTopology implements CarrierTopology {
 
