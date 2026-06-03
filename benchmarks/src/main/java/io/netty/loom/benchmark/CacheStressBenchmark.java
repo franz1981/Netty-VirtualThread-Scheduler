@@ -114,15 +114,6 @@ import io.netty.loom.scheduler.NettyScheduler;
 @State(Scope.Benchmark)
 public class CacheStressBenchmark {
 
-	private static final String[] COMMON = {"--enable-preview", "--add-opens=java.base/java.lang=ALL-UNNAMED",
-			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
-			"-XX:+AlwaysPreTouch"};
-	private static final String IMPL = "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler";
-	private static final String TOPO = "-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology";
-	private static final String WS = "-Dio.netty.loom.workstealing.enabled=true";
-	private static final String WS0 = "-Dio.netty.loom.workstealing.unresponsive.us=50";
-	private static final String CL = "-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL";
-
 	@Param({"128"})
 	int numTasks;
 
@@ -296,8 +287,7 @@ public class CacheStressBenchmark {
 			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
 			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
 			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
-			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
-			"-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL"})
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL"})
 	public int customClusterAffine() throws InterruptedException {
 		var group = EventLoopSchedulerGroup.instance();
 		var factory = clusterFactory(group, 0);
@@ -343,7 +333,7 @@ public class CacheStressBenchmark {
 	@Fork(value = 2, jvmArgs = {"--enable-preview", "--add-opens=java.base/java.lang=ALL-UNNAMED",
 			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
 			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
-			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50"})
+			"-Dio.netty.loom.workstealing.enabled=true"})
 	public int customWs() throws InterruptedException {
 		return cacheStress();
 	}
@@ -364,7 +354,7 @@ public class CacheStressBenchmark {
 			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
 			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
 			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
-			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50"})
+			"-Dio.netty.loom.workstealing.enabled=true"})
 	public int customPinWs() throws InterruptedException {
 		return cacheStress();
 	}
@@ -375,8 +365,7 @@ public class CacheStressBenchmark {
 			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
 			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
 			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
-			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
-			"-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL"})
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL"})
 	public int customPinWsCluster() throws InterruptedException {
 		return cacheStress();
 	}
@@ -400,8 +389,7 @@ public class CacheStressBenchmark {
 			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
 			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
 			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
-			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
-			"-Dio.netty.loom.benchmark.epollPoller=true"})
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.benchmark.epollPoller=true"})
 	public int customPinWsPoller() throws InterruptedException {
 		return cacheStress();
 	}
@@ -412,8 +400,7 @@ public class CacheStressBenchmark {
 			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
 			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
 			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
-			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
-			"-Dio.netty.loom.benchmark.nioPoller=true"})
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.benchmark.nioPoller=true"})
 	public int customPinWsNioPoller() throws InterruptedException {
 		return cacheStress();
 	}
@@ -427,8 +414,8 @@ public class CacheStressBenchmark {
 			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
 			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
 			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
-			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.unresponsive.us=50",
-			"-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL", "-Dio.netty.loom.benchmark.epollPoller=true"})
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL",
+			"-Dio.netty.loom.benchmark.epollPoller=true"})
 	public int customPinWsClusterPoller() throws InterruptedException {
 		return cacheStress();
 	}
