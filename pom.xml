@@ -144,7 +144,7 @@
                                 <goal>test</goal>
                             </goals>
                             <configuration>
-                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=2 --add-opens=java.base/java.lang=ALL-UNNAMED -Dio.netty.loom.workstealing.enabled=true -Dio.netty.loom.workstealing.unresponsive.ms=5 -Djdk.trackAllThreads=true</argLine>
+                                <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=2 --add-opens=java.base/java.lang=ALL-UNNAMED -Dio.netty.loom.workstealing.enabled=true -Djdk.trackAllThreads=true</argLine>
                                 <forkedProcessTimeoutInSeconds>120</forkedProcessTimeoutInSeconds>
                                 <forkedProcessExitTimeoutInSeconds>30</forkedProcessExitTimeoutInSeconds>
                             </configuration>
