@@ -35,7 +35,7 @@ import io.netty.loom.scheduler.jfr.VirtualThreadTaskSubmitEvent;
  * <p>
  * Optionally hosts a <em>pinned poller</em> — a long-running VT that does
  * kernel I/O and cooperates with the carrier loop via
- * {@link #maybeYield(boolean)} and {@link #canBlock()}.
+ * {@link #maybeYield(boolean)} and {@link #canParkPoller()}.
  */
 public final class EventLoopScheduler {
 
@@ -277,19 +277,19 @@ public final class EventLoopScheduler {
 	 *
 	 * <p>
 	 * The poller must: (1) call {@link #maybeYield(boolean)} between phases to
-	 * yield CPU time to external VTs, (2) use {@link #canBlock()} before entering
-	 * blocking I/O and ensure no wakeup signal is lost in the race window between
-	 * the check and the blocking call — either via a permit-based mechanism (sticky
-	 * wakeup, e.g. eventfd or
-	 * {@link java.util.concurrent.locks.LockSupport#unpark}) or a lock-based
-	 * rendezvous where the check and wait are inside the same lock, and (3)
-	 * eventually return from {@code body} so the slot can be freed.
+	 * yield CPU time to external VTs, (2) use {@link #tryParkPoller()} (or
+	 * {@link #canParkPoller()} + {@link #tryPark()}) before entering blocking I/O
+	 * and ensure no wakeup signal is lost in the race window between the check and
+	 * the blocking call — either via a permit-based mechanism (sticky wakeup, e.g.
+	 * eventfd or {@link java.util.concurrent.locks.LockSupport#unpark}) or a
+	 * lock-based rendezvous where the check and wait are inside the same lock, and
+	 * (3) eventually return from {@code body} so the slot can be freed.
 	 *
 	 * @param wakeup
 	 *            called from any thread to interrupt the poller's blocking I/O
 	 *            (e.g. eventfd write); must be thread-safe and idempotent. Only
-	 *            called after the scheduler has CAS'd the carrier state from
-	 *            PINNED_PARKED — never called spuriously.
+	 *            called after the scheduler has CAS'd the carrier state to
+	 *            PARKED — never called spuriously.
 	 * @param body
 	 *            the poller loop; the slot is freed when this returns
 	 * @return completes when {@code body} exits and the slot is freed
