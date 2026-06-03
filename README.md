@@ -247,38 +247,43 @@ A pinned poller has three responsibilities:
 3. **Handle wakeup signals.** The wakeup `Runnable` is called from any thread when the scheduler needs to interrupt the poller's blocking I/O (e.g., eventfd write for epoll/io_uring). It must be thread-safe and idempotent. The scheduler only calls it after CAS'ing the carrier state — never spuriously.
 
    - **Non-blocking poller (spin-poll):** use a no-op wakeup (`() -> {}`) — the poller never sleeps, so there is nothing to interrupt.
-   - **Blocking poller (native transport):** track whether you're inside the blocking syscall (e.g. a volatile flag set before `epoll_wait()` and cleared after). Return `true` and send the wakeup signal when the flag is set — this tells the scheduler that waking the poller freed the pinned carrier, so no sibling help is needed. Return `false` when the poller is actively running.
-   - **Loom-friendly poller (NIO):** return `false` — NIO's `select()` parks via Loom, freeing the carrier. The carrier parks in its scheduler loop and is woken via `LockSupport.unpark()`, not via the poller wakeup. See `VirtualIoNioPollerEventLoopGroup`.
+   - **Blocking poller (native transport):** track whether you're inside the blocking syscall (e.g. a volatile flag set before `epoll_wait()` and cleared after). When the wakeup fires, send the interrupt signal (e.g. eventfd write) if the flag is set. The wakeup is a `Runnable` — it doesn't return a value.
+   - **Loom-friendly poller (NIO):** use a no-op wakeup — NIO's `select()` parks via Loom, freeing the carrier. The carrier parks in its scheduler loop and is woken via `LockSupport.unpark()`, not via the poller wakeup. See `VirtualIoNioPollerEventLoopGroup`.
 
 4. **Never miss a wakeup — if you choose to block.** The simple poller above never blocks, so it doesn't need wakeup coordination. But if you want to block in kernel I/O when idle (to save CPU), the blocking path introduces a coordination problem.
 
-   The blocking decision must be made **inside your transport** — the transport must advertise it's about to sleep (store a flag) before checking `canBlock()` (a load), with a StoreLoad barrier between the two so the load cannot slip before the advertisement. This is the [Seastar sleep/wakeup pattern](https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/): the symmetric store-barrier-load on both producer and consumer sides ensures at least one side always sees the other's store.
+   The blocking decision must be made **inside your transport** — the transport must advertise it's about to sleep (store a flag) before checking `canParkPoller()` (a load), with a StoreLoad barrier between the two so the load cannot slip before the advertisement. This is the [Seastar sleep/wakeup pattern](https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/): the symmetric store-barrier-load on both producer and consumer sides ensures at least one side always sees the other's store.
 
-   This is how the native transport integration works: `canBlock()` is [injected into the ManualIoEventLoop](core/src/main/java/io/netty/loom/VirtualIoNativePollerEventLoopGroup.java) via override, the transport advertises sleep via a volatile write (`pollerRunning.set(false)`) before reading `canBlock()`, and the wakeup checks that flag to report whether the poller was sleeping (see [netty#15922](https://github.com/netty/netty/issues/15922)):
+   This is how the native transport integration works: `canParkPoller()` is [injected into the ManualIoEventLoop](core/src/main/java/io/netty/loom/VirtualIoNativePollerEventLoopGroup.java) via override, the transport advertises sleep via a volatile write (`pollerRunning.set(false)`) before reading `canParkPoller()`, and the wakeup sends an eventfd write to interrupt the blocked poller (see [netty#15922](https://github.com/netty/netty/issues/15922)):
 
    ```java
-   // inject canBlock into the transport
+   var pollerRunning = new AtomicBoolean(false);
+
    var eventLoop = new ManualIoEventLoop(parent, null, handlerFactory) {
        @Override
        public boolean canBlock() {
-           return scheduler.canBlock();
+           return scheduler.canParkPoller();
        }
    };
 
    scheduler.registerPinnedPoller(
-       () -> {              // wakeup: return true if poller was sleeping
-           if (!pollerRunning.get()) {
-               eventLoop.wakeup();
-               return true;
-           }
-           return false;
-       },
+       () -> eventLoop.wakeup(),    // wakeup: interrupt blocking I/O
        () -> {
+           pollerRunning.set(true);
            boolean canBlock = false;
            while (!eventLoop.isShuttingDown()) {
-               int events = canBlock
-                   ? eventLoop.run(MAX_WAIT_NS, YIELD_NS)
-                   : eventLoop.runNow(YIELD_NS);
+               int events;
+               if (canBlock && scheduler.tryParkPoller()) {
+                   pollerRunning.set(false);
+                   try {
+                       events = eventLoop.run(MAX_WAIT_NS, YIELD_NS);
+                   } finally {
+                       pollerRunning.set(true);
+                       scheduler.unpark();
+                   }
+               } else {
+                   events = eventLoop.runNow(YIELD_NS);
+               }
                boolean hadVtWork = scheduler.maybeYield(events > 0);
                canBlock = events == 0 && !hadVtWork;
            }
@@ -286,11 +291,11 @@ A pinned poller has three responsibilities:
    );
    ```
 
-   Between `canBlock()` returning true and the transport entering its blocking syscall, work may arrive and the scheduler calls `wakeup()`. That signal must not be lost. Two approaches:
+   Between `tryParkPoller()` returning true and the transport entering its blocking syscall, work may arrive and the scheduler calls `wakeup()`. That signal must not be lost. Two approaches:
 
    **Permit-based (lock-free):** The transport's wakeup is sticky — if called before the blocking call starts, the blocking call returns immediately. Examples: `eventfd` (stays readable until consumed), `Selector.wakeup()` (sets a flag), `LockSupport.unpark()` (stores a permit). This is what Netty's transports use.
 
-   **Lock-based (rendezvous):** The `canBlock()` check and the blocking wait happen inside a lock shared with `wakeup()`. The signal cannot slip between the check and the wait. Note: `Condition.signal()` is **not** sticky — if it arrives before `Condition.await()`, it's lost. The queue-empty check must be inside the locked region.
+   **Lock-based (rendezvous):** The `canParkPoller()` check and the blocking wait happen inside a lock shared with `wakeup()`. The signal cannot slip between the check and the wait. Note: `Condition.signal()` is **not** sticky — if it arrives before `Condition.await()`, it's lost. The queue-empty check must be inside the locked region.
 
    For background on why this coordination is subtle, see:
    - [Seastar's memory barrier approach](https://www.scylladb.com/2018/02/15/memory-barriers-seastar-linux/) — the symmetric store-barrier-load pattern between producer and consumer
@@ -298,7 +303,7 @@ A pinned poller has three responsibilities:
    - [Viktor Klang's actor](https://gist.github.com/viktorklang/2557678) — the atomic-flag-with-recheck pattern
 
 Additional constraints:
-- `canBlock()` is a snapshot — it can go stale immediately. Never cache the result.
+- `canParkPoller()` is a snapshot — it can go stale immediately. Never cache the result.
 - One poller per carrier. `registerPinnedPoller` throws if a poller is already registered.
 
 For a deeper look at the store-barrier-load protocol, JCStress proofs that the guard prevents missed wakeups (and that removing it causes 94% signal loss), and the [`BlockingPollGuard`](concurrency-tests/src/main/java/io/netty/loom/concurrent/BlockingPollGuard.java) utility that encapsulates it, see [`concurrency-tests/README.md`](concurrency-tests/README.md).
