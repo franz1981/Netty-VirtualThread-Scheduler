@@ -34,12 +34,14 @@ final class ClusterState {
 	}
 
 	private final EventLoopScheduler[] members;
+	private final java.util.List<EventLoopScheduler> membersView;
 	private final IdleCarrierTracker idleTracker;
 	@SuppressWarnings("unused")
 	private volatile int nSearching;
 
 	ClusterState(EventLoopScheduler[] members) {
 		this.members = members;
+		this.membersView = java.util.List.of(members);
 		int maxId = 0;
 		for (var m : members) {
 			maxId = Math.max(maxId, m.id());
@@ -70,6 +72,10 @@ final class ClusterState {
 
 	EventLoopScheduler[] members() {
 		return members;
+	}
+
+	java.util.List<EventLoopScheduler> membersView() {
+		return membersView;
 	}
 
 	int findIdle() {

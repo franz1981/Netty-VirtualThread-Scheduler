@@ -835,7 +835,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		assertTrue(startedA.await(2, TimeUnit.SECONDS));
 		assertTrue(startedB.await(2, TimeUnit.SECONDS));
 		try {
-			awaitUnresponsive(schedulerA);
+			awaitStealOpportunity();
 			factoryA.newThread(() -> {
 				runningRef.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
@@ -879,7 +879,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		assertTrue(startedA.await(2, TimeUnit.SECONDS));
 		assertTrue(startedB.await(2, TimeUnit.SECONDS));
 		try {
-			awaitUnresponsive(schedulerA);
+			awaitStealOpportunity();
 			factoryA.newThread(() -> {
 				factoryA.newThread(() -> {
 					childHome.complete(EventLoopScheduler.currentScheduler());
@@ -914,7 +914,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			}).start();
 			assertTrue(blockerStarted.await(2, TimeUnit.SECONDS));
 			try {
-				awaitUnresponsive(schedulerA);
+				awaitStealOpportunity();
 				factoryA.newThread(() -> {
 					runningRef.complete(EventLoopScheduler.currentRunningScheduler());
 				}).start();
@@ -1000,7 +1000,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 					} catch (IOException _) {
 					}
 				});
-				awaitUnresponsive(schedulerA);
+				awaitStealOpportunity();
 				factoryA.newThread(() -> {
 					targetHome.complete(EventLoopScheduler.currentScheduler());
 				}).start();
@@ -1049,7 +1049,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		});
 		try {
 			assertTrue(pollersStarted.await(2, TimeUnit.SECONDS));
-			awaitUnresponsive(schedulerB);
+			awaitStealOpportunity();
 			schedulerB.virtualThreadFactory().newThread(() -> {
 				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
@@ -1093,7 +1093,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		}).start();
 		assertTrue(spinnerStarted.await(2, TimeUnit.SECONDS));
 		try {
-			awaitUnresponsive(schedulerB);
+			awaitStealOpportunity();
 			schedulerB.virtualThreadFactory().newThread(() -> {
 				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
@@ -1139,7 +1139,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				}
 			}).start();
 			assertTrue(spinnerStarted.await(2, TimeUnit.SECONDS));
-			awaitUnresponsive(schedulerB);
+			awaitStealOpportunity();
 			schedulerB.virtualThreadFactory().newThread(() -> {
 				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
@@ -1364,12 +1364,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		}
 	}
 
-	private static void awaitUnresponsive(EventLoopScheduler scheduler) throws InterruptedException {
-		long thresholdMs = Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200);
-		Thread.sleep(thresholdMs + 5);
-		// TODO removed API: isUnresponsive was removed with heartbeat cleanup
-		// assertTrue(scheduler.isUnresponsive(System.nanoTime()), "scheduler should be
-		// unresponsive after threshold");
+	private static void awaitStealOpportunity() throws InterruptedException {
+		Thread.sleep(50);
 	}
 
 	private static ThreadFactory vThreadFactory(MultiThreadIoEventLoopGroup group) {

@@ -68,7 +68,6 @@ public class EventLoopSchedulerGroup {
 		} else {
 			clusters = new EventLoopScheduler[][]{schedulers.clone()};
 		}
-
 		var scope = topology != null ? topology.stealScope() : CarrierTopology.StealScope.GLOBAL;
 		if (scope == CarrierTopology.StealScope.GLOBAL) {
 			var global = new ClusterState(schedulers);
@@ -148,7 +147,7 @@ public class EventLoopSchedulerGroup {
 
 	/** Returns an unmodifiable view of the schedulers in the given cluster. */
 	public java.util.List<EventLoopScheduler> cluster(int clusterIndex) {
-		return java.util.List.of(clusters[clusterIndex]);
+		return clusterStates[clusterIndex].membersView();
 	}
 
 	/**
@@ -168,6 +167,10 @@ public class EventLoopSchedulerGroup {
 	 * Returns a thread factory for external submissions. Sticks to a carrier —
 	 * concentrating bursts like FJP's per-thread probe. Prefers the current cluster
 	 * when re-targeting.
+	 *
+	 * <p>
+	 * The returned factory is <b>not thread-safe</b>: it tracks sticky carrier
+	 * selection via mutable state. Each call site should get its own factory.
 	 */
 	public java.util.concurrent.ThreadFactory virtualThreadFactory() {
 		var current = new int[]{-1};
