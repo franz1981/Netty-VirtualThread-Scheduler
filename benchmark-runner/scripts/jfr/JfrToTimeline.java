@@ -20,8 +20,8 @@ public class JfrToTimeline {
             "io.netty.loom.VirtualThreadTaskSubmit",
             "io.netty.loom.WorkSteal"
     };
-    private static final int SUBMIT_EVENT_INDEX = 4;
-    private static final int WORK_STEAL_EVENT_INDEX = 5;
+    private static final int SUBMIT_EVENT_INDEX = 3;
+    private static final int WORK_STEAL_EVENT_INDEX = 4;
     private static final String[] NETTY_EVENT_SHORT_NAMES = new String[NETTY_EVENTS.length];
 
     static {
