@@ -83,8 +83,7 @@ public final class EventLoopScheduler {
 	// @formatter:on
 	private static final int RUNNING = 0;
 	private static final int PARKED = 1;
-	public static final int SEARCHING_STATE = 2;
-	private static final int SEARCHING = SEARCHING_STATE;
+	static final int SEARCHING = 2;
 
 	static {
 		try {
@@ -102,7 +101,6 @@ public final class EventLoopScheduler {
 			.toNanos(Integer.getInteger("io.netty.loom.yield.us", 50));
 	static final boolean WORK_STEALING_ENABLED = Boolean
 			.parseBoolean(System.getProperty("io.netty.loom.workstealing.enabled", "false"));
-	private static final int IDLE_SPINS = Integer.getInteger("io.netty.loom.idleSpinsBeforePark", 0);
 
 	enum VThreadType {
 		VT, JDK_POLLER, PINNED_POLLER
@@ -347,6 +345,7 @@ public final class EventLoopScheduler {
 		var init = onCarrierStart;
 		if (init != null) {
 			init.run();
+			onCarrierStart = null;
 		}
 		while (true) {
 			if (WORK_STEALING_ENABLED && (int) CARRIER_STATE.getAcquire(this) >= SEARCHING) {
@@ -584,7 +583,7 @@ public final class EventLoopScheduler {
 	private void handleSearchWake(int wakeState, boolean inline) {
 		var cs = clusterState;
 		var victim = group.scheduler(wakeState - SEARCHING);
-		var task = victim.worthStealing() ? victim.tryStealOne() : null;
+		var task = victim.hasRunnableContinuations() ? victim.tryStealOne() : null;
 		if (cs != null) {
 			cs.stoppedSearching();
 		}
@@ -616,10 +615,6 @@ public final class EventLoopScheduler {
 			return true;
 		}
 		return false;
-	}
-
-	boolean worthStealing() {
-		return hasRunnableContinuations();
 	}
 
 	void signalWork() {
@@ -673,7 +668,7 @@ public final class EventLoopScheduler {
 		EventLoopScheduler victim;
 		int a = rng.nextInt(len);
 		if (len == 1) {
-			victim = siblings[a].worthStealing() ? siblings[a] : null;
+			victim = siblings[a].hasRunnableContinuations() ? siblings[a] : null;
 		} else {
 			int b = rng.nextInt(len - 1);
 			if (b >= a) {
@@ -681,8 +676,8 @@ public final class EventLoopScheduler {
 			}
 			var sa = siblings[a];
 			var sb = siblings[b];
-			boolean helpA = sa.worthStealing();
-			boolean helpB = sb.worthStealing();
+			boolean helpA = sa.hasRunnableContinuations();
+			boolean helpB = sb.hasRunnableContinuations();
 			if (helpA && helpB) {
 				victim = sa.runnableCount() >= sb.runnableCount() ? sa : sb;
 			} else {

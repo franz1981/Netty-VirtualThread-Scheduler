@@ -146,9 +146,9 @@ public class EventLoopSchedulerGroup {
 		return clusters.length;
 	}
 
-	/** Returns the schedulers in the given cluster. */
-	public EventLoopScheduler[] cluster(int clusterIndex) {
-		return clusters[clusterIndex];
+	/** Returns an unmodifiable view of the schedulers in the given cluster. */
+	public java.util.List<EventLoopScheduler> cluster(int clusterIndex) {
+		return java.util.List.of(clusters[clusterIndex]);
 	}
 
 	/**

@@ -160,9 +160,9 @@ public class JfrToTimeline {
             writer.writeAscii(",\"p\":");
             writer.writeAscii(event.getBoolean("isPoller") ? "1" : "0");
         }
-        if (event.hasField("isEventLoop")) {
+        if (event.hasField("isPinnedPoller")) {
             writer.writeAscii(",\"el\":");
-            writer.writeAscii(event.getBoolean("isEventLoop") ? "1" : "0");
+            writer.writeAscii(event.getBoolean("isPinnedPoller") ? "1" : "0");
         }
         if (event.hasField("canBlock")) {
             writer.writeAscii(",\"b\":");

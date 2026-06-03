@@ -129,7 +129,7 @@ public class LinuxCarrierTopology implements CarrierTopology {
 		try (var arena = Arena.ofConfined()) {
 			var cpuSet = arena.allocate(CPU_SET_SIZE);
 			int rc = (int) SCHED_GET_AFFINITY.invoke(0, (long) CPU_SET_SIZE, cpuSet);
-			if (rc != 0) {
+			if (rc < 0) {
 				return null;
 			}
 			long[] mask = new long[CPU_SET_SIZE / Long.BYTES];

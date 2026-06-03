@@ -272,8 +272,8 @@ public class CacheStressBenchmark {
 		var cluster = group.cluster(clusterIndex);
 		var counter = new AtomicInteger();
 		return runnable -> {
-			int idx = counter.getAndIncrement() % cluster.length;
-			return cluster[idx].virtualThreadFactory().newThread(runnable);
+			int idx = counter.getAndIncrement() % cluster.size();
+			return cluster.get(idx).virtualThreadFactory().newThread(runnable);
 		};
 	}
 
