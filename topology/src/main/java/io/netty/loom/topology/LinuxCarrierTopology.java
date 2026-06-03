@@ -34,12 +34,11 @@ import io.netty.loom.scheduler.CarrierTopology;
  *
  * <p>
  * Activate via
- * {@code -Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology}
- * or ServiceLoader.
+ * {@code -Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology}.
  *
  * <p>
  * Cluster-local stealing can be enabled with
- * {@code -Dio.netty.loom.topology.clusterLocal=true}.
+ * {@code -Dio.netty.loom.workstealing.scope=CLUSTER_LOCAL}.
  */
 public class LinuxCarrierTopology implements CarrierTopology {
 
