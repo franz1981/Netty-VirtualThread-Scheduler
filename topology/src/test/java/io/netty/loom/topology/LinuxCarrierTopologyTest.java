@@ -116,7 +116,7 @@ class LinuxCarrierTopologyTest {
 		assertTrue(startedB.await(2, TimeUnit.SECONDS));
 
 		try {
-			awaitUnresponsive(scheduler0);
+			awaitStealOpportunity();
 
 			scheduler0.virtualThreadFactory().newThread(() -> {
 				runningRef.complete(EventLoopScheduler.currentRunningScheduler());
@@ -133,11 +133,7 @@ class LinuxCarrierTopologyTest {
 		}
 	}
 
-	private static void awaitUnresponsive(EventLoopScheduler scheduler) throws InterruptedException {
-		long thresholdMs = Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200);
-		Thread.sleep(thresholdMs + 5);
-		// TODO removed API: isUnresponsive was removed with heartbeat cleanup
-		// assertTrue(scheduler.isUnresponsive(System.nanoTime()), "scheduler should be
-		// unresponsive after threshold");
+	private static void awaitStealOpportunity() throws InterruptedException {
+		Thread.sleep(50);
 	}
 }
