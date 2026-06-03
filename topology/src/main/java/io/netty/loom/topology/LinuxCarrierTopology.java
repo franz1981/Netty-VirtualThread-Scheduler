@@ -84,6 +84,10 @@ public class LinuxCarrierTopology implements CarrierTopology {
 	public void bindCarrier(int carrierIndex, int carrierCount, Thread carrier) {
 		if (carrierIndex < availableCpus.length) {
 			setAffinity(availableCpus[carrierIndex]);
+		} else {
+			System.err.println("WARNING: carrier-" + carrierIndex + " has no CPU to pin to (" + availableCpus.length
+					+ " CPUs available, " + carrierCount + " carriers requested). "
+					+ "Carrier will float across all available CPUs.");
 		}
 	}
 

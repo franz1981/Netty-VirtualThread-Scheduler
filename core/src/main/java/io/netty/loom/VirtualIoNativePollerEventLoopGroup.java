@@ -164,9 +164,12 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 		if (canBlock && scheduler.canBlock() && scheduler.tryPark()) {
 			pollerRunning.set(false);
 			ranBlocking = true;
-			ioEventsHandled = ioEventLoop.run(MAX_WAIT_TASKS_NS, EventLoopScheduler.YIELD_DURATION_NS);
-			pollerRunning.set(true);
-			scheduler.unpark();
+			try {
+				ioEventsHandled = ioEventLoop.run(MAX_WAIT_TASKS_NS, EventLoopScheduler.YIELD_DURATION_NS);
+			} finally {
+				pollerRunning.set(true);
+				scheduler.unpark();
+			}
 		} else {
 			ioEventsHandled = ioEventLoop.runNow(EventLoopScheduler.YIELD_DURATION_NS);
 		}

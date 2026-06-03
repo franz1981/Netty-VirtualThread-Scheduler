@@ -741,6 +741,33 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 	}
 
 	@Test
+	void registerPinnedPollerRejectsDoubleRegistration() throws Exception {
+		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
+		assumeTrue(available != null, "no free scheduler slots available");
+		var scheduler = available[0];
+		var resume = new CountDownLatch(1);
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
+			try {
+				resume.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+		try {
+			Thread.sleep(50);
+			assertTrue(scheduler.hasRegisteredPinnedPoller());
+			assertThrows(IllegalStateException.class, () -> scheduler.registerPinnedPoller(() -> {
+			}, () -> {
+			}));
+		} finally {
+			resume.countDown();
+			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+		}
+		assertFalse(scheduler.hasRegisteredPinnedPoller());
+	}
+
+	@Test
 	void twoGroupsSharingPool() throws InterruptedException, ExecutionException {
 		try (var groupA = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory());
 				var groupB = new VirtualIoNioPollerEventLoopGroup(1, NioIoHandler.newFactory())) {
