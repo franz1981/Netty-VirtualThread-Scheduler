@@ -41,7 +41,6 @@ class CarrierTopologyTest {
 
 	@Test
 	void stealScopeOrdering() {
-		assertTrue(StealScope.SMT_LOCAL.ordinal() > StealScope.CLUSTER_LOCAL.ordinal());
 		assertTrue(StealScope.CLUSTER_LOCAL.ordinal() > StealScope.GLOBAL.ordinal());
 	}
 }

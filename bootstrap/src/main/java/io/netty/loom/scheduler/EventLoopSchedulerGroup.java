@@ -109,7 +109,6 @@ public class EventLoopSchedulerGroup {
 		return switch (scope) {
 			case GLOBAL -> true;
 			case CLUSTER_LOCAL -> topology.cluster(self) == topology.cluster(other);
-			case SMT_LOCAL -> topology.core(self) == topology.core(other);
 		};
 	}
 

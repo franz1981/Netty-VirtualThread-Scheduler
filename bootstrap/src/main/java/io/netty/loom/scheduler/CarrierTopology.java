@@ -37,9 +37,7 @@ public interface CarrierTopology {
 		/** Steal from any carrier. */
 		GLOBAL,
 		/** Steal only from carriers sharing the same LLC cluster. */
-		CLUSTER_LOCAL,
-		/** Steal only from SMT siblings (same physical core). */
-		SMT_LOCAL
+		CLUSTER_LOCAL
 	}
 
 	/**
@@ -62,11 +60,11 @@ public interface CarrierTopology {
 	}
 
 	/**
-	 * Returns the physical core ID for the given carrier. Carriers on the same core
-	 * are SMT siblings. Used when {@code stealScope() == SMT_LOCAL}.
+	 * Returns the physical core ID for the given carrier. Used in carrier thread
+	 * naming ({@code carrier-N-clusterX-coreY}).
 	 *
 	 * <p>
-	 * Default: each carrier on its own core (no SMT siblings).
+	 * Default: each carrier on its own core.
 	 */
 	default int core(int carrierIndex) {
 		return carrierIndex;

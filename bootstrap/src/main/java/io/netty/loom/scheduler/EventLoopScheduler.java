@@ -75,11 +75,10 @@ public final class EventLoopScheduler {
 	 *
 	 * nSearching (per-cluster, Go wakep-style):
 	 *   signalWorkFor: CAS 0->1, wakeFirstIdle, if no idle -> stoppedSearching
-	 *   carrier:       searching=true on SEARCHING wake, resetSearching on
-	 *                  steal completion or before parking -> stoppedSearching
+	 *   carrier:       handleSearchWake on SEARCHING wake -> stoppedSearching
 	 *   Invariant: every tryStartSearcher success is matched by exactly one
 	 *   stoppedSearching -- either from signalWorkFor (no idle found) or from
-	 *   the woken carrier (resetSearching).
+	 *   handleSearchWake (in the woken carrier or poller VT).
 	 */
 	// @formatter:on
 	private static final int RUNNING = 0;
@@ -223,7 +222,6 @@ public final class EventLoopScheduler {
 	private volatile EventLoopScheduler[] siblings;
 	EventLoopSchedulerGroup group;
 	ClusterState clusterState;
-	private boolean searching;
 	private Runnable onCarrierStart;
 
 	EventLoopScheduler(int id, ThreadFactory threadFactory, int resumedContinuationsExpectedCount,
@@ -327,11 +325,6 @@ public final class EventLoopScheduler {
 	 */
 	public boolean maybeYield(boolean hadIoWork) {
 		assert isValidPinnedPoller();
-		// Exit PARKED if we were blocking (canBlock set it)
-		int state = (int) CARRIER_STATE.getAcquire(this);
-		if (state != RUNNING) {
-			unpark();
-		}
 		if (hasRunnableContinuations()) {
 			Thread.yield();
 			return true;
@@ -356,6 +349,9 @@ public final class EventLoopScheduler {
 			init.run();
 		}
 		while (true) {
+			if (WORK_STEALING_ENABLED && (int) CARRIER_STATE.getAcquire(this) >= SEARCHING) {
+				unparkFromCarrier();
+			}
 			int count = drainContinuations(YIELD_DURATION_NS);
 			if (!runPinnedContinuation() && count == 0) {
 				if (WORK_STEALING_ENABLED && tryStealing(true)) {
@@ -381,12 +377,11 @@ public final class EventLoopScheduler {
 					}
 				}
 
-				resetSearching();
 				if (tryPark()) {
 					LockSupport.park();
-					unpark();
+					unparkFromCarrier();
 				} else if ((int) CARRIER_STATE.getAcquire(this) != RUNNING) {
-					unpark();
+					unparkFromCarrier();
 				}
 			} else if (WORK_STEALING_ENABLED && hasRunnableContinuations()) {
 				signalWork();
@@ -434,7 +429,7 @@ public final class EventLoopScheduler {
 			}
 			int rolledBack = (int) CARRIER_STATE.getAndSet(this, RUNNING);
 			if (rolledBack >= SEARCHING) {
-				handleSearchWake(rolledBack);
+				handleSearchWake(rolledBack, Thread.currentThread() == carrierThread);
 			}
 			return false;
 		}
@@ -446,13 +441,21 @@ public final class EventLoopScheduler {
 	 * SEARCHING wakeState internally (directed steal + chain).
 	 */
 	public void unpark() {
+		unparkImpl(false);
+	}
+
+	void unparkFromCarrier() {
+		unparkImpl(true);
+	}
+
+	private void unparkImpl(boolean inline) {
 		var cs = clusterState;
 		if (cs != null) {
 			cs.idleTracker().markActive(id);
 		}
 		int wakeState = (int) CARRIER_STATE.getAndSet(this, RUNNING);
 		if (wakeState >= SEARCHING) {
-			handleSearchWake(wakeState);
+			handleSearchWake(wakeState, inline);
 		}
 	}
 
@@ -578,7 +581,7 @@ public final class EventLoopScheduler {
 	 * Handles a SEARCHING wakeState: directed steal + chain propagation. Stolen
 	 * task is enqueued for the carrier to drain on the next yield.
 	 */
-	public void handleSearchWake(int wakeState) {
+	private void handleSearchWake(int wakeState, boolean inline) {
 		var cs = clusterState;
 		var victim = group.scheduler(wakeState - SEARCHING);
 		var task = victim.worthStealing() ? victim.tryStealOne() : null;
@@ -586,12 +589,20 @@ public final class EventLoopScheduler {
 			cs.stoppedSearching();
 		}
 		if (task != null) {
+			var event = SchedulerJfrUtil.beginWorkStealEvent();
+			int sourceQueueDepth = event != null ? victim.runnableCount() : 0;
 			if (victim.hasRunnableContinuations()) {
 				signalWorkFor(victim);
-			} else {
 			}
-			runQueue.offer(task);
-		} else {
+			if (inline) {
+				runContinuation(task);
+			} else {
+				runQueue.offer(task);
+			}
+			if (event != null) {
+				SchedulerJfrUtil.commitDirectedStealEvent(event, task, victim.carrierThread, carrierThread,
+						sourceQueueDepth, inline);
+			}
 		}
 	}
 
@@ -625,16 +636,6 @@ public final class EventLoopScheduler {
 		}
 		if (!cs.idleTracker().wakeFirstIdle(group, victim)) {
 			cs.stoppedSearching();
-		}
-	}
-
-	private void resetSearching() {
-		if (searching) {
-			searching = false;
-			var cs = clusterState;
-			if (cs != null) {
-				cs.stoppedSearching();
-			}
 		}
 	}
 
@@ -695,7 +696,6 @@ public final class EventLoopScheduler {
 		if (task != null) {
 			var event = SchedulerJfrUtil.beginWorkStealEvent();
 			int sourceQueueDepth = event != null ? victim.runnableCount() : 0;
-			resetSearching();
 			if (victim.hasRunnableContinuations()) {
 				signalWorkFor(victim);
 			}

@@ -49,6 +49,10 @@ public final class WorkStealEvent extends Event {
 	@Description("True if stolen from the carrier loop; false if stolen from the pinned poller via maybeYield.")
 	public boolean fromCarrierLoop;
 
+	@Label("Directed")
+	@Description("True if stolen via nSearching directed steal (handleSearchWake); false if via random tryStealing.")
+	public boolean directed;
+
 	public static boolean isEventEnabled() {
 		return EVENT_TYPE.isEnabled();
 	}

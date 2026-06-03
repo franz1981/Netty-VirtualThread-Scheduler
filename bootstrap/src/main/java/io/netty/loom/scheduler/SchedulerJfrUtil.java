@@ -87,6 +87,19 @@ final class SchedulerJfrUtil {
 		event.stealerCarrier = stealerCarrier;
 		event.sourceQueueDepth = sourceQueueDepth;
 		event.fromCarrierLoop = fromCarrierLoop;
+		event.directed = false;
+		event.commit();
+	}
+
+	public static void commitDirectedStealEvent(WorkStealEvent event, Thread.VirtualThreadTask task,
+			Thread sourceCarrier, Thread stealerCarrier, int sourceQueueDepth, boolean inline) {
+		event.end();
+		event.virtualThread = task.thread();
+		event.sourceCarrier = sourceCarrier;
+		event.stealerCarrier = stealerCarrier;
+		event.sourceQueueDepth = sourceQueueDepth;
+		event.fromCarrierLoop = inline;
+		event.directed = true;
 		event.commit();
 	}
 
