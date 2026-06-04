@@ -281,13 +281,13 @@ public final class EventLoopScheduler {
 	 *
 	 * <p>
 	 * The poller must: (1) call {@link #maybeYield(boolean)} between phases to
-	 * yield CPU time to external VTs, (2) use {@link #tryParkPoller()} (or
-	 * {@link #canParkPoller()} + {@link #tryPark()}) before entering blocking I/O
-	 * and ensure no wakeup signal is lost in the race window between the check and
-	 * the blocking call — either via a permit-based mechanism (sticky wakeup, e.g.
-	 * eventfd or {@link java.util.concurrent.locks.LockSupport#unpark}) or a
-	 * lock-based rendezvous where the check and wait are inside the same lock, and
-	 * (3) eventually return from {@code body} so the slot can be freed.
+	 * yield CPU time to external VTs, (2) for blocking I/O: call
+	 * {@link #tryParkPoller()} to declare intent, let the transport check
+	 * {@link #canParkPoller()} right before the blocking syscall (to catch
+	 * transient state resets), then call {@link #unpark()} immediately after waking
+	 * — and ensure no wakeup signal is lost via a permit-based mechanism (sticky
+	 * wakeup, e.g. eventfd) or a lock-based rendezvous, and (3) eventually return
+	 * from {@code body} so the slot can be freed.
 	 *
 	 * @param wakeup
 	 *            called from any thread to interrupt the poller's blocking I/O
@@ -407,27 +407,37 @@ public final class EventLoopScheduler {
 	 * {@link #registerPinnedPoller wakeup} will fire. The blocking mechanism must
 	 * handle this race (see {@link #registerPinnedPoller} for details).
 	 */
+	/**
+	 * Returns {@code true} if the carrier is still in PARKED state and no work is
+	 * pending. The transport's {@code canBlock()} should delegate to this method
+	 * right before the actual blocking I/O syscall.
+	 *
+	 * <p>
+	 * Between {@link #tryParkPoller()} returning {@code true} and the blocking
+	 * syscall, the poller VT may be transiently descheduled (e.g. contended lock).
+	 * During that window the carrier loop can reset PARKED to RUNNING. This check
+	 * catches that: if it returns {@code false}, the transport must skip the
+	 * blocking syscall and do a non-blocking poll instead.
+	 */
 	public boolean canParkPoller() {
 		assert isValidPinnedPoller();
-		return !hasRunnableContinuations() && (int) CARRIER_STATE.getAcquire(this) < SEARCHING;
+		return !hasRunnableContinuations() && (int) CARRIER_STATE.getAcquire(this) == PARKED;
 	}
 
 	/**
 	 * Poller entry point: pre-check + park in one call. Returns true if the carrier
-	 * transitioned to PARKED and the caller should enter blocking I/O.
+	 * transitioned to PARKED and the caller should proceed to I/O.
 	 *
 	 * <p>
-	 * <b>Critical:</b> the caller must enter blocking I/O immediately after this
-	 * returns true, and must call {@link #unpark()} immediately after waking from
-	 * I/O. No blocking operations, {@code Thread.yield()}, or any other
-	 * descheduling point is allowed between {@code tryParkPoller()} and the
-	 * blocking I/O call, or between the I/O return and {@link #unpark()}. If the
-	 * poller VT is descheduled in either window, the carrier loop may reset the
-	 * PARKED state to RUNNING, causing subsequent wakeup signals to be lost
-	 * (CAS(PARKED,RUNNING) fails because the state is already RUNNING).
+	 * If this returns {@code true}, the caller <b>must</b> call {@link #unpark()}
+	 * afterward — regardless of whether {@link #canParkPoller()} later returned
+	 * {@code false} and the poller skipped blocking I/O. Use try-finally.
 	 */
 	public boolean tryParkPoller() {
-		return canParkPoller() && tryPark();
+		if (hasRunnableContinuations() || (int) CARRIER_STATE.getAcquire(this) >= SEARCHING) {
+			return false;
+		}
+		return tryPark();
 	}
 
 	/**

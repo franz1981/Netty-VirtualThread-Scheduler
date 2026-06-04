@@ -291,7 +291,13 @@ A pinned poller has three responsibilities:
    );
    ```
 
-   Between `tryParkPoller()` returning true and the transport entering its blocking syscall, work may arrive and the scheduler calls `wakeup()`. That signal must not be lost. Two approaches:
+   A blocking poller must follow three steps:
+
+   1. **`tryParkPoller()`** — transitions the carrier to PARKED. If it returns `false`, do a non-blocking poll instead.
+   2. **`canParkPoller()`** (via `canBlock()`) — called by the transport right before the actual blocking syscall. Verifies the carrier is still PARKED and no work arrived. Between `tryParkPoller()` and the blocking call, the poller VT may be transiently descheduled (e.g. contended lock), during which the carrier loop can reset PARKED to RUNNING. If `canParkPoller()` returns `false`, the transport must skip the blocking syscall and do a non-blocking poll — the poller loop will call `unpark()` and retry on the next iteration.
+   3. **`unpark()`** — called immediately after waking from blocking I/O. Resets the carrier state and handles any pending directed-steal signals.
+
+   Beyond the state check, the wakeup signal itself must not be lost. Two approaches:
 
    **Permit-based (lock-free):** The transport's wakeup is sticky — if called before the blocking call starts, the blocking call returns immediately. Examples: `eventfd` (stays readable until consumed), `Selector.wakeup()` (sets a flag), `LockSupport.unpark()` (stores a permit). This is what Netty's transports use.
 
@@ -303,7 +309,7 @@ A pinned poller has three responsibilities:
    - [Viktor Klang's actor](https://gist.github.com/viktorklang/2557678) — the atomic-flag-with-recheck pattern
 
 Additional constraints:
-- `canParkPoller()` is a snapshot — it can go stale immediately. Never cache the result.
+- `canParkPoller()` verifies the carrier is still PARKED and no work is pending. It is a snapshot — never cache the result.
 - One poller per carrier. `registerPinnedPoller` throws if a poller is already registered.
 
 For a deeper look at the store-barrier-load protocol, JCStress proofs that the guard prevents missed wakeups (and that removing it causes 94% signal loss), and the [`BlockingPollGuard`](concurrency-tests/src/main/java/io/netty/loom/concurrent/BlockingPollGuard.java) utility that encapsulates it, see [`concurrency-tests/README.md`](concurrency-tests/README.md).

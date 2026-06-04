@@ -1244,10 +1244,9 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		}
 	}
 
-	@Disabled("Known state machine weakness: carrier loop resets poller's PARKED state on descheduling")
 	@Test
 	@Timeout(10)
-	void pollerYieldBetweenTryParkAndBlockingIOCausesMissedWakeup() throws Exception {
+	void pollerDeschedulingFollowedByCarrierParkHandledByIsParkedForBlocking() throws Exception {
 		var group = EventLoopSchedulerGroup.instance();
 		assumeTrue(group.size() >= 1, "need at least 1 carrier");
 		var scheduler = group.scheduler(0);
@@ -1256,8 +1255,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var pollerParked = new CountDownLatch(1);
 		var pollerResume = new CountDownLatch(1);
 		var descheduleLatch = new CountDownLatch(1);
-		var stateAfterDeschedule = new CompletableFuture<Integer>();
-		var wakeupResult = new CompletableFuture<Boolean>();
+		var canBlockResult = new CompletableFuture<Boolean>();
 
 		var termination = scheduler.registerPinnedPoller(() -> {
 		}, () -> {
@@ -1268,7 +1266,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				} catch (InterruptedException e) {
 					Thread.currentThread().interrupt();
 				}
-				stateAfterDeschedule.complete(scheduler.carrierState());
+				canBlockResult.complete(scheduler.canParkPoller());
 				scheduler.unpark();
 			}
 			try {
@@ -1280,15 +1278,25 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 		try {
 			assertTrue(pollerParked.await(5, TimeUnit.SECONDS));
+
+			// Wait for the carrier to park (it resets PARKED→RUNNING, then
+			// parks itself with its own PARKED via tryPark).
+			long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+			while (scheduler.carrierThread().getState() != Thread.State.WAITING && System.nanoTime() < deadline) {
+				Thread.onSpinWait();
+			}
+			assertEquals(Thread.State.WAITING, scheduler.carrierThread().getState(),
+					"carrier should be parked after resetting poller's PARKED");
+
+			// Release the poller VT — its resubmission wakes the carrier
+			// via execute → wakeup CAS(PARKED,RUNNING).
 			descheduleLatch.countDown();
-			int state = stateAfterDeschedule.get(5, TimeUnit.SECONDS);
+			boolean canBlock = canBlockResult.get(5, TimeUnit.SECONDS);
 
-			wakeupResult.complete(scheduler.wakeup());
-
-			assertNotEquals(0, state,
-					"carrier state after yield should still be PARKED — if RUNNING(0), "
-							+ "the carrier loop reset it and wakeup() CAS(PARKED,RUNNING) "
-							+ "would fail, causing a missed wakeup in blocking I/O");
+			assertFalse(canBlock,
+					"canParkPoller() must return false — the carrier loop reset "
+							+ "the poller's PARKED to RUNNING, then parked itself. The poller "
+							+ "must skip blocking I/O to avoid a missed wakeup.");
 		} finally {
 			pollerResume.countDown();
 			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
