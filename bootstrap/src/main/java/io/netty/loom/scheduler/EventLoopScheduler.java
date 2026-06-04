@@ -415,6 +415,16 @@ public final class EventLoopScheduler {
 	/**
 	 * Poller entry point: pre-check + park in one call. Returns true if the carrier
 	 * transitioned to PARKED and the caller should enter blocking I/O.
+	 *
+	 * <p>
+	 * <b>Critical:</b> the caller must enter blocking I/O immediately after this
+	 * returns true, and must call {@link #unpark()} immediately after waking from
+	 * I/O. No blocking operations, {@code Thread.yield()}, or any other
+	 * descheduling point is allowed between {@code tryParkPoller()} and the
+	 * blocking I/O call, or between the I/O return and {@link #unpark()}. If the
+	 * poller VT is descheduled in either window, the carrier loop may reset the
+	 * PARKED state to RUNNING, causing subsequent wakeup signals to be lost
+	 * (CAS(PARKED,RUNNING) fails because the state is already RUNNING).
 	 */
 	public boolean tryParkPoller() {
 		return canParkPoller() && tryPark();
@@ -426,7 +436,7 @@ public final class EventLoopScheduler {
 	 * (before blocking I/O). Returns true if the transition succeeded and the
 	 * caller should block.
 	 */
-	public boolean tryPark() {
+	private boolean tryPark() {
 		if (!CARRIER_STATE.compareAndSet(this, RUNNING, PARKED)) {
 			return false;
 		}

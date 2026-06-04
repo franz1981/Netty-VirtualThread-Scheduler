@@ -46,6 +46,7 @@ import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.uring.IoUring;
 import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.channel.uring.IoUringServerSocketChannel;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -1147,7 +1148,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 		var termination = schedulerA.registerPinnedPoller(() -> {
 		}, () -> {
-			if (schedulerA.tryPark()) {
+			if (schedulerA.tryParkPoller()) {
 				pollerParked.countDown();
 				lock.lock();
 				try {
@@ -1205,7 +1206,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 		var termination = schedulerA.registerPinnedPoller(() -> {
 		}, () -> {
-			if (schedulerA.tryPark()) {
+			if (schedulerA.tryParkPoller()) {
 				pollerParked.countDown();
 				// Yield — unmounts the VT, carrier loop takes over.
 				// State is PARKED, carrier is in bitmap.
@@ -1243,6 +1244,57 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		}
 	}
 
+	@Disabled("Known state machine weakness: carrier loop resets poller's PARKED state on descheduling")
+	@Test
+	@Timeout(10)
+	void pollerYieldBetweenTryParkAndBlockingIOCausesMissedWakeup() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 1, "need at least 1 carrier");
+		var scheduler = group.scheduler(0);
+		assumeTrue(!scheduler.hasRegisteredPinnedPoller());
+
+		var pollerParked = new CountDownLatch(1);
+		var pollerResume = new CountDownLatch(1);
+		var descheduleLatch = new CountDownLatch(1);
+		var stateAfterDeschedule = new CompletableFuture<Integer>();
+		var wakeupResult = new CompletableFuture<Boolean>();
+
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
+			if (scheduler.tryParkPoller()) {
+				pollerParked.countDown();
+				try {
+					descheduleLatch.await();
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				}
+				stateAfterDeschedule.complete(scheduler.carrierState());
+				scheduler.unpark();
+			}
+			try {
+				pollerResume.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+
+		try {
+			assertTrue(pollerParked.await(5, TimeUnit.SECONDS));
+			descheduleLatch.countDown();
+			int state = stateAfterDeschedule.get(5, TimeUnit.SECONDS);
+
+			wakeupResult.complete(scheduler.wakeup());
+
+			assertNotEquals(0, state,
+					"carrier state after yield should still be PARKED — if RUNNING(0), "
+							+ "the carrier loop reset it and wakeup() CAS(PARKED,RUNNING) "
+							+ "would fail, causing a missed wakeup in blocking I/O");
+		} finally {
+			pollerResume.countDown();
+			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+		}
+	}
+
 	@Test
 	@Timeout(10)
 	@EnabledIfSystemProperty(named = "io.netty.loom.workstealing.enabled", matches = "true")
@@ -1262,7 +1314,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 		var termination = schedulerA.registerPinnedPoller(() -> {
 		}, () -> {
-			if (schedulerA.tryPark()) {
+			if (schedulerA.tryParkPoller()) {
 				pollerParked.countDown();
 				try {
 					searchingSetUp.await();
