@@ -1255,7 +1255,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 
 		var pollerParked = new CountDownLatch(1);
 		var pollerResume = new CountDownLatch(1);
-		var searchingReady = new AtomicBoolean(false);
+		var searchingSetUp = new CountDownLatch(1);
 		var lock = new java.util.concurrent.locks.ReentrantLock();
 		var vtStarted = new CountDownLatch(1);
 		var vtFinish = new AtomicBoolean(false);
@@ -1264,8 +1264,10 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		}, () -> {
 			if (schedulerA.tryPark()) {
 				pollerParked.countDown();
-				while (!searchingReady.get()) {
-					Thread.onSpinWait();
+				try {
+					searchingSetUp.await();
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
 				}
 				lock.lock();
 				try {
@@ -1285,9 +1287,12 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			lock.lock();
 			try {
 				assertTrue(pollerParked.await(5, TimeUnit.SECONDS));
+				// Poller VT is now blocked on searchingSetUp.await() — unmounted.
+				// Carrier loop runs, finds no work, parks. State stays PARKED.
 
 				assertTrue(schedulerA.clusterState.tryStartSearcher());
-				assertTrue(schedulerA.wakeupAsSearcher(schedulerB));
+				assertTrue(schedulerA.wakeupAsSearcher(schedulerB),
+						"CAS PARKED→SEARCHING should succeed — carrier is parked");
 
 				schedulerA.virtualThreadFactory().newThread(() -> {
 					vtStarted.countDown();
@@ -1296,14 +1301,17 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 					}
 				}).start();
 
-				searchingReady.set(true);
+				// Release poller from latch. It hits lock.lock() → blocks (we hold
+				// the lock). Carrier loop wakes (unpark from wakeupAsSearcher) with
+				// SEARCHING + VT in queue.
+				searchingSetUp.countDown();
+
 				assertTrue(vtStarted.await(5, TimeUnit.SECONDS), "VT should start running on carrier A");
 
 				// Carrier is draining the yielding VT while the lock is held,
 				// so the poller cannot call unpark(). If the carrier loop
 				// processes SEARCHING eagerly (at the top of each iteration),
-				// carrierState drops below SEARCHING. If not, it stays stuck
-				// at SEARCHING+victimId until the poller eventually unparks.
+				// carrierState drops below SEARCHING.
 				long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
 				while (schedulerA.carrierState() >= EventLoopScheduler.SEARCHING && System.nanoTime() < deadline) {
 					Thread.onSpinWait();
@@ -1323,7 +1331,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			assertEquals(0, cs.nSearching(), "nSearching must eventually return to 0");
 		} finally {
 			vtFinish.set(true);
-			searchingReady.set(true);
+			searchingSetUp.countDown();
 			pollerResume.countDown();
 			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
 		}
