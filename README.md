@@ -682,7 +682,8 @@ Each event records:
   siblings. Tail latency improves for VTs that would otherwise wait on a stuck carrier.
 - **Max throughput**: near-zero overhead when enabled. The `isEmpty()` fast-path in
   the ticket lock avoids atomic operations on empty polls. The nSearching CAS
-  only fires from actual submissions, not from drain cycles.
+  fires from submissions and when the carrier loop finds remaining work after
+  a drain iteration.
 
 ## CPU topology awareness
 
