@@ -188,6 +188,11 @@ Without CPU affinity, the Linux scheduler (on this kernel,
 across both cores. The Master-Poller has more scheduling events than either carrier,
 competing for CPU on both.
 
+The important part is not that the Master-Poller is busy all the time. Even an
+otherwise infrequent alien thread can become a noisy neighbor at the wrong
+utilization level: a few badly timed wakeups are enough to delay the next carrier
+poll, and that delay turns into batched work and higher latency.
+
 [`pidstat`](https://man7.org/linux/man-pages/man1/pidstat.1.html) (enabled by default,
 output in `pidstat.log`) shows the `%wait` column — time the thread was runnable but
 waiting for a CPU:
@@ -372,6 +377,10 @@ bash benchmark-runner/scripts/run-benchmark.sh \
 - **Heap:** default `-Xms1g -Xmx1g` (via `JAVA_OPTS`).
 - **JFR:** do NOT enable `--jfr` for latency comparison — JFR event overhead
   inflates p50 by 2-3x on 2 cores. Use JFR only in separate runs for event analysis.
+- **Monitoring overhead:** treat observers with suspicion. At the utilization level
+  where these latency effects appear, even a light alien thread can become a noisy
+  neighbor. Prefer the least intrusive tool that answers the question, and keep
+  tracing runs separate from latency runs.
 - **Clean builds:** always `mvn clean package -DskipTests` when switching branches or
   commits — stale classes in the fat jar produce silently wrong results.
 - **Load gen sizing:** 4 threads on 4 CPUs for the load generator is required at 50K
