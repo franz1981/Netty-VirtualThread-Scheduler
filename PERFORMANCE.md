@@ -310,11 +310,79 @@ Both schedulers track each other on latency — p50 is dominated by the mock del
 
 All data collected via [`benchmark-runner/scripts/run-benchmark.sh`](benchmark-runner/scripts/run-benchmark.sh).
 See [`benchmark-runner/README.md`](benchmark-runner/README.md) for the full list of
-flags and output files.
+flags and output files. See also [`run-quick-comparison.sh`](run-quick-comparison.sh) for
+a self-contained script that runs all configurations back-to-back.
 
-Key flags used in this analysis:
+### CPU-bound configuration (50K req/s, 2 cores)
+
+```bash
+export JAVA_HOME=/path/to/loom/jdk
+
+# Baseline (no WS, no affinity):
+bash benchmark-runner/scripts/run-benchmark.sh \
+  --mode NETTY_SCHEDULER --io epoll --threads 2 --rate 50000 \
+  --connections 100 --load-threads 4 --load-cpuset 0,1,4,5 \
+  --server-cpuset 2,3 --mock-cpuset 6,7 --mock-threads 2 --mock-think-time 1 \
+  --perf-stat --output-dir results/baseline
+
+# Aggressive work-stealing:
+SERVER_WS=true \
+bash benchmark-runner/scripts/run-benchmark.sh \
+  --mode NETTY_SCHEDULER --io epoll --threads 2 --rate 50000 \
+  --connections 100 --load-threads 4 --load-cpuset 0,1,4,5 \
+  --server-cpuset 2,3 --mock-cpuset 6,7 --mock-threads 2 --mock-think-time 1 \
+  --perf-stat --output-dir results/ws-aggressive
+
+# Work-stealing + topology (CPU-affine carriers):
+SERVER_WS=true SERVER_TOPOLOGY=true \
+bash benchmark-runner/scripts/run-benchmark.sh \
+  --mode NETTY_SCHEDULER --io epoll --threads 2 --rate 50000 \
+  --connections 100 --load-threads 4 --load-cpuset 0,1,4,5 \
+  --server-cpuset 2,3 --mock-cpuset 6,7 --mock-threads 2 --mock-think-time 1 \
+  --perf-stat --output-dir results/ws-topo
+
+# N+1 cores (3 cores for 2 carriers):
+bash benchmark-runner/scripts/run-benchmark.sh \
+  --mode NETTY_SCHEDULER --io epoll --threads 2 --rate 50000 \
+  --connections 100 --load-threads 4 --load-cpuset 0,1,4,5 \
+  --server-cpuset 2,3,8 --mock-cpuset 6,7 --mock-threads 2 --mock-think-time 1 \
+  --perf-stat --output-dir results/n-plus-1
+
+# FJP (reference):
+bash benchmark-runner/scripts/run-benchmark.sh \
+  --mode NON_VIRTUAL_NETTY --io epoll --threads 2 --rate 50000 \
+  --connections 100 --load-threads 4 --load-cpuset 0,1,4,5 \
+  --server-cpuset 2,3 --mock-cpuset 6,7 --mock-threads 2 --mock-think-time 1 \
+  --perf-stat --output-dir results/fjp
+```
+
+### I/O-bound configuration (max TPS, 8 cores)
+
+```bash
+bash benchmark-runner/scripts/run-benchmark.sh \
+  --mode NETTY_SCHEDULER --io epoll --threads 8 \
+  --connections 10000 --load-threads 4 --load-cpuset 0,1,2,3 \
+  --server-cpuset 8,9,10,11,12,13,14,15 --mock-cpuset 4,5,6,7 \
+  --mock-threads 4 --mock-think-time 30 \
+  --perf-stat --output-dir results/io-bound
+```
+
+### Important notes
+
+- **Heap:** default `-Xms1g -Xmx1g` (via `JAVA_OPTS`).
+- **JFR:** do NOT enable `--jfr` for latency comparison — JFR event overhead
+  inflates p50 by 2-3x on 2 cores. Use JFR only in separate runs for event analysis.
+- **Clean builds:** always `mvn clean package -DskipTests` when switching branches or
+  commits — stale classes in the fat jar produce silently wrong results.
+- **Load gen sizing:** 4 threads on 4 CPUs for the load generator is required at 50K
+  rate. With fewer threads/cores, wrk2 becomes the bottleneck and all latency numbers
+  are inflated.
+
+### Key flags
 
 - `--perf-stat` — CPU utilization via `perf stat`
 - `--perf-sched` — Linux scheduler profiling (thread CPU distribution, migrations)
-- `--jfr` — Netty scheduler JFR events (IO cycles, queue depth, VT drain batches)
+- `--jfr` — Netty scheduler JFR events (use only for event counts, not latency)
 - `--mode NETTY_SCHEDULER` / `--mode NON_VIRTUAL_NETTY` — our scheduler vs FJP
+- `SERVER_WS=true` — enable work stealing
+- `SERVER_TOPOLOGY=true` — enable LinuxCarrierTopology (CPU pinning + cluster awareness)

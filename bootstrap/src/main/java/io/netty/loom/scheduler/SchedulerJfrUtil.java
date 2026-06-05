@@ -50,23 +50,23 @@ final class SchedulerJfrUtil {
 	}
 
 	public static void commitVirtualThreadTaskRunEvent(VirtualThreadTaskRunEvent event, Thread carrierThread,
-			Thread virtualThread, boolean isPoller, boolean isEventLoop) {
+			Thread virtualThread, boolean isPoller, boolean isPinnedPoller) {
 		event.end();
 		event.carrierThread = carrierThread;
 		event.virtualThread = virtualThread;
 		event.isPoller = isPoller;
-		event.isEventLoop = isEventLoop;
+		event.isPinnedPoller = isPinnedPoller;
 		event.commit();
 	}
 
 	public static void commitVirtualThreadTaskSubmitEvent(Thread.VirtualThreadTask task, Thread submitterThread,
-			Thread carrierThread, boolean isPoller, boolean isEventLoop) {
+			Thread carrierThread, boolean isPoller, boolean isPinnedPoller) {
 		var event = new VirtualThreadTaskSubmitEvent();
 		event.virtualThread = task.thread();
 		event.submitterThread = submitterThread;
 		event.carrierThread = carrierThread;
 		event.isPoller = isPoller;
-		event.isEventLoop = isEventLoop;
+		event.isPinnedPoller = isPinnedPoller;
 		event.commit();
 	}
 
@@ -87,6 +87,19 @@ final class SchedulerJfrUtil {
 		event.stealerCarrier = stealerCarrier;
 		event.sourceQueueDepth = sourceQueueDepth;
 		event.fromCarrierLoop = fromCarrierLoop;
+		event.directed = false;
+		event.commit();
+	}
+
+	public static void commitDirectedStealEvent(WorkStealEvent event, Thread.VirtualThreadTask task,
+			Thread sourceCarrier, Thread stealerCarrier, int sourceQueueDepth, boolean inline) {
+		event.end();
+		event.virtualThread = task.thread();
+		event.sourceCarrier = sourceCarrier;
+		event.stealerCarrier = stealerCarrier;
+		event.sourceQueueDepth = sourceQueueDepth;
+		event.fromCarrierLoop = inline;
+		event.directed = true;
 		event.commit();
 	}
 

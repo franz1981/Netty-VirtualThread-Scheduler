@@ -46,6 +46,7 @@ import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.uring.IoUring;
 import io.netty.channel.uring.IoUringIoHandler;
 import io.netty.channel.uring.IoUringServerSocketChannel;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -699,7 +700,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
 		assumeTrue(available != null, "no free scheduler slots available");
 		var scheduler = available[0];
-		var termination = scheduler.registerPinnedPoller(() -> false, () -> {
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
 		});
 		termination.toCompletableFuture().join();
 		assertFalse(scheduler.hasRegisteredPinnedPoller());
@@ -710,10 +712,38 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
 		assumeTrue(available != null, "no free scheduler slots available");
 		var scheduler = available[0];
-		var termination = scheduler.registerPinnedPoller(() -> false, () -> {
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
 			throw new RuntimeException("poller crashed");
 		});
 		termination.toCompletableFuture().join();
+		assertFalse(scheduler.hasRegisteredPinnedPoller());
+	}
+
+	@Test
+	void registerPinnedPollerRejectsDoubleRegistration() throws Exception {
+		var available = EventLoopSchedulerGroup.instance().availableSchedulers(1);
+		assumeTrue(available != null, "no free scheduler slots available");
+		var scheduler = available[0];
+		var resume = new CountDownLatch(1);
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
+			try {
+				resume.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+		try {
+			Thread.sleep(50);
+			assertTrue(scheduler.hasRegisteredPinnedPoller());
+			assertThrows(IllegalStateException.class, () -> scheduler.registerPinnedPoller(() -> {
+			}, () -> {
+			}));
+		} finally {
+			resume.countDown();
+			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+		}
 		assertFalse(scheduler.hasRegisteredPinnedPoller());
 	}
 
@@ -785,7 +815,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		assertTrue(startedA.await(2, TimeUnit.SECONDS));
 		assertTrue(startedB.await(2, TimeUnit.SECONDS));
 		try {
-			awaitUnresponsive(schedulerA);
+			awaitStealOpportunity();
 			factoryA.newThread(() -> {
 				runningRef.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
@@ -829,7 +859,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		assertTrue(startedA.await(2, TimeUnit.SECONDS));
 		assertTrue(startedB.await(2, TimeUnit.SECONDS));
 		try {
-			awaitUnresponsive(schedulerA);
+			awaitStealOpportunity();
 			factoryA.newThread(() -> {
 				factoryA.newThread(() -> {
 					childHome.complete(EventLoopScheduler.currentScheduler());
@@ -864,7 +894,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			}).start();
 			assertTrue(blockerStarted.await(2, TimeUnit.SECONDS));
 			try {
-				awaitUnresponsive(schedulerA);
+				awaitStealOpportunity();
 				factoryA.newThread(() -> {
 					runningRef.complete(EventLoopScheduler.currentRunningScheduler());
 				}).start();
@@ -950,7 +980,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 					} catch (IOException _) {
 					}
 				});
-				awaitUnresponsive(schedulerA);
+				awaitStealOpportunity();
 				factoryA.newThread(() -> {
 					targetHome.complete(EventLoopScheduler.currentScheduler());
 				}).start();
@@ -978,7 +1008,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var pollerLatch = new CountDownLatch(1);
 		var pollersStarted = new CountDownLatch(2);
 		var vtRan = new CompletableFuture<EventLoopScheduler>();
-		var pollerATermination = schedulerA.registerPinnedPoller(() -> false, () -> {
+		var pollerATermination = schedulerA.registerPinnedPoller(() -> {
+		}, () -> {
 			pollersStarted.countDown();
 			while (spinnerA.get()) {
 				Thread.onSpinWait();
@@ -989,7 +1020,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				Thread.currentThread().interrupt();
 			}
 		});
-		var pollerBTermination = schedulerB.registerPinnedPoller(() -> false, () -> {
+		var pollerBTermination = schedulerB.registerPinnedPoller(() -> {
+		}, () -> {
 			pollersStarted.countDown();
 			while (spinnerB.get()) {
 				Thread.onSpinWait();
@@ -997,7 +1029,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		});
 		try {
 			assertTrue(pollersStarted.await(2, TimeUnit.SECONDS));
-			awaitUnresponsive(schedulerB);
+			awaitStealOpportunity();
 			schedulerB.virtualThreadFactory().newThread(() -> {
 				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
@@ -1041,7 +1073,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		}).start();
 		assertTrue(spinnerStarted.await(2, TimeUnit.SECONDS));
 		try {
-			awaitUnresponsive(schedulerB);
+			awaitStealOpportunity();
 			schedulerB.virtualThreadFactory().newThread(() -> {
 				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
@@ -1066,7 +1098,8 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		var spinnerStarted = new CountDownLatch(1);
 		var spinnerB = new AtomicBoolean(true);
 		var vtRan = new CompletableFuture<EventLoopScheduler>();
-		var pollerTermination = schedulerA.registerPinnedPoller(() -> false, () -> {
+		var pollerTermination = schedulerA.registerPinnedPoller(() -> {
+		}, () -> {
 			pollerStarted.countDown();
 			try {
 				pollerLatch.await();
@@ -1086,7 +1119,7 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 				}
 			}).start();
 			assertTrue(spinnerStarted.await(2, TimeUnit.SECONDS));
-			awaitUnresponsive(schedulerB);
+			awaitStealOpportunity();
 			schedulerB.virtualThreadFactory().newThread(() -> {
 				vtRan.complete(EventLoopScheduler.currentRunningScheduler());
 			}).start();
@@ -1099,10 +1132,68 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 		}
 	}
 
-	private static void awaitUnresponsive(EventLoopScheduler scheduler) throws InterruptedException {
-		long thresholdMs = Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200);
-		Thread.sleep(thresholdMs + 5);
-		assertTrue(scheduler.isUnresponsive(System.nanoTime()), "scheduler should be unresponsive after threshold");
+	@Test
+	@Timeout(10)
+	void workCompletesWhenPollerDescheduledBetweenTryParkAndBlockingIO() throws Exception {
+		var group = EventLoopSchedulerGroup.instance();
+		assumeTrue(group.size() >= 1, "need at least 1 carrier");
+		var scheduler = group.scheduler(0);
+		assumeTrue(!scheduler.hasRegisteredPinnedPoller());
+
+		var pollerParked = new CountDownLatch(1);
+		var pollerResume = new CountDownLatch(1);
+		var descheduleLatch = new CountDownLatch(1);
+		var vtResult = new CompletableFuture<String>();
+
+		var termination = scheduler.registerPinnedPoller(() -> {
+		}, () -> {
+			if (scheduler.tryParkPoller()) {
+				pollerParked.countDown();
+				// Descheduling point: poller VT blocks on latch between
+				// tryParkPoller and "blocking I/O". The carrier loop may
+				// reset PARKED to RUNNING during this window.
+				try {
+					descheduleLatch.await();
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				}
+				// canParkPoller re-check (as canBlock would do in real transport):
+				// if state was reset, skip blocking. Either way, unpark.
+				scheduler.unpark();
+			}
+			try {
+				pollerResume.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+
+		try {
+			assertTrue(pollerParked.await(5, TimeUnit.SECONDS));
+
+			// Submit work while the poller is descheduled. If the wakeup
+			// mechanism is broken (missed wakeup), this VT will never run.
+			scheduler.virtualThreadFactory().newThread(() -> {
+				vtResult.complete("done");
+			}).start();
+
+			// Release the poller from the latch
+			descheduleLatch.countDown();
+
+			// The VT must complete — either the carrier loop drained it
+			// while the poller was descheduled, or the wakeup fired and
+			// the carrier processed it after unpark.
+			assertEquals("done", vtResult.get(5, TimeUnit.SECONDS),
+					"VT must complete even when the poller was descheduled "
+							+ "between tryParkPoller and blocking I/O");
+		} finally {
+			pollerResume.countDown();
+			termination.toCompletableFuture().get(5, TimeUnit.SECONDS);
+		}
+	}
+
+	private static void awaitStealOpportunity() throws InterruptedException {
+		Thread.sleep(50);
 	}
 
 	private static ThreadFactory vThreadFactory(MultiThreadIoEventLoopGroup group) {
@@ -1111,5 +1202,86 @@ public class VirtualIoNativePollerEventLoopGroupTest {
 			case VirtualIoNativePollerEventLoopGroup g -> g.vThreadFactory();
 			default -> throw new IllegalArgumentException("unexpected group type: " + group.getClass());
 		};
+	}
+
+	@Test
+	void ioUringRingFdsClosedAfterGroupClose() throws Exception {
+		assumeTrue(IoUring.isAvailable(), "io_uring not available");
+		int before = countIoUringFds();
+		var group = new VirtualIoNativePollerEventLoopGroup(1, IoUringIoHandler.newFactory());
+		Thread.sleep(200);
+		int during = countIoUringFds();
+		assertTrue(during > before, "expected at least one ring fd while group is open");
+		group.close();
+		Thread.sleep(200);
+		int after = countIoUringFds();
+		assertEquals(before, after, "ring fds leaked after close: before=" + before + " after=" + after);
+	}
+
+	@Test
+	void ioUringRingFdsClosedAfterGroupCloseWithActiveConnections() throws Exception {
+		assumeTrue(IoUring.isAvailable(), "io_uring not available");
+		int before = countIoUringFds();
+		var group = new VirtualIoNativePollerEventLoopGroup(1, IoUringIoHandler.newFactory());
+
+		var bootstrap = new ServerBootstrap().group(group).channel(IoUringServerSocketChannel.class)
+				.childHandler(new ChannelInitializer<SocketChannel>() {
+					@Override
+					protected void initChannel(SocketChannel ch) {
+						ch.pipeline().addLast(new HttpServerCodec());
+						ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+							@Override
+							public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) {
+								if (msg instanceof DefaultHttpRequest) {
+									var content = ctx.alloc().directBuffer();
+									content.writeCharSequence("OK", CharsetUtil.US_ASCII);
+									var response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1,
+											HttpResponseStatus.OK, content);
+									response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
+									response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
+									ctx.writeAndFlush(response, ctx.voidPromise());
+								}
+								ReferenceCountUtil.release(msg);
+							}
+						});
+					}
+				});
+
+		Channel serverChannel = bootstrap.bind(0).sync().channel();
+		int port = ((InetSocketAddress) serverChannel.localAddress()).getPort();
+		try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+			for (int i = 0; i < 5; i++) {
+				var request = HttpRequest.newBuilder().uri(URI.create("http://localhost:" + port + "/")).GET().build();
+				var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+				assertEquals(200, response.statusCode());
+			}
+		}
+
+		int during = countIoUringFds();
+		assertTrue(during > before, "expected ring fds while group is open with active server");
+
+		group.close();
+		Thread.sleep(200);
+		int after = countIoUringFds();
+		assertEquals(before, after,
+				"ring fds leaked after close with active connections: before=" + before + " after=" + after);
+	}
+
+	private static int countIoUringFds() {
+		int count = 0;
+		var fds = new java.io.File("/proc/self/fd").listFiles();
+		if (fds == null) {
+			return 0;
+		}
+		for (var f : fds) {
+			try {
+				String link = java.nio.file.Files.readSymbolicLink(f.toPath()).toString();
+				if (link.contains("io_uring")) {
+					count++;
+				}
+			} catch (Exception _) {
+			}
+		}
+		return count;
 	}
 }

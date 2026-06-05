@@ -22,7 +22,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
-import java.util.function.BooleanSupplier;
 
 import org.jctools.queues.MpscUnboundedArrayQueue;
 
@@ -36,23 +35,63 @@ import io.netty.loom.scheduler.jfr.VirtualThreadTaskSubmitEvent;
  * <p>
  * Optionally hosts a <em>pinned poller</em> — a long-running VT that does
  * kernel I/O and cooperates with the carrier loop via
- * {@link #maybeYield(boolean)} and {@link #canBlock()}.
+ * {@link #maybeYield(boolean)} and {@link #canParkPoller()}.
  */
 public final class EventLoopScheduler {
 
 	private static final VarHandle PINNED_POLLER_WAKEUP;
 	private static final VarHandle CONSUMER_TICKET;
 	private static final VarHandle CONSUMER_SERVING;
-	private static final VarHandle SCHEDULER_HEARTBEAT;
+	private static final VarHandle CARRIER_STATE;
+
+	// @formatter:off
+	/*
+	 * Carrier park/wake protocol (Viktor Klang mini-actor pattern adapted for
+	 * park/unpark with work-stealing signals).
+	 *
+	 * States: RUNNING(0), PARKED(1), SEARCHING+victimId(2+id).
+	 * SEARCHING encodes a directed-steal hint: the carrier should steal
+	 * from group.scheduler(wakeState - SEARCHING).
+	 *
+	 * Entry to idle (carrier thread):
+	 *   CAS(RUNNING, PARKED)        -- seq_cst, provides StoreLoad
+	 *   markIdle(id)                -- publish in bitmap for wakeFirstIdle
+	 *   if (canParkScheduler())     -- RE-CHECK: catches queue/pinned signals
+	 *       LockSupport.park()      --   that arrived between last drain and CAS
+	 *
+	 * Exit from idle (carrier thread):
+	 *   markActive(id)
+	 *   getAndSet(RUNNING)          -- ATOMIC read+reset, no TOCTOU window
+	 *   handle consumed state       -- SEARCHING+X -> directed steal, else drain
+	 *
+	 * Signals from other threads:
+	 *   wakeup():           CAS(PARKED, RUNNING) + unpark
+	 *   wakeupAsSearcher(): CAS(PARKED, SEARCHING+X) + unpark
+	 *   Both fail if state != PARKED (carrier already waking or running).
+	 *
+	 * How each signal is caught:
+	 *   queue/pinned work -> canParkScheduler re-check (avoids park)
+	 *   search request    -> unpark permit + getAndSet at exit
+	 *
+	 * nSearching (per-cluster, Go wakep-style):
+	 *   signalWorkFor: CAS 0->1, wakeFirstIdle, if no idle -> stoppedSearching
+	 *   carrier:       handleSearchWake on SEARCHING wake -> stoppedSearching
+	 *   Invariant: every tryStartSearcher success is matched by exactly one
+	 *   stoppedSearching -- either from signalWorkFor (no idle found) or from
+	 *   handleSearchWake (in the woken carrier or poller VT).
+	 */
+	// @formatter:on
+	private static final int RUNNING = 0;
+	private static final int PARKED = 1;
+	static final int SEARCHING = 2;
 
 	static {
 		try {
 			var lookup = MethodHandles.lookup();
-			PINNED_POLLER_WAKEUP = lookup.findVarHandle(EventLoopScheduler.class, "pinnedPollerWakeup",
-					BooleanSupplier.class);
+			PINNED_POLLER_WAKEUP = lookup.findVarHandle(EventLoopScheduler.class, "pinnedPollerWakeup", Runnable.class);
 			CONSUMER_TICKET = lookup.findVarHandle(EventLoopScheduler.class, "consumerTicket", int.class);
 			CONSUMER_SERVING = lookup.findVarHandle(EventLoopScheduler.class, "consumerServing", int.class);
-			SCHEDULER_HEARTBEAT = lookup.findVarHandle(EventLoopScheduler.class, "schedulerHeartbeat", long.class);
+			CARRIER_STATE = lookup.findVarHandle(EventLoopScheduler.class, "carrierState", int.class);
 		} catch (ReflectiveOperationException e) {
 			throw new ExceptionInInitializerError(e);
 		}
@@ -60,12 +99,8 @@ public final class EventLoopScheduler {
 
 	public static final long YIELD_DURATION_NS = TimeUnit.MICROSECONDS
 			.toNanos(Integer.getInteger("io.netty.loom.yield.us", 50));
-	private static final int WAKE_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.wake.queue", 8);
-	private static final int STEAL_QUEUE_THRESHOLD = Integer.getInteger("io.netty.loom.workstealing.steal.queue", 2);
 	static final boolean WORK_STEALING_ENABLED = Boolean
 			.parseBoolean(System.getProperty("io.netty.loom.workstealing.enabled", "false"));
-	private static final long UNRESPONSIVE_THRESHOLD_NS = TimeUnit.MILLISECONDS
-			.toNanos(Long.getLong("io.netty.loom.workstealing.unresponsive.ms", 200));
 
 	enum VThreadType {
 		VT, JDK_POLLER, PINNED_POLLER
@@ -160,7 +195,7 @@ public final class EventLoopScheduler {
 	 * thread. Differs from {@link #currentScheduler()} when the VT was stolen by
 	 * another carrier.
 	 */
-	static EventLoopScheduler currentRunningScheduler() {
+	public static EventLoopScheduler currentRunningScheduler() {
 		return currentThreadSchedulerContext().runningScheduler();
 	}
 
@@ -173,25 +208,29 @@ public final class EventLoopScheduler {
 	private final Thread carrierThread;
 	private final ThreadFactory vThreadFactory;
 	private final ThreadFactory pinnedPollerThreadFactory;
-	private volatile Thread parkedCarrierThread;
+	@SuppressWarnings("FieldMayBeFinal")
+	private volatile int carrierState;
 	private volatile Thread.VirtualThreadTask pinnedContinuationToRun;
 	@SuppressWarnings("FieldMayBeFinal")
-	private volatile BooleanSupplier pinnedPollerWakeup;
+	private volatile Runnable pinnedPollerWakeup;
 	@SuppressWarnings("FieldMayBeFinal")
 	private volatile int consumerTicket;
 	@SuppressWarnings("FieldMayBeFinal")
 	private volatile int consumerServing;
 	private volatile EventLoopScheduler[] siblings;
-	@SuppressWarnings("FieldMayBeFinal")
-	private long schedulerHeartbeat = System.nanoTime();
+	EventLoopSchedulerGroup group;
+	ClusterState clusterState;
+	private Runnable onCarrierStart;
 
 	EventLoopScheduler(int id, ThreadFactory threadFactory, int resumedContinuationsExpectedCount,
-			NettyScheduler nettyScheduler) {
+			NettyScheduler nettyScheduler, Runnable onCarrierStart) {
 		this.id = id;
+		this.onCarrierStart = onCarrierStart;
 		runQueue = new MpscUnboundedArrayQueue<>(resumedContinuationsExpectedCount);
 		vThreadFactory = newVThreadFactory(this, VThreadType.VT, nettyScheduler);
 		pinnedPollerThreadFactory = newVThreadFactory(this, VThreadType.PINNED_POLLER, nettyScheduler);
 		carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
+		carrierThread.setName("carrier-" + id);
 		carrierThread.setDaemon(true);
 		carrierThread.start();
 	}
@@ -210,6 +249,10 @@ public final class EventLoopScheduler {
 	 */
 	boolean hasRegisteredPinnedPoller() {
 		return pinnedPollerWakeup != null;
+	}
+
+	int carrierState() {
+		return (int) CARRIER_STATE.getAcquire(this);
 	}
 
 	void setSiblings(EventLoopScheduler[] siblings) {
@@ -238,25 +281,24 @@ public final class EventLoopScheduler {
 	 *
 	 * <p>
 	 * The poller must: (1) call {@link #maybeYield(boolean)} between phases to
-	 * yield CPU time to external VTs, (2) use {@link #canBlock()} before entering
-	 * blocking I/O and ensure no wakeup signal is lost in the race window between
-	 * the check and the blocking call — either via a permit-based mechanism (sticky
-	 * wakeup, e.g. eventfd or
-	 * {@link java.util.concurrent.locks.LockSupport#unpark}) or a lock-based
-	 * rendezvous where the check and wait are inside the same lock, and (3)
-	 * eventually return from {@code body} so the slot can be freed.
+	 * yield CPU time to external VTs, (2) for blocking I/O: call
+	 * {@link #tryParkPoller()} to declare intent, let the transport check
+	 * {@link #canParkPoller()} right before the blocking syscall (to catch
+	 * transient state resets), then call {@link #unpark()} immediately after waking
+	 * — and ensure no wakeup signal is lost via a permit-based mechanism (sticky
+	 * wakeup, e.g. eventfd) or a lock-based rendezvous, and (3) eventually return
+	 * from {@code body} so the slot can be freed.
 	 *
 	 * @param wakeup
-	 *            called from any thread to interrupt the poller's blocking I/O;
-	 *            must be thread-safe. Must return {@code true} if the poller was
-	 *            observed sleeping (signal sent), {@code false} if it was actively
-	 *            running (signal suppressed). The scheduler uses this to guide
-	 *            work-stealing decisions
+	 *            called from any thread to interrupt the poller's blocking I/O
+	 *            (e.g. eventfd write); must be thread-safe and idempotent. Only
+	 *            called after the scheduler has CAS'd the carrier state to PARKED —
+	 *            never called spuriously.
 	 * @param body
 	 *            the poller loop; the slot is freed when this returns
 	 * @return completes when {@code body} exits and the slot is freed
 	 */
-	public CompletionStage<Void> registerPinnedPoller(BooleanSupplier wakeup, Runnable body) {
+	public CompletionStage<Void> registerPinnedPoller(Runnable wakeup, Runnable body) {
 		if (!PINNED_POLLER_WAKEUP.compareAndSet(this, null, wakeup)) {
 			throw new IllegalStateException("poller already registered");
 		}
@@ -270,16 +312,14 @@ public final class EventLoopScheduler {
 			}
 		});
 		pollerThread.start();
-		LockSupport.unpark(parkedCarrierThread);
+		wakeup();
 		return termination;
 	}
 
 	/**
 	 * Scheduling checkpoint for the pinned poller. Must be called between phases of
-	 * the poller loop. Yields the carrier if external VTs have work queued, and
-	 * updates the scheduler heartbeat so siblings can detect unresponsive carriers.
-	 * When no I/O work was done, the scheduler may steal from an overloaded
-	 * sibling.
+	 * the poller loop. Yields the carrier if external VTs have work queued. When no
+	 * I/O work was done, the scheduler may steal from an overloaded sibling.
 	 *
 	 * @param hadIoWork
 	 *            true if the poller processed I/O events or tasks since the last
@@ -287,7 +327,6 @@ public final class EventLoopScheduler {
 	 */
 	public boolean maybeYield(boolean hadIoWork) {
 		assert isValidPinnedPoller();
-		touchHeartbeat();
 		if (hasRunnableContinuations()) {
 			Thread.yield();
 			return true;
@@ -307,31 +346,54 @@ public final class EventLoopScheduler {
 	}
 
 	private void virtualThreadSchedulerLoop() {
+		var init = onCarrierStart;
+		if (init != null) {
+			init.run();
+			onCarrierStart = null;
+		}
 		while (true) {
+			if (WORK_STEALING_ENABLED && (int) CARRIER_STATE.getAcquire(this) >= SEARCHING) {
+				unparkFromCarrier();
+			}
 			int count = drainContinuations(YIELD_DURATION_NS);
 			if (!runPinnedContinuation() && count == 0) {
 				if (WORK_STEALING_ENABLED && tryStealing(true)) {
 					continue;
 				}
-				parkedCarrierThread = carrierThread;
-				touchHeartbeat();
-				if (canParkScheduler()) {
-					LockSupport.park();
-					touchHeartbeat();
+				if (WORK_STEALING_ENABLED) {
+					var sibs = siblings;
+					if (sibs != null) {
+						for (int spin = sibs.length * 3; spin > 0; spin--) {
+							if (!canParkScheduler()) {
+								break;
+							}
+							if (sibs[spin % sibs.length].hasRunnableContinuations()) {
+								if (tryStealing(true)) {
+									break;
+								}
+							}
+							Thread.onSpinWait();
+						}
+						if (!canParkScheduler()) {
+							continue;
+						}
+					}
 				}
-				parkedCarrierThread = null;
+
+				if (tryPark()) {
+					LockSupport.park();
+					unparkFromCarrier();
+				} else if ((int) CARRIER_STATE.getAcquire(this) != RUNNING) {
+					unparkFromCarrier();
+				}
+			} else if (WORK_STEALING_ENABLED && hasRunnableContinuations()) {
+				signalWork();
 			}
 		}
 	}
 
 	private boolean hasRunnableContinuations() {
 		return !runQueue.isEmpty();
-	}
-
-	private void touchHeartbeat() {
-		if (WORK_STEALING_ENABLED) {
-			SCHEDULER_HEARTBEAT.setOpaque(this, System.nanoTime());
-		}
 	}
 
 	/**
@@ -345,9 +407,87 @@ public final class EventLoopScheduler {
 	 * {@link #registerPinnedPoller wakeup} will fire. The blocking mechanism must
 	 * handle this race (see {@link #registerPinnedPoller} for details).
 	 */
-	public boolean canBlock() {
+	/**
+	 * Returns {@code true} if the carrier is still in PARKED state and no work is
+	 * pending. The transport's {@code canBlock()} should delegate to this method
+	 * right before the actual blocking I/O syscall.
+	 *
+	 * <p>
+	 * Between {@link #tryParkPoller()} returning {@code true} and the blocking
+	 * syscall, the poller VT may be transiently descheduled (e.g. contended lock).
+	 * During that window the carrier loop can reset PARKED to RUNNING. This check
+	 * catches that: if it returns {@code false}, the transport must skip the
+	 * blocking syscall and do a non-blocking poll instead.
+	 */
+	public boolean canParkPoller() {
 		assert isValidPinnedPoller();
-		return !hasRunnableContinuations();
+		return !hasRunnableContinuations() && (int) CARRIER_STATE.getAcquire(this) == PARKED;
+	}
+
+	/**
+	 * Poller entry point: pre-check + park in one call. Returns true if the carrier
+	 * transitioned to PARKED and the caller should proceed to I/O.
+	 *
+	 * <p>
+	 * If this returns {@code true}, the caller <b>must</b> call {@link #unpark()}
+	 * afterward — regardless of whether {@link #canParkPoller()} later returned
+	 * {@code false} and the poller skipped blocking I/O. Use try-finally.
+	 */
+	public boolean tryParkPoller() {
+		if (hasRunnableContinuations() || (int) CARRIER_STATE.getAcquire(this) >= SEARCHING) {
+			return false;
+		}
+		return tryPark();
+	}
+
+	/**
+	 * Transitions the carrier to PARKED + marks idle in the bitmap + re-checks.
+	 * Used by both the carrier loop (before LockSupport.park) and the poller
+	 * (before blocking I/O). Returns true if the transition succeeded and the
+	 * caller should block.
+	 */
+	private boolean tryPark() {
+		if (!CARRIER_STATE.compareAndSet(this, RUNNING, PARKED)) {
+			return false;
+		}
+		var cs = clusterState;
+		if (cs != null) {
+			cs.idleTracker().markIdle(id);
+		}
+		if (!canParkScheduler()) {
+			if (cs != null) {
+				cs.idleTracker().markActive(id);
+			}
+			int rolledBack = (int) CARRIER_STATE.getAndSet(this, RUNNING);
+			if (rolledBack >= SEARCHING) {
+				handleSearchWake(rolledBack, Thread.currentThread() == carrierThread);
+			}
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Exits PARKED state atomically — markActive + getAndSet(RUNNING). Handles
+	 * SEARCHING wakeState internally (directed steal + chain).
+	 */
+	public void unpark() {
+		unparkImpl(false);
+	}
+
+	void unparkFromCarrier() {
+		unparkImpl(true);
+	}
+
+	private void unparkImpl(boolean inline) {
+		var cs = clusterState;
+		if (cs != null) {
+			cs.idleTracker().markActive(id);
+		}
+		int wakeState = (int) CARRIER_STATE.getAndSet(this, RUNNING);
+		if (wakeState >= SEARCHING) {
+			handleSearchWake(wakeState, inline);
+		}
 	}
 
 	private static ThreadFactory newVThreadFactory(EventLoopScheduler scheduler, VThreadType type,
@@ -462,64 +602,80 @@ public final class EventLoopScheduler {
 				// external submission — wake the target carrier/poller
 				woke = wakeup();
 			}
-			// woke=true: carrier was sleeping (parked or poller pinning it) — it'll drain
-			// woke=false: internal submission or carrier is active — check if overloaded
-			if (!woke && WORK_STEALING_ENABLED && needsHelp(System.nanoTime())) {
-				wakeIdleSibling();
+			if (!woke && WORK_STEALING_ENABLED) {
+				signalWork();
+			}
+		}
+	}
+
+	/**
+	 * Handles a SEARCHING wakeState: directed steal + chain propagation. Stolen
+	 * task is enqueued for the carrier to drain on the next yield.
+	 */
+	private void handleSearchWake(int wakeState, boolean inline) {
+		var cs = clusterState;
+		var victim = group.scheduler(wakeState - SEARCHING);
+		var task = victim.hasRunnableContinuations() ? victim.tryStealOne() : null;
+		if (cs != null) {
+			cs.stoppedSearching();
+		}
+		if (task != null) {
+			var event = SchedulerJfrUtil.beginWorkStealEvent();
+			int sourceQueueDepth = event != null ? victim.runnableCount() : 0;
+			if (victim.hasRunnableContinuations()) {
+				signalWorkFor(victim);
+			}
+			if (inline) {
+				runContinuation(task);
+			} else {
+				runQueue.offer(task);
+			}
+			if (event != null) {
+				SchedulerJfrUtil.commitDirectedStealEvent(event, task, victim.carrierThread, carrierThread,
+						sourceQueueDepth, inline);
 			}
 		}
 	}
 
 	boolean wakeup() {
-		boolean woke = false;
-		var poller = pinnedPollerWakeup;
-		if (poller != null) {
-			woke = poller.getAsBoolean();
+		if (CARRIER_STATE.compareAndSet(this, PARKED, RUNNING)) {
+			LockSupport.unpark(carrierThread);
+			var poller = pinnedPollerWakeup;
+			if (poller != null) {
+				poller.run();
+			}
+			return true;
 		}
-		Thread parked = parkedCarrierThread;
-		if (parked != null) {
-			LockSupport.unpark(parked);
-			woke = true;
-		}
-		return woke;
+		return false;
 	}
 
-	private long heartbeat() {
-		assert WORK_STEALING_ENABLED : "heartbeat is only valid when work stealing is enabled";
-		return (long) SCHEDULER_HEARTBEAT.getOpaque(this);
+	void signalWork() {
+		signalWorkFor(this);
 	}
 
-	boolean isUnresponsive(long nowNanos) {
-		return (nowNanos - heartbeat()) > UNRESPONSIVE_THRESHOLD_NS;
-	}
-
-	private boolean needsHelp(long nowNanos) {
-		return (isUnresponsive(nowNanos) && hasRunnableContinuations()) || runnableCount() > WAKE_QUEUE_THRESHOLD;
-	}
-
-	boolean worthStealing(long nowNanos) {
-		return (isUnresponsive(nowNanos) && hasRunnableContinuations()) || runnableCount() > STEAL_QUEUE_THRESHOLD;
-	}
-
-	private void wakeIdleSibling() {
-		var siblings = this.siblings;
-		if (siblings == null) {
+	private void signalWorkFor(EventLoopScheduler victim) {
+		var cs = clusterState;
+		if (cs == null || siblings == null) {
 			return;
 		}
-		int len = siblings.length;
-		var rng = ThreadLocalRandom.current();
-		int a = rng.nextInt(len);
-		if (len == 1) {
-			siblings[a].wakeup();
+		if (!cs.tryStartSearcher()) {
 			return;
 		}
-		int b = rng.nextInt(len - 1);
-		if (b >= a) {
-			b++;
+		if (!cs.idleTracker().wakeFirstIdle(group, victim)) {
+			cs.stoppedSearching();
 		}
-		if (!siblings[a].wakeup()) {
-			siblings[b].wakeup();
+	}
+
+	boolean wakeupAsSearcher(EventLoopScheduler victim) {
+		if (CARRIER_STATE.compareAndSet(this, PARKED, SEARCHING + victim.id)) {
+			LockSupport.unpark(carrierThread);
+			var poller = pinnedPollerWakeup;
+			if (poller != null) {
+				poller.run();
+			}
+			return true;
 		}
+		return false;
 	}
 
 	private int acquireConsumer() {
@@ -539,13 +695,12 @@ public final class EventLoopScheduler {
 		if (siblings == null) {
 			return false;
 		}
-		long now = System.nanoTime();
 		int len = siblings.length;
 		var rng = ThreadLocalRandom.current();
-		int a = rng.nextInt(len);
 		EventLoopScheduler victim;
+		int a = rng.nextInt(len);
 		if (len == 1) {
-			victim = siblings[a].worthStealing(now) ? siblings[a] : null;
+			victim = siblings[a].hasRunnableContinuations() ? siblings[a] : null;
 		} else {
 			int b = rng.nextInt(len - 1);
 			if (b >= a) {
@@ -553,8 +708,8 @@ public final class EventLoopScheduler {
 			}
 			var sa = siblings[a];
 			var sb = siblings[b];
-			boolean helpA = sa.worthStealing(now);
-			boolean helpB = sb.worthStealing(now);
+			boolean helpA = sa.hasRunnableContinuations();
+			boolean helpB = sb.hasRunnableContinuations();
 			if (helpA && helpB) {
 				victim = sa.runnableCount() >= sb.runnableCount() ? sa : sb;
 			} else {
@@ -568,7 +723,14 @@ public final class EventLoopScheduler {
 		if (task != null) {
 			var event = SchedulerJfrUtil.beginWorkStealEvent();
 			int sourceQueueDepth = event != null ? victim.runnableCount() : 0;
-			runQueue.offer(task);
+			if (victim.hasRunnableContinuations()) {
+				signalWorkFor(victim);
+			}
+			if (fromCarrierLoop) {
+				runContinuation(task);
+			} else {
+				runQueue.offer(task);
+			}
 			if (event != null) {
 				SchedulerJfrUtil.commitWorkStealEvent(event, task, victim.carrierThread, carrierThread,
 						sourceQueueDepth, fromCarrierLoop);
@@ -590,6 +752,5 @@ public final class EventLoopScheduler {
 			task.run();
 			SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task.thread(), isPoller, isPinned);
 		}
-		touchHeartbeat();
 	}
 }

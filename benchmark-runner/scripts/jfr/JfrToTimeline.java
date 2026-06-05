@@ -20,8 +20,8 @@ public class JfrToTimeline {
             "io.netty.loom.VirtualThreadTaskSubmit",
             "io.netty.loom.WorkSteal"
     };
-    private static final int SUBMIT_EVENT_INDEX = 4;
-    private static final int WORK_STEAL_EVENT_INDEX = 5;
+    private static final int SUBMIT_EVENT_INDEX = 3;
+    private static final int WORK_STEAL_EVENT_INDEX = 4;
     private static final String[] NETTY_EVENT_SHORT_NAMES = new String[NETTY_EVENTS.length];
 
     static {
@@ -160,9 +160,9 @@ public class JfrToTimeline {
             writer.writeAscii(",\"p\":");
             writer.writeAscii(event.getBoolean("isPoller") ? "1" : "0");
         }
-        if (event.hasField("isEventLoop")) {
+        if (event.hasField("isPinnedPoller")) {
             writer.writeAscii(",\"el\":");
-            writer.writeAscii(event.getBoolean("isEventLoop") ? "1" : "0");
+            writer.writeAscii(event.getBoolean("isPinnedPoller") ? "1" : "0");
         }
         if (event.hasField("canBlock")) {
             writer.writeAscii(",\"b\":");

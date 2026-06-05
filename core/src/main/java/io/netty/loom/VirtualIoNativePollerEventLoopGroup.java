@@ -117,17 +117,11 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 				ioExecutor -> new AwakeAwareIoHandler(pollerRunning, ioHandlerFactory.newHandler(ioExecutor))) {
 			@Override
 			public boolean canBlock() {
-				return scheduler.canBlock();
+				return scheduler.canParkPoller();
 			}
 		};
 
-		var termination = scheduler.registerPinnedPoller(() -> {
-			if (!pollerRunning.get()) {
-				eventLoop.wakeup();
-				return true;
-			}
-			return false;
-		}, () -> {
+		var termination = scheduler.registerPinnedPoller(eventLoop::wakeup, () -> {
 			eventLoop.setOwningThread(Thread.currentThread());
 			FastThreadLocalThread.runWithFastThreadLocal(() -> pinningEventLoop(scheduler, eventLoop, pollerRunning));
 		});
@@ -167,18 +161,14 @@ public class VirtualIoNativePollerEventLoopGroup extends MultiThreadIoEventLoopG
 		var event = NettyJfrUtil.beginRunIoEvent();
 		int ioEventsHandled;
 		boolean ranBlocking = false;
-		if (canBlock) {
+		if (canBlock && scheduler.tryParkPoller()) {
 			pollerRunning.set(false);
-			if (scheduler.canBlock()) {
-				ranBlocking = true;
-				try {
-					ioEventsHandled = ioEventLoop.run(MAX_WAIT_TASKS_NS, EventLoopScheduler.YIELD_DURATION_NS);
-				} finally {
-					pollerRunning.set(true);
-				}
-			} else {
+			ranBlocking = true;
+			try {
+				ioEventsHandled = ioEventLoop.run(MAX_WAIT_TASKS_NS, EventLoopScheduler.YIELD_DURATION_NS);
+			} finally {
 				pollerRunning.set(true);
-				ioEventsHandled = ioEventLoop.runNow(EventLoopScheduler.YIELD_DURATION_NS);
+				scheduler.unpark();
 			}
 		} else {
 			ioEventsHandled = ioEventLoop.runNow(EventLoopScheduler.YIELD_DURATION_NS);

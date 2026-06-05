@@ -39,6 +39,8 @@ SERVER_MODE="${SERVER_MODE:-NON_VIRTUAL_NETTY}"  # Server mode: NON_VIRTUAL_NETT
 SERVER_MOCKLESS="${SERVER_MOCKLESS:-false}"  # Skip mock server; do Jackson work inline
 SERVER_IDLE_SPINS="${SERVER_IDLE_SPINS:-}"  # Idle spins before blocking (io.netty.loom.idleSpins)
 SERVER_VT_MODE="${SERVER_VT_MODE:-}"  # VT mode: longlived (default) or perreq
+SERVER_WS="${SERVER_WS:-false}"  # Enable work stealing
+SERVER_TOPOLOGY="${SERVER_TOPOLOGY:-false}"  # Enable LinuxCarrierTopology (CPU pinning + cluster awareness)
 
 # Load generator configuration
 LOAD_GEN_CPUSET="${LOAD_GEN_CPUSET:-0,1}"  # CPUs for load generator
@@ -395,6 +397,13 @@ start_handoff_server() {
             jvm_args="$jvm_args -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler"
             # Default pollerMode to 3 for custom scheduler if not explicitly set
             poller_mode="${poller_mode:-3}"
+            if [[ "$SERVER_WS" == "true" ]]; then
+                jvm_args="$jvm_args -Dio.netty.loom.workstealing.enabled=true"
+            fi
+            if [[ "$SERVER_TOPOLOGY" == "true" ]]; then
+                jvm_args="$jvm_args -Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology"
+                jvm_args="$jvm_args --enable-native-access=ALL-UNNAMED"
+            fi
             ;;
     esac
 
@@ -998,6 +1007,8 @@ main() {
             --jvm-args)         SERVER_JVM_ARGS="$2"; shift 2 ;;
             --idle-spins)       SERVER_IDLE_SPINS="$2"; shift 2 ;;
             --vt-mode)          SERVER_VT_MODE="$2"; shift 2 ;;
+            --ws)               SERVER_WS="true"; shift ;;
+            --topology)         SERVER_TOPOLOGY="true"; shift ;;
             # Mock
             --mock-port)        MOCK_PORT="$2"; shift 2 ;;
             --mock-think-time)  MOCK_THINK_TIME_MS="$2"; shift 2 ;;

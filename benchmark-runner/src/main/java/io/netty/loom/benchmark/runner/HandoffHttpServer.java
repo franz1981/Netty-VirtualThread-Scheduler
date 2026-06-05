@@ -248,7 +248,7 @@ public class HandoffHttpServer {
 			serverChannel.close();
 		}
 		if (workerGroup != null) {
-			workerGroup.shutdownGracefully();
+			workerGroup.shutdownGracefully(0, 0, java.util.concurrent.TimeUnit.SECONDS).syncUninterruptibly();
 		}
 		if (!silent) {
 			System.out.println("Server stopped");
