@@ -175,7 +175,7 @@ public class EventLoopSchedulerGroup {
 		var current = new int[]{-1};
 		return runnable -> {
 			int idx = current[0];
-			if (idx >= 0 && !schedulers[idx].clusterState.idleTracker().isIdle(idx)) {
+			if (idx >= 0 && !schedulers[idx].clusterState.isIdle(idx)) {
 				return schedulers[idx].virtualThreadFactory().newThread(runnable);
 			}
 			int idle = findIdlePreferCluster(idx);

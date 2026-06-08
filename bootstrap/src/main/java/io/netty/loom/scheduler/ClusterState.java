@@ -42,11 +42,7 @@ final class ClusterState {
 	ClusterState(EventLoopScheduler[] members) {
 		this.members = members;
 		this.membersView = java.util.List.of(members);
-		int maxId = 0;
-		for (var m : members) {
-			maxId = Math.max(maxId, m.id());
-		}
-		this.idleTracker = new IdleCarrierTracker(maxId + 1);
+		this.idleTracker = new IdleCarrierTracker(members);
 	}
 
 	boolean tryStartSearcher() {
@@ -66,8 +62,24 @@ final class ClusterState {
 		return (int) N_SEARCHING.getVolatile(this);
 	}
 
-	IdleCarrierTracker idleTracker() {
-		return idleTracker;
+	void markIdle(int carrierId) {
+		idleTracker.markIdle(carrierId);
+	}
+
+	void markActive(int carrierId) {
+		idleTracker.markActive(carrierId);
+	}
+
+	boolean isIdle(int carrierId) {
+		return idleTracker.isIdle(carrierId);
+	}
+
+	int findIdle() {
+		return idleTracker.findIdle();
+	}
+
+	boolean wakeFirstIdle(EventLoopScheduler victim) {
+		return idleTracker.wakeFirstIdle(victim);
 	}
 
 	EventLoopScheduler[] members() {
@@ -76,9 +88,5 @@ final class ClusterState {
 
 	java.util.List<EventLoopScheduler> membersView() {
 		return membersView;
-	}
-
-	int findIdle() {
-		return idleTracker.findIdle();
 	}
 }

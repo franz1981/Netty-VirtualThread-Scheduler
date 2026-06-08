@@ -18,48 +18,59 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
 /**
- * Lock-free bitmap tracking which carriers are currently idle (parked).
- *
- * <p>
- * Carriers call {@link #markIdle(int)} before parking and
- * {@link #markActive(int)} after waking. External submitters call
- * {@link #findIdle()} to locate an idle carrier without waking a busy one.
- *
- * <p>
- * Internally a {@code long[]} where each word covers 64 carrier IDs. The
- * typical case (≤64 carriers) uses a single word. Scales to 1024+ carriers with
- * O(N/64) scan.
+ * Lock-free bitmap tracking which carriers in a cluster are currently idle.
+ * Accepts global carrier IDs and maps them to compact cluster-local indices
+ * internally. The bitmap is sized to the cluster member count — no wasted bits.
  */
 final class IdleCarrierTracker {
 
 	private static final VarHandle WORDS = MethodHandles.arrayElementVarHandle(long[].class);
 
+	private final EventLoopScheduler[] members;
+	private final int[] idToIndex;
+	private final int[] indexToId;
 	private final long[] words;
 	private final int capacity;
 
+	IdleCarrierTracker(EventLoopScheduler[] members) {
+		this.members = members;
+		this.capacity = members.length;
+		this.words = new long[(capacity + 63) >>> 6];
+		this.indexToId = new int[capacity];
+		int maxId = 0;
+		for (int i = 0; i < capacity; i++) {
+			indexToId[i] = members[i].id();
+			maxId = Math.max(maxId, members[i].id());
+		}
+		this.idToIndex = new int[maxId + 1];
+		java.util.Arrays.fill(idToIndex, -1);
+		for (int i = 0; i < capacity; i++) {
+			idToIndex[members[i].id()] = i;
+		}
+	}
+
 	IdleCarrierTracker(int carrierCount) {
+		this.members = null;
+		this.idToIndex = null;
+		this.indexToId = null;
 		this.capacity = carrierCount;
 		this.words = new long[(carrierCount + 63) >>> 6];
 	}
 
-	/**
-	 * Marks the carrier as idle. Called by the carrier thread before parking.
-	 */
 	void markIdle(int carrierId) {
-		int wordIndex = carrierId >>> 6;
-		long bit = 1L << carrierId; // only lower 6 bits used by shift
+		int idx = toIndex(carrierId);
+		int wordIndex = idx >>> 6;
+		long bit = 1L << idx;
 		long prev;
 		do {
 			prev = (long) WORDS.getVolatile(words, wordIndex);
 		} while (!WORDS.compareAndSet(words, wordIndex, prev, prev | bit));
 	}
 
-	/**
-	 * Marks the carrier as active. Called by the carrier thread after waking.
-	 */
 	void markActive(int carrierId) {
-		int wordIndex = carrierId >>> 6;
-		long bit = 1L << carrierId;
+		int idx = toIndex(carrierId);
+		int wordIndex = idx >>> 6;
+		long bit = 1L << idx;
 		long prev;
 		do {
 			prev = (long) WORDS.getVolatile(words, wordIndex);
@@ -67,40 +78,46 @@ final class IdleCarrierTracker {
 	}
 
 	/**
-	 * Returns the ID of any idle carrier, or -1 if none. Does not remove the
-	 * carrier from the idle set — the carrier clears its own bit on wake.
+	 * Returns the global ID of any idle carrier, or -1 if none.
 	 */
 	int findIdle() {
 		for (int w = 0; w < words.length; w++) {
 			long word = (long) WORDS.getVolatile(words, w);
 			if (word != 0) {
-				return (w << 6) + Long.numberOfTrailingZeros(word);
+				int idx = (w << 6) + Long.numberOfTrailingZeros(word);
+				return idx < capacity ? toId(idx) : -1;
 			}
 		}
 		return -1;
 	}
 
-	/**
-	 * Returns true if the given carrier is currently marked idle.
-	 */
 	boolean isIdle(int carrierId) {
-		int wordIndex = carrierId >>> 6;
-		long bit = 1L << carrierId;
+		int idx = toIndex(carrierId);
+		int wordIndex = idx >>> 6;
+		long bit = 1L << idx;
 		return ((long) WORDS.getVolatile(words, wordIndex) & bit) != 0;
 	}
 
-	boolean wakeFirstIdle(EventLoopSchedulerGroup group, EventLoopScheduler victim) {
+	boolean wakeFirstIdle(EventLoopScheduler victim) {
 		for (int w = 0; w < words.length; w++) {
 			long word = (long) WORDS.getVolatile(words, w);
 			while (word != 0) {
 				int bit = Long.numberOfTrailingZeros(word);
-				int carrierId = (w << 6) + bit;
-				if (carrierId < capacity && group.scheduler(carrierId).wakeupAsSearcher(victim)) {
+				int idx = (w << 6) + bit;
+				if (idx < capacity && members[idx].wakeupAsSearcher(victim)) {
 					return true;
 				}
 				word &= ~(1L << bit);
 			}
 		}
 		return false;
+	}
+
+	private int toIndex(int carrierId) {
+		return idToIndex != null ? idToIndex[carrierId] : carrierId;
+	}
+
+	private int toId(int index) {
+		return indexToId != null ? indexToId[index] : index;
 	}
 }

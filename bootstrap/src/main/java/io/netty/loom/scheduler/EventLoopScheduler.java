@@ -452,11 +452,11 @@ public final class EventLoopScheduler {
 		}
 		var cs = clusterState;
 		if (cs != null) {
-			cs.idleTracker().markIdle(id);
+			cs.markIdle(id);
 		}
 		if (!canParkScheduler()) {
 			if (cs != null) {
-				cs.idleTracker().markActive(id);
+				cs.markActive(id);
 			}
 			int rolledBack = (int) CARRIER_STATE.getAndSet(this, RUNNING);
 			if (rolledBack >= SEARCHING) {
@@ -482,7 +482,7 @@ public final class EventLoopScheduler {
 	private void unparkImpl(boolean inline) {
 		var cs = clusterState;
 		if (cs != null) {
-			cs.idleTracker().markActive(id);
+			cs.markActive(id);
 		}
 		int wakeState = (int) CARRIER_STATE.getAndSet(this, RUNNING);
 		if (wakeState >= SEARCHING) {
@@ -661,7 +661,7 @@ public final class EventLoopScheduler {
 		if (!cs.tryStartSearcher()) {
 			return;
 		}
-		if (!cs.idleTracker().wakeFirstIdle(group, victim)) {
+		if (!cs.wakeFirstIdle(victim)) {
 			cs.stoppedSearching();
 		}
 	}
