@@ -26,7 +26,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.LongAdder;
 
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -47,64 +46,79 @@ import io.netty.loom.scheduler.EventLoopSchedulerGroup;
 import io.netty.loom.scheduler.NettyScheduler;
 
 /**
- * External submission benchmark: a single JMH thread creates N virtual threads
- * that each hash the same array, then awaits completion.
+ * External submission benchmark: JMH thread(s) create N virtual threads that
+ * each hash the same array, then await completion.
  *
  * <p>
- * Three workload configurations stress different aspects of the scheduler:
+ * The custom scheduler uses a probe factory: each submitter thread's ID is
+ * xorshift-hashed to a carrier, concentrating each thread's bursts on a
+ * dedicated MPSC queue. Different submitter threads scatter across carriers.
+ *
+ * <h3>Workload configurations</h3>
  *
  * <ul>
- * <li><b>128 × 4KB (tiny tasks)</b> — each task runs ~36ns. Tests the
- * scheduler's ability to concentrate burst submissions on a single carrier
- * without park/unpark storms. FJP achieves this via per-thread sticky probe +
- * conditional signalWork. The dominant cost is VT creation + park/unpark
- * overhead, not the task itself.
+ * <li><b>128 × 4KB (tiny tasks, -t 1..3)</b> — each task runs ~36ns. Tests
+ * burst submission throughput. With -t 1, one carrier drains the burst; FJP
+ * distributes across all workers. With -t 2+, each submitter targets a
+ * different carrier via the probe factory, scaling linearly.
+ *
+ * <p>
+ * <b>Caveat:</b> with -t 1 and {@code taskset -c 0-15} on a 2-NUMA-node machine
+ * (e.g. Ryzen 7950X), the probe may hash the submitter to a carrier pinned on a
+ * remote NUMA node, causing cross-NUMA MPSC contention. Use
+ * {@code taskset -c 0-7} (single NUMA node) for fair single-thread comparison.
+ * FJP is not affected because its shared external queues are drained by the
+ * nearest worker.
  *
  * <li><b>32 × 32MB (large tasks, 2:1 ratio)</b> — each task runs ~7ms across 16
- * cores. Tests work redistribution: all tasks initially land on 1-2 carriers
- * (sticky idle bitmap), requiring work-stealing to parallelize. Exercises the
- * drain-loop signal, steal propagation chain, and the balance between
- * concentration (initial placement) and distribution (WS).
+ * cores. Tests work redistribution: all tasks initially land on one carrier,
+ * requiring work-stealing to parallelize.
  *
  * <li><b>16 × 32MB (1:1 ratio)</b> — each task runs ~7ms, one per carrier.
- * Tests the carrier model's strength: pinned carriers with warm cache, no
- * redistribution needed. This is the case where we beat FJP (+18-21%) because
- * pinned carriers avoid cpu-migrations. No work-stealing involved.
+ * Tests the carrier model's strength: pinned carriers with warm cache.
  * </ul>
  *
  * <h3>How to run</h3>
  *
  * Build:
- * 
+ *
  * <pre>{@code
  * export JAVA_HOME=/path/to/loom/jdk
- * mvn install -DskipTests && mvn -pl benchmarks package -q -DskipTests
+ * mvn -B clean package -DskipTests -P '!dev'
  * }</pre>
  *
- * Run all configs for a given workload (sequential, JMH does not support
- * parallel forks):
- * 
+ * Run (single NUMA node for short tasks, full machine for large tasks):
+ *
  * <pre>{@code
- * # 16 physical cores (taskset 0-15):
- * taskset -c 0-15 $JAVA_HOME/bin/java -jar benchmarks/target/benchmarks.jar \
+ * # 8 cores (single NUMA node):
+ * taskset -c 0-7 $JAVA_HOME/bin/java -jar benchmarks/target/benchmarks.jar \
  *   "CacheStressBenchmark.(fjp|customPinWs$|customPinWsPoller$)" \
  *   -p numTasks=128 -p arraySizeKB=4 -wi 5 -i 5 -f 2 -t 1
+ * # Same with multiple submitters:
+ * taskset -c 0-7 $JAVA_HOME/bin/java -jar benchmarks/target/benchmarks.jar \
+ *   "CacheStressBenchmark.(fjp|customPinWsPoller$)" \
+ *   -p numTasks=128 -p arraySizeKB=4 -wi 5 -i 5 -f 2 -t 3
+ * # 16 cores (large tasks):
  * taskset -c 0-15 $JAVA_HOME/bin/java -jar benchmarks/target/benchmarks.jar \
- *   "CacheStressBenchmark.(fjp|customPinWs$|customPinWsPoller$)" \
+ *   "CacheStressBenchmark.(fjp|customPinWsPoller$)" \
  *   -p numTasks=32 -p arraySizeKB=32768 -wi 5 -i 5 -f 2 -t 1
  * }</pre>
  *
- * <h3>Reference results (2026-06-01, Ryzen 9 7950X)</h3>
- *
- * <p>
- * tryPark/unpark + pinned poller park protocol + getAndSet:
+ * <h3>Reference results (2026-06-09, Ryzen 9 7950X)</h3>
  *
  * <pre>
+ * 8 cores (taskset 0-7, single NUMA node), 2 forks, 5wu, 5i:
+ *
+ *                          128×4KB -t 1   128×4KB -t 2   128×4KB -t 3
+ * customWs (no pin)       40,704          68,746          68,571
+ * customPinWs             40,478          70,277          78,535
+ * customPinWsPoller       42,257          68,890         105,342
+ * FJP                     43,108          65,393          75,320
+ *
  * 16 cores (taskset 0-15), 2 forks, 5wu, 5i:
- *                              128×4KB (ops/s)    32×32MB (ops/s)
- * customPinWs (no poller)     36,596 ± 1,047       457 ± 37
- * customPinWsPoller (epoll)   36,368 ± 1,286       437 ± 33
- * FJP                         27,642 ± 928         429 ± 13
+ *                          32×32MB -t 1
+ * customPinWsPoller         487 ± 32
+ * FJP                       434 ± 16
  * </pre>
  */
 @BenchmarkMode(Mode.Throughput)
@@ -138,14 +152,32 @@ public class CacheStressBenchmark {
 		}
 	}
 
-	final ConcurrentHashMap<String, LongAdder> carrierCounts = new ConcurrentHashMap<>();
+	static final class SingleThreadedAdder {
+		long value;
+		void increment() {
+			value++;
+		}
+		long get() {
+			return value;
+		}
+		void reset() {
+			value = 0;
+		}
+		@Override
+		public String toString() {
+			return Long.toString(value);
+		}
+	}
+
+	final ConcurrentHashMap<Thread, SingleThreadedAdder> carrierCounts = new ConcurrentHashMap<>();
+
+	private static final boolean TELEMETRY = Boolean.getBoolean("io.netty.loom.benchmark.telemetry");
 
 	int[] data;
 	ThreadFactory vtFactory;
-	int[] perInvocationCarriers;
-	int[] taskCounter;
 	long totalDistinct;
 	long totalInvocations;
+	long[] rankTotals;
 	AutoCloseable pollerGroup;
 
 	@Setup(Level.Trial)
@@ -174,6 +206,9 @@ public class CacheStressBenchmark {
 			vtFactory = Thread.ofVirtual().factory();
 		}
 
+		if (TELEMETRY) {
+			rankTotals = new long[numTasks];
+		}
 		System.out.println("[setup] scheduler="
 				+ (NettyScheduler.isAvailable()
 						? "custom(" + EventLoopSchedulerGroup.instance().size() + " carriers, "
@@ -194,26 +229,39 @@ public class CacheStressBenchmark {
 	}
 
 	private int cacheStress() throws InterruptedException {
-		if (perInvocationCarriers != null) {
-			Arrays.fill(perInvocationCarriers, -1);
-			taskCounter[0] = 0;
+		return cacheStressWithFactory(vtFactory);
+	}
+
+	private int cacheStressWithFactory(ThreadFactory factory) throws InterruptedException {
+		if (TELEMETRY) {
+			carrierCounts.values().forEach(SingleThreadedAdder::reset);
 		}
 		var latch = new CountDownLatch(numTasks);
 		var results = new int[numTasks];
 		for (int i = 0; i < numTasks; i++) {
 			final int idx = i;
 			final int[] d = data;
-			vtFactory.newThread(() -> {
-				carrierCounts.computeIfAbsent(currentCarrier().getName(), k -> new LongAdder()).increment();
+			factory.newThread(() -> {
+				if (TELEMETRY) {
+					var carrier = currentCarrier();
+					var c = carrierCounts.get(carrier);
+					if (c == null)
+						c = carrierCounts.computeIfAbsent(carrier, k -> new SingleThreadedAdder());
+					c.increment();
+				}
 				results[idx] = Arrays.hashCode(d);
 				latch.countDown();
 			}).start();
 		}
 		latch.await();
-		if (perInvocationCarriers != null) {
-			long distinct = Arrays.stream(perInvocationCarriers).distinct().filter(x -> x >= 0).count();
-			totalDistinct += distinct;
+		if (TELEMETRY) {
+			var counts = carrierCounts.values().stream().mapToLong(SingleThreadedAdder::get).filter(v -> v > 0).sorted()
+					.toArray();
+			totalDistinct += counts.length;
 			totalInvocations++;
+			for (int r = 0; r < counts.length; r++) {
+				rankTotals[r] += counts[counts.length - 1 - r];
+			}
 		}
 		int result = 0;
 		for (int r : results) {
@@ -224,13 +272,17 @@ public class CacheStressBenchmark {
 
 	@TearDown(Level.Trial)
 	public void printStats() {
-		if (totalInvocations > 0) {
-			System.out.println("[idle-distribution] avg distinct carriers per invocation: "
-					+ String.format("%.1f", (double) totalDistinct / totalInvocations) + " / " + numTasks + " tasks ("
-					+ totalInvocations + " invocations)");
-		}
-		if (!carrierCounts.isEmpty()) {
-			System.out.println("[carriers] " + carrierCounts);
+		if (TELEMETRY && totalInvocations > 0) {
+			var sb = new StringBuilder();
+			sb.append("[distribution] avg carriers/invocation: ")
+					.append(String.format("%.1f", (double) totalDistinct / totalInvocations)).append(" (")
+					.append(totalInvocations).append(" invocations, ").append(numTasks).append(" tasks each)\n");
+			sb.append("[exec-avg]   ");
+			for (int r = 0; r < rankTotals.length && rankTotals[r] > 0; r++) {
+				double avg = (double) rankTotals[r] / totalInvocations;
+				sb.append(String.format("#%d=%.1f(%.0f%%) ", r + 1, avg, avg * 100.0 / numTasks));
+			}
+			System.out.println(sb);
 		}
 		if (pollerGroup != null) {
 			try {
@@ -297,7 +349,13 @@ public class CacheStressBenchmark {
 			final int idx = i;
 			final int[] d = data;
 			factory.newThread(() -> {
-				carrierCounts.computeIfAbsent(currentCarrier().getName(), k -> new LongAdder()).increment();
+				if (TELEMETRY) {
+					var carrier = currentCarrier();
+					var c = carrierCounts.get(carrier);
+					if (c == null)
+						c = carrierCounts.computeIfAbsent(carrier, k -> new SingleThreadedAdder());
+					c.increment();
+				}
 				results[idx] = Arrays.hashCode(d);
 				latch.countDown();
 			}).start();
