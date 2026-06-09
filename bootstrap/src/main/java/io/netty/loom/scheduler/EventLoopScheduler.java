@@ -23,8 +23,6 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-import org.jctools.queues.MpscUnboundedArrayQueue;
-
 import io.netty.loom.scheduler.jfr.VirtualThreadTaskSubmitEvent;
 
 /**
@@ -204,7 +202,7 @@ public final class EventLoopScheduler {
 	}
 
 	private final int id;
-	private final MpscUnboundedArrayQueue<Thread.VirtualThreadTask> runQueue;
+	private final MpscUnboundedQueue<Thread.VirtualThreadTask> runQueue;
 	private final Thread carrierThread;
 	private final ThreadFactory vThreadFactory;
 	private final ThreadFactory pinnedPollerThreadFactory;
@@ -226,7 +224,7 @@ public final class EventLoopScheduler {
 			NettyScheduler nettyScheduler, Runnable onCarrierStart) {
 		this.id = id;
 		this.onCarrierStart = onCarrierStart;
-		runQueue = new MpscUnboundedArrayQueue<>(resumedContinuationsExpectedCount);
+		runQueue = new MpscUnboundedQueue<>(resumedContinuationsExpectedCount);
 		vThreadFactory = newVThreadFactory(this, VThreadType.VT, nettyScheduler);
 		pinnedPollerThreadFactory = newVThreadFactory(this, VThreadType.PINNED_POLLER, nettyScheduler);
 		carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);

@@ -25,7 +25,7 @@
         <junit.version>6.1.0</junit.version>
         <jmh.version>1.37</jmh.version>
         <jcstress.version>0.16</jcstress.version>
-        <java.version>27</java.version>
+        <java.version>28</java.version>
     </properties>
 
     <dependencyManagement>

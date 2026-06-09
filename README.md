@@ -617,7 +617,7 @@ but requires a shared atomic. Power-of-2 has **zero shared contention**.
 
 ### Ticket lock: biased consumer coordination
 
-The MPSC queue (jctools `MpscUnboundedArrayQueue`) is single-consumer by design.
+The MPSC queue (`MpscUnboundedQueue`) is single-consumer by design.
 Work stealing introduces a second consumer (the stealer). A **ticket lock**
 coordinates access with asymmetric paths:
 
