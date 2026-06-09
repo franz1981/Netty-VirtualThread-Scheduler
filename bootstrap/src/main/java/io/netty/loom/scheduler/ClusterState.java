@@ -46,6 +46,9 @@ final class ClusterState {
 	}
 
 	boolean tryStartSearcher() {
+		if ((int) N_SEARCHING.getAcquire(this) != 0) {
+			return false;
+		}
 		if (N_SEARCHING.compareAndSet(this, 0, 1)) {
 			return true;
 		}
