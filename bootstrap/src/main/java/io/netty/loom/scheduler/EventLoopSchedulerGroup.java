@@ -163,46 +163,18 @@ public class EventLoopSchedulerGroup {
 	}
 
 	/**
-	 * Returns a thread factory for external submissions. Sticks to a carrier —
-	 * concentrating bursts like FJP's per-thread probe. Prefers the current cluster
-	 * when re-targeting.
-	 *
-	 * <p>
-	 * The returned factory is <b>not thread-safe</b>: it tracks sticky carrier
-	 * selection via mutable state. Each call site should get its own factory.
+	 * Returns a thread factory for external submissions. The calling thread's ID is
+	 * hashed to select a carrier — same thread always targets the same carrier,
+	 * different threads scatter across the pool. Thread-safe: no mutable state.
 	 */
 	public java.util.concurrent.ThreadFactory virtualThreadFactory() {
-		var current = new int[]{-1};
 		return runnable -> {
-			int idx = current[0];
-			if (idx >= 0 && !schedulers[idx].clusterState.isIdle(idx)) {
-				return schedulers[idx].virtualThreadFactory().newThread(runnable);
-			}
-			int idle = findIdlePreferCluster(idx);
-			if (idle >= 0) {
-				idx = idle;
-			} else if (idx < 0) {
-				idx = 0;
-			}
-			current[0] = idx;
+			int probe = (int) Thread.currentThread().threadId();
+			probe ^= probe >>> 16;
+			probe ^= probe >>> 8;
+			int idx = Math.floorMod(probe, schedulers.length);
 			return schedulers[idx].virtualThreadFactory().newThread(runnable);
 		};
-	}
-
-	private int findIdlePreferCluster(int currentIdx) {
-		if (currentIdx >= 0) {
-			int idle = schedulers[currentIdx].clusterState.findIdle();
-			if (idle >= 0) {
-				return idle;
-			}
-		}
-		for (var cs : clusterStates) {
-			int idle = cs.findIdle();
-			if (idle >= 0) {
-				return idle;
-			}
-		}
-		return -1;
 	}
 
 	/**
