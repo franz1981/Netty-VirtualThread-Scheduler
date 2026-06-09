@@ -360,25 +360,6 @@ public final class EventLoopScheduler {
 				if (WORK_STEALING_ENABLED && tryStealing(true)) {
 					continue;
 				}
-				if (WORK_STEALING_ENABLED) {
-					var sibs = siblings;
-					if (sibs != null) {
-						for (int spin = sibs.length * 3; spin > 0; spin--) {
-							if (!canParkScheduler()) {
-								break;
-							}
-							if (sibs[spin % sibs.length].hasRunnableContinuations()) {
-								if (tryStealing(true)) {
-									break;
-								}
-							}
-							Thread.onSpinWait();
-						}
-						if (!canParkScheduler()) {
-							continue;
-						}
-					}
-				}
 
 				if (tryPark()) {
 					LockSupport.park();
