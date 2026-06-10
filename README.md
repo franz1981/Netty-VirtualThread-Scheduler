@@ -10,7 +10,7 @@ A locality-first virtual thread scheduler for the JVM. Virtual threads that work
 
 **You want control.** The scheduler exposes a simple API to register your own I/O pollers, get per-carrier thread factories, and decide exactly which virtual threads share a carrier. No black-box scheduling decisions — you control the topology. See [writing a custom pinned poller](#writing-a-custom-pinned-poller).
 
-**This scheduler doesn't replace ForkJoinPool** — it runs alongside it. `Thread.ofVirtual()` still creates virtual threads on the default FJP, and third-party libraries that create their own virtual threads are unaffected. You choose which work runs on which scheduler:
+**By default, this scheduler runs alongside ForkJoinPool.** `Thread.ofVirtual()` still creates virtual threads on the default FJP, and third-party libraries that create their own virtual threads are unaffected. You choose which work runs on which scheduler. Optionally, [`io.netty.loom.replaceBuiltinScheduler`](#replace-built-in-scheduler-experimental) routes all VTs through this scheduler:
 
 ```java
 var group = new VirtualIoNativePollerEventLoopGroup(EpollIoHandler.newFactory());
@@ -328,6 +328,36 @@ trade-offs, work stealing tuning, and FJP comparison with benchmark commands.
 | `io.netty.loom.idleSpins` | `0` | Idle spin iterations before blocking. When >0, the poller spins this many iterations (calling `Thread.onSpinWait()`) before entering the blocking I/O path. Prevents batch formation at the cost of higher CPU usage below saturation. **The effective spin duration depends on the transport:** each iteration includes a non-blocking I/O poll — measured at ~0.42µs for epoll (syscall) and ~0.05µs for io_uring (shared-memory CQ peek) under continuous spinning. So 256 spins ≈ 108µs with epoll but only ~13µs with io_uring. The same spin count is not interchangeable across transports. |
 | `io.netty.loom.resumed.continuations` | `1024` | Initial MPSC queue capacity |
 | `io.netty.loom.workstealing.enabled` | `false` | Enable work stealing (experimental) |
+| `io.netty.loom.replaceBuiltinScheduler` | `false` | Route ALL virtual threads through this scheduler, replacing the built-in FJP entirely (experimental). **Requires work stealing enabled.** |
+
+### Replace built-in scheduler (experimental)
+
+When `-Dio.netty.loom.replaceBuiltinScheduler=true`, all virtual threads — including
+those created with `Thread.ofVirtual().start()` — are scheduled on the carrier pool
+instead of the JDK's ForkJoinPool. VTs without a custom factory are assigned to a
+carrier via xorshift probe from the submitting thread's ID.
+
+**Work stealing is highly recommended** with this feature. Without it, the probe-based
+distribution may overload some carriers while others sit idle, with no way to rebalance.
+
+**Per-carrier pollers required:** use `-Djdk.pollerMode=3` with this feature. JDK-internal
+read-pollers need to land on the correct carrier; without per-carrier mode, poller placement
+depends on the parent VT having a ScopedValue binding, which unmanaged VTs lack.
+
+**Limitation:** `EventLoopScheduler.currentScheduler()` returns `null` for VTs not
+created with a scheduler factory, even though they run on carriers. This is because the
+ScopedValue binding that identifies the home carrier is only set at factory creation
+time. VTs started by a managed parent (one with a ScopedValue) will inherit the parent's
+carrier, but VTs started by unmanaged VTs scatter via probe. Full parity requires a
+`Thread.currentVirtualThreadTask()` API from the JDK, which does not yet exist.
+
+```bash
+java \
+  -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler \
+  -Dio.netty.loom.replaceBuiltinScheduler=true \
+  -Dio.netty.loom.workstealing.enabled=true \
+  ...
+```
 
 ## Work stealing (experimental)
 

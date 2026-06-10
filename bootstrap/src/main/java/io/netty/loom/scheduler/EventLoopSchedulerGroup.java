@@ -87,6 +87,11 @@ public class EventLoopSchedulerGroup {
 			schedulers[i].group = this;
 		}
 
+		System.err.println("[NettyScheduler] topology="
+				+ (topology != null ? topology.getClass().getSimpleName() : "NONE") + " carriers=" + size + " clusters="
+				+ clusters.length + " stealScope=" + scope + " workStealing=" + EventLoopScheduler.WORK_STEALING_ENABLED
+				+ " replaceBuiltinScheduler=" + NettyScheduler.REPLACE_BUILTIN_SCHEDULER);
+
 		if (EventLoopScheduler.WORK_STEALING_ENABLED && size > 1) {
 			for (int i = 0; i < size; i++) {
 				var allowed = new ArrayList<EventLoopScheduler>();
@@ -162,19 +167,31 @@ public class EventLoopSchedulerGroup {
 		return -1;
 	}
 
+	EventLoopScheduler selectScheduler() {
+		if (Thread.currentThread().isVirtual()) {
+			var runningOn = EventLoopScheduler.currentThreadSchedulerContext().runningScheduler();
+			if (runningOn != null && !runningOn.hasRunnableContinuations()) {
+				return runningOn;
+			}
+		}
+		return selectByProbe(Thread.currentThread().threadId());
+	}
+
+	private EventLoopScheduler selectByProbe(long threadId) {
+		int probe = (int) threadId;
+		probe ^= probe >>> 16;
+		probe ^= probe >>> 8;
+		return schedulers[Math.floorMod(probe, schedulers.length)];
+	}
+
 	/**
-	 * Returns a thread factory for external submissions. The calling thread's ID is
-	 * hashed to select a carrier — same thread always targets the same carrier,
-	 * different threads scatter across the pool. Thread-safe: no mutable state.
+	 * Returns a thread factory that routes new VTs via {@link #selectScheduler()}:
+	 * if the caller is a managed VT on a carrier with an empty queue, the child
+	 * stays local (internal submission); otherwise the caller's thread ID is hashed
+	 * to select a carrier (external submission). Thread-safe: no mutable state.
 	 */
 	public java.util.concurrent.ThreadFactory virtualThreadFactory() {
-		return runnable -> {
-			int probe = (int) Thread.currentThread().threadId();
-			probe ^= probe >>> 16;
-			probe ^= probe >>> 8;
-			int idx = Math.floorMod(probe, schedulers.length);
-			return schedulers[idx].virtualThreadFactory().newThread(runnable);
-		};
+		return runnable -> selectScheduler().virtualThreadFactory().newThread(runnable);
 	}
 
 	/**

@@ -183,6 +183,9 @@ public final class EventLoopScheduler {
 
 	/**
 	 * Returns the scheduler of the current virtual thread, or {@code null} if none.
+	 * Returns {@code null} for VTs not created with a scheduler factory, even when
+	 * {@link NettyScheduler#REPLACE_BUILTIN_SCHEDULER} is enabled — those VTs run
+	 * on carriers but lack the ScopedValue binding needed for identification.
 	 */
 	public static EventLoopScheduler currentScheduler() {
 		return currentThreadSchedulerContext().scheduler();
@@ -371,7 +374,7 @@ public final class EventLoopScheduler {
 		}
 	}
 
-	private boolean hasRunnableContinuations() {
+	boolean hasRunnableContinuations() {
 		return !runQueue.isEmpty();
 	}
 

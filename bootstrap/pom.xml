@@ -39,6 +39,19 @@
                         <id>workStealing-test</id>
                         <phase>none</phase>
                     </execution>
+                    <execution>
+                        <id>replaceBuiltinScheduler-test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <argLine>--enable-preview -Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler -Djdk.traceVirtualThreadLocals=false -Dio.netty.loom.schedulers=2 --add-opens=java.base/java.lang=ALL-UNNAMED -Dio.netty.loom.workstealing.enabled=true -Dio.netty.loom.replaceBuiltinScheduler=true -Djdk.pollerMode=3</argLine>
+                            <includes>
+                                <include>**/ReplaceBuiltinSchedulerTest.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
         </plugins>

@@ -34,6 +34,9 @@ package io.netty.loom.scheduler;
  */
 public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
+	static final boolean REPLACE_BUILTIN_SCHEDULER = Boolean
+			.parseBoolean(System.getProperty("io.netty.loom.replaceBuiltinScheduler", "false"));
+
 	private static volatile NettyScheduler INSTANCE;
 
 	private final Thread.VirtualThreadScheduler jdkBuiltinScheduler;
@@ -81,6 +84,14 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 					scheduler.execute(task);
 					return;
 				}
+			}
+			if (REPLACE_BUILTIN_SCHEDULER) {
+				var scheduler = group.selectScheduler();
+				var context = new EventLoopScheduler.SchedulingContext(task.thread().threadId(), scheduler,
+						EventLoopScheduler.VThreadType.VT);
+				task.attach(context);
+				scheduler.execute(task);
+				return;
 			}
 		}
 		jdkBuiltinScheduler.onStart(task);
