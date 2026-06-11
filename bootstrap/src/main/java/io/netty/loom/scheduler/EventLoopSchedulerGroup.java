@@ -169,7 +169,7 @@ public class EventLoopSchedulerGroup {
 
 	EventLoopScheduler selectScheduler() {
 		if (Thread.currentThread().isVirtual()) {
-			var runningOn = EventLoopScheduler.currentThreadSchedulerContext().runningScheduler();
+			var runningOn = EventLoopScheduler.currentThreadSchedulerContext().runningScheduler;
 			if (runningOn != null && !runningOn.hasRunnableContinuations()) {
 				return runningOn;
 			}

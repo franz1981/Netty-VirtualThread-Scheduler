@@ -77,9 +77,9 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 			task.attach(null);
 		} else {
 			if (perCarrierPollers && Thread.currentThread().isVirtual()) {
-				var scheduler = EventLoopScheduler.currentThreadSchedulerContext().runningScheduler();
+				var scheduler = EventLoopScheduler.currentThreadSchedulerContext().runningScheduler;
 				if (scheduler != null && task.thread().getName().endsWith("-Read-Poller")) {
-					task.attach(new EventLoopScheduler.SchedulingContext(task.thread().threadId(), scheduler,
+					task.attach(new EventLoopScheduler.SchedulingContext(scheduler,
 							EventLoopScheduler.VThreadType.JDK_POLLER));
 					scheduler.execute(task);
 					return;
@@ -87,8 +87,7 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 			}
 			if (REPLACE_BUILTIN_SCHEDULER) {
 				var scheduler = group.selectScheduler();
-				var context = new EventLoopScheduler.SchedulingContext(task.thread().threadId(), scheduler,
-						EventLoopScheduler.VThreadType.VT);
+				var context = new EventLoopScheduler.SchedulingContext(scheduler, EventLoopScheduler.VThreadType.VT);
 				task.attach(context);
 				scheduler.execute(task);
 				return;

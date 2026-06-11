@@ -105,41 +105,22 @@ public final class EventLoopScheduler {
 	}
 
 	/**
-	 * Per-VT scheduling context, accessed via two paths:
-	 *
-	 * <ul>
-	 * <li><b>ScopedValue ({@link #scheduler()})</b> — public API for user code.
-	 * Because ScopedValues are inherited by child threads, the thread ID check
-	 * prevents a forked VT (e.g. in a {@code StructuredTaskScope} without our
-	 * factory) from accidentally using the parent's scheduler. See
-	 * {@code VirtualIoNativePollerEventLoopGroupTest.schedulerIsNotInheritedByForkedVT}.
-	 * <li><b>VirtualThreadTask attachment ({@link #eventLoopScheduler})</b> —
-	 * internal, used by {@code NettyScheduler.onStart/onContinue}. Safe to access
-	 * directly (no ID check) because attachments are only set on continuations we
-	 * explicitly created with our factory.
-	 * </ul>
+	 * Per-VT scheduling context, stored as a
+	 * {@link Thread.VirtualThreadTask#attachment()}. Accessed via
+	 * {@link #currentThreadSchedulerContext()} which reads the current VT's task
+	 * attachment using
+	 * {@link Thread.VirtualThreadScheduler#currentVirtualThreadTask()}.
 	 */
 	static final class SchedulingContext {
 
-		long vThreadId;
 		final VThreadType type;
 		final EventLoopScheduler eventLoopScheduler;
-		// Set to the carrier that last mounted this VT (in runContinuation,
-		// never cleared). Differs from eventLoopScheduler when the VT was
-		// stolen. Used in execute() to skip self-wakeup and in
-		// NettyScheduler.onStart to route JDK pollers to the running
-		// carrier, not the home carrier.
 		EventLoopScheduler runningScheduler;
 
-		SchedulingContext(long vThreadId, EventLoopScheduler eventLoopScheduler, VThreadType type) {
-			this.vThreadId = vThreadId;
+		SchedulingContext(EventLoopScheduler eventLoopScheduler, VThreadType type) {
 			this.eventLoopScheduler = eventLoopScheduler;
 			this.runningScheduler = eventLoopScheduler;
 			this.type = type;
-		}
-
-		void setVThreadId(long id) {
-			this.vThreadId = id;
 		}
 
 		EventLoopScheduler assignedScheduler() {
@@ -154,41 +135,18 @@ public final class EventLoopScheduler {
 			this.runningScheduler = carrier;
 		}
 
-		/**
-		 * Returns the home scheduler for the current thread, or {@code null} if the
-		 * calling thread is not the VT that owns this context.
-		 */
-		EventLoopScheduler scheduler() {
-			return (Thread.currentThread().threadId() == vThreadId) ? eventLoopScheduler : null;
-		}
-
-		/**
-		 * Returns the scheduler of the carrier currently running this VT. Differs from
-		 * {@link #scheduler()} when the VT was stolen by another carrier.
-		 */
 		EventLoopScheduler runningScheduler() {
-			if (Thread.currentThread().threadId() != vThreadId) {
-				return null;
-			}
 			return runningScheduler;
 		}
 	}
 
-	private static final ScopedValue<SchedulingContext> CURRENT_SCHEDULER = ScopedValue.newInstance();
-	private static final SchedulingContext EMPTY_SCHEDULER_CONTEXT = new SchedulingContext(-1, null, VThreadType.VT);
-
-	static void runWithContext(Runnable runnable, SchedulingContext schedulingContext) {
-		ScopedValue.where(CURRENT_SCHEDULER, schedulingContext).run(runnable);
-	}
+	private static final SchedulingContext EMPTY_SCHEDULER_CONTEXT = new SchedulingContext(null, VThreadType.VT);
 
 	/**
 	 * Returns the scheduler of the current virtual thread, or {@code null} if none.
-	 * Returns {@code null} for VTs not created with a scheduler factory, even when
-	 * {@link NettyScheduler#REPLACE_BUILTIN_SCHEDULER} is enabled — those VTs run
-	 * on carriers but lack the ScopedValue binding needed for identification.
 	 */
 	public static EventLoopScheduler currentScheduler() {
-		return currentThreadSchedulerContext().scheduler();
+		return currentThreadSchedulerContext().assignedScheduler();
 	}
 
 	/**
@@ -201,7 +159,14 @@ public final class EventLoopScheduler {
 	}
 
 	static SchedulingContext currentThreadSchedulerContext() {
-		return CURRENT_SCHEDULER.orElse(EMPTY_SCHEDULER_CONTEXT);
+		var scheduler = NettyScheduler.instance();
+		if (scheduler != null && Thread.currentThread().isVirtual()) {
+			var task = scheduler.currentVirtualThreadTask();
+			if (task != null && task.attachment() instanceof SchedulingContext ctx) {
+				return ctx;
+			}
+		}
+		return EMPTY_SCHEDULER_CONTEXT;
 	}
 
 	private final int id;
@@ -476,10 +441,8 @@ public final class EventLoopScheduler {
 			NettyScheduler nettyScheduler) {
 		var unstartedBuilder = Thread.ofVirtual();
 		return runnable -> {
-			var schedulingContext = new SchedulingContext(-1, scheduler, type);
-			var vTask = nettyScheduler.newThread(unstartedBuilder, null,
-					() -> EventLoopScheduler.runWithContext(runnable, schedulingContext));
-			schedulingContext.setVThreadId(vTask.thread().threadId());
+			var schedulingContext = new SchedulingContext(scheduler, type);
+			var vTask = nettyScheduler.newThread(unstartedBuilder, null, runnable);
 			vTask.attach(schedulingContext);
 			return vTask.thread();
 		};

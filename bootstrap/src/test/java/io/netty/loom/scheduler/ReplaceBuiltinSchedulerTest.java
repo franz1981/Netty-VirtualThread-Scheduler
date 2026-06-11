@@ -21,6 +21,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
@@ -31,15 +32,12 @@ import static org.junit.jupiter.api.Assertions.*;
 class ReplaceBuiltinSchedulerTest {
 
 	private static final MethodHandle CURRENT_CARRIER;
-	private static final MethodHandle VIRTUAL_THREAD_TASK;
 
 	static {
 		try {
 			var lookup = MethodHandles.privateLookupIn(Thread.class, MethodHandles.lookup());
 			CURRENT_CARRIER = lookup.findStatic(Thread.class, "currentCarrierThread",
 					MethodType.methodType(Thread.class));
-			VIRTUAL_THREAD_TASK = lookup.findVirtual(Class.forName("java.lang.VirtualThread"), "virtualThreadTask",
-					MethodType.methodType(Thread.VirtualThreadTask.class));
 		} catch (Exception e) {
 			throw new ExceptionInInitializerError(e);
 		}
@@ -48,14 +46,6 @@ class ReplaceBuiltinSchedulerTest {
 	private static Thread currentCarrier() {
 		try {
 			return (Thread) CURRENT_CARRIER.invokeExact();
-		} catch (Throwable e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	private static Thread.VirtualThreadTask virtualThreadTask(Thread vt) {
-		try {
-			return (Thread.VirtualThreadTask) VIRTUAL_THREAD_TASK.invoke(vt);
 		} catch (Throwable e) {
 			throw new RuntimeException(e);
 		}
@@ -96,7 +86,7 @@ class ReplaceBuiltinSchedulerTest {
 	}
 
 	@Test
-	void currentSchedulerReturnsNullForPlainVirtualThread() throws Exception {
+	void currentSchedulerWorksForPlainVirtualThread() throws Exception {
 		var scheduler = new AtomicReference<EventLoopScheduler>();
 		var latch = new CountDownLatch(1);
 
@@ -106,7 +96,7 @@ class ReplaceBuiltinSchedulerTest {
 		});
 
 		assertTrue(latch.await(5, TimeUnit.SECONDS));
-		assertNull(scheduler.get(), "plain VT should not have a currentScheduler (no ScopedValue)");
+		assertNotNull(scheduler.get(), "plain VT must have a currentScheduler (via task attachment)");
 	}
 
 	@Test
@@ -135,10 +125,7 @@ class ReplaceBuiltinSchedulerTest {
 			parentScheduler.set(EventLoopScheduler.currentScheduler());
 			var childLatch = new CountDownLatch(1);
 			Thread.ofVirtual().start(() -> {
-				var task = virtualThreadTask(Thread.currentThread());
-				if (task.attachment() instanceof EventLoopScheduler.SchedulingContext ctx) {
-					childScheduler.set(ctx.assignedScheduler());
-				}
+				childScheduler.set(EventLoopScheduler.currentScheduler());
 				childLatch.countDown();
 			});
 			try {
