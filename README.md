@@ -340,14 +340,16 @@ carrier via xorshift probe from the submitting thread's ID.
 **Work stealing is highly recommended** with this feature. Without it, the probe-based
 distribution may overload some carriers while others sit idle, with no way to rebalance.
 
-**Per-carrier pollers required:** use `-Djdk.pollerMode=3` with this feature so that
-JDK-internal read-pollers land on the correct carrier.
+**Per-carrier pollers required:** use `-Djdk.pollerMode=3` with this feature. JDK-internal
+read-pollers need to land on the correct carrier; without per-carrier mode, poller placement
+depends on the parent VT having a ScopedValue binding, which unmanaged VTs lack.
 
-**`currentScheduler()` works for all VTs** — both factory-created and plain
-`Thread.ofVirtual().start()` VTs report their assigned carrier via
-`EventLoopScheduler.currentScheduler()`. This uses the
-`VirtualThreadScheduler.currentVirtualThreadTask()` API to read the task attachment
-directly.
+**Limitation:** `EventLoopScheduler.currentScheduler()` returns `null` for VTs not
+created with a scheduler factory, even though they run on carriers. This is because the
+ScopedValue binding that identifies the home carrier is only set at factory creation
+time. VTs started by a managed parent (one with a ScopedValue) will inherit the parent's
+carrier, but VTs started by unmanaged VTs scatter via probe. Full parity requires a
+`Thread.currentVirtualThreadTask()` API from the JDK, which does not yet exist.
 
 ```bash
 java \
@@ -824,7 +826,7 @@ When both are enabled and `stealScope` is `CLUSTER_LOCAL`:
 | `netty-virtualthread-core` | Netty integration layer (`io.netty.loom`): `VirtualIoNativePollerEventLoopGroup`, `VirtualIoNioPollerEventLoopGroup`, `VirtualIoEventLoopGroup`. |
 | `example-echo` | Self-contained HTTP server demonstrating blocking VT handlers, structured concurrency, and carrier affinity. |
 
-All scheduling state (carrier pool singleton, task attachments, `instanceof` checks) lives in bootstrap, loaded once by the system classloader. This prevents per-classloader duplication in app servers and fat JAR deployments.
+All scheduling state (carrier pool singleton, `ScopedValue`, `instanceof` checks) lives in bootstrap, loaded once by the system classloader. This prevents per-classloader duplication in app servers and fat JAR deployments.
 
 ## Classloader constraints
 
