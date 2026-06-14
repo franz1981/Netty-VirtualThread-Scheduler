@@ -377,6 +377,20 @@ public class CacheStressBenchmark {
 		return cacheStress();
 	}
 
+	/**
+	 * Custom scheduler replacing built-in, using Thread.ofVirtual() — same VT
+	 * creation as FJP.
+	 */
+	@Benchmark
+	@Fork(value = 2, jvmArgs = {"--enable-preview", "--add-opens=java.base/java.lang=ALL-UNNAMED",
+			"--enable-native-access=ALL-UNNAMED", "-Djdk.trackAllThreads=false", "-XX:+UseNUMA", "-Xms4g", "-Xmx4g",
+			"-XX:+AlwaysPreTouch", "-Djdk.virtualThreadScheduler.implClass=io.netty.loom.scheduler.NettyScheduler",
+			"-Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology",
+			"-Dio.netty.loom.workstealing.enabled=true", "-Dio.netty.loom.replaceBuiltinScheduler=true"})
+	public int customReplaceBuiltin() throws InterruptedException {
+		return cacheStressWithFactory(Thread.ofVirtual().factory());
+	}
+
 	/** Custom scheduler, no pinning, no work-stealing. */
 	@Benchmark
 	@Fork(value = 2, jvmArgs = {"--enable-preview", "--add-opens=java.base/java.lang=ALL-UNNAMED",

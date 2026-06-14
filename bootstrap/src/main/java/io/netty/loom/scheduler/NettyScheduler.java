@@ -42,6 +42,9 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 	private final Thread.VirtualThreadScheduler jdkBuiltinScheduler;
 	private final EventLoopSchedulerGroup group;
 	private final boolean perCarrierPollers;
+	private final java.util.concurrent.ConcurrentHashMap<Thread, Thread.VirtualThreadTask> adoptedTasks = REPLACE_BUILTIN_SCHEDULER
+			? new java.util.concurrent.ConcurrentHashMap<>()
+			: null;
 
 	public NettyScheduler(Thread.VirtualThreadScheduler jdkBuiltinScheduler) {
 		this.jdkBuiltinScheduler = jdkBuiltinScheduler;
@@ -88,8 +91,9 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 			if (REPLACE_BUILTIN_SCHEDULER) {
 				var scheduler = group.selectScheduler();
 				var context = new EventLoopScheduler.SchedulingContext(task.thread().threadId(), scheduler,
-						EventLoopScheduler.VThreadType.VT);
+						EventLoopScheduler.VThreadType.ADOPTED);
 				task.attach(context);
+				adoptedTasks.put(task.thread(), task);
 				scheduler.execute(task);
 				return;
 			}
@@ -122,5 +126,22 @@ public class NettyScheduler implements Thread.VirtualThreadScheduler {
 
 	public static boolean isAvailable() {
 		return ensureInstalled() != null;
+	}
+
+	EventLoopScheduler.SchedulingContext lookupAdoptedContext(Thread thread) {
+		if (adoptedTasks == null) {
+			return null;
+		}
+		var task = adoptedTasks.get(thread);
+		if (task != null && task.attachment() instanceof EventLoopScheduler.SchedulingContext ctx) {
+			return ctx;
+		}
+		return null;
+	}
+
+	void removeAdopted(Thread thread) {
+		if (adoptedTasks != null) {
+			adoptedTasks.remove(thread);
+		}
 	}
 }

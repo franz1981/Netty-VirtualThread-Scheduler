@@ -16,6 +16,7 @@ package io.netty.loom.scheduler;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Global pool of carrier threads, each running an {@link EventLoopScheduler}.

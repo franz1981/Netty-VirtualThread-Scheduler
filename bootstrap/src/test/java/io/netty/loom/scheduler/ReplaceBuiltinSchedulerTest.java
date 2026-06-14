@@ -96,7 +96,7 @@ class ReplaceBuiltinSchedulerTest {
 	}
 
 	@Test
-	void currentSchedulerReturnsNullForPlainVirtualThread() throws Exception {
+	void currentSchedulerWorksForPlainVirtualThread() throws Exception {
 		var scheduler = new AtomicReference<EventLoopScheduler>();
 		var latch = new CountDownLatch(1);
 
@@ -106,7 +106,7 @@ class ReplaceBuiltinSchedulerTest {
 		});
 
 		assertTrue(latch.await(5, TimeUnit.SECONDS));
-		assertNull(scheduler.get(), "plain VT should not have a currentScheduler (no ScopedValue)");
+		assertNotNull(scheduler.get(), "adopted VT must have a currentScheduler via CHM lookup");
 	}
 
 	@Test

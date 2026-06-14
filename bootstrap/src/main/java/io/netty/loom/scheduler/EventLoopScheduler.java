@@ -101,7 +101,7 @@ public final class EventLoopScheduler {
 			.parseBoolean(System.getProperty("io.netty.loom.workstealing.enabled", "false"));
 
 	enum VThreadType {
-		VT, JDK_POLLER, PINNED_POLLER
+		VT, JDK_POLLER, PINNED_POLLER, ADOPTED
 	}
 
 	/**
@@ -183,9 +183,6 @@ public final class EventLoopScheduler {
 
 	/**
 	 * Returns the scheduler of the current virtual thread, or {@code null} if none.
-	 * Returns {@code null} for VTs not created with a scheduler factory, even when
-	 * {@link NettyScheduler#REPLACE_BUILTIN_SCHEDULER} is enabled — those VTs run
-	 * on carriers but lack the ScopedValue binding needed for identification.
 	 */
 	public static EventLoopScheduler currentScheduler() {
 		return currentThreadSchedulerContext().scheduler();
@@ -201,7 +198,19 @@ public final class EventLoopScheduler {
 	}
 
 	static SchedulingContext currentThreadSchedulerContext() {
-		return CURRENT_SCHEDULER.orElse(EMPTY_SCHEDULER_CONTEXT);
+		if (CURRENT_SCHEDULER.isBound()) {
+			return CURRENT_SCHEDULER.get();
+		}
+		if (NettyScheduler.REPLACE_BUILTIN_SCHEDULER && Thread.currentThread().isVirtual()) {
+			var ns = NettyScheduler.instance();
+			if (ns != null) {
+				var adopted = ns.lookupAdoptedContext(Thread.currentThread());
+				if (adopted != null) {
+					return adopted;
+				}
+			}
+		}
+		return EMPTY_SCHEDULER_CONTEXT;
 	}
 
 	private final int id;
@@ -733,6 +742,9 @@ public final class EventLoopScheduler {
 			boolean isPoller = context.type() == VThreadType.JDK_POLLER;
 			task.run();
 			SchedulerJfrUtil.commitVirtualThreadTaskRunEvent(event, carrierThread, task.thread(), isPoller, isPinned);
+		}
+		if (context.type() == VThreadType.ADOPTED && !task.thread().isAlive()) {
+			NettyScheduler.instance().removeAdopted(task.thread());
 		}
 	}
 }
