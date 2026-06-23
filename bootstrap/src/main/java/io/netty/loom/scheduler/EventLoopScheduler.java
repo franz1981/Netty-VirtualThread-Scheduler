@@ -252,10 +252,6 @@ public final class EventLoopScheduler {
 		return pinnedPollerWakeup != null;
 	}
 
-	int carrierState() {
-		return (int) CARRIER_STATE.getAcquire(this);
-	}
-
 	void setSiblings(EventLoopScheduler[] siblings) {
 		this.siblings = siblings;
 	}
@@ -378,17 +374,6 @@ public final class EventLoopScheduler {
 		return !runQueue.isEmpty();
 	}
 
-	/**
-	 * Pure query: returns {@code true} if no external work is pending. The poller
-	 * should check this before entering blocking I/O — if false, poll non-blocking
-	 * instead.
-	 *
-	 * <p>
-	 * This is a snapshot — it can go stale immediately. Between this returning
-	 * {@code true} and the actual blocking call, work may arrive and
-	 * {@link #registerPinnedPoller wakeup} will fire. The blocking mechanism must
-	 * handle this race (see {@link #registerPinnedPoller} for details).
-	 */
 	/**
 	 * Returns {@code true} if the carrier is still in PARKED state and no work is
 	 * pending. The transport's {@code canBlock()} should delegate to this method

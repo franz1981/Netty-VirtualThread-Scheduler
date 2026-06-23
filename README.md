@@ -144,7 +144,7 @@ new ServerBootstrap()
 For a lightweight alternative without anti-steal guarantees, use `VirtualIoEventLoopGroup`:
 
 ```java
-var group = new VirtualIoEventLoopGroup(4, NioIoHandler.newFactory());
+var group = new VirtualIoEventLoopGroup(4, NioIoHandler.newFactory(), Thread.ofVirtual().factory());
 ```
 
 ### Netty with native transport (EPOLL / IO_URING)

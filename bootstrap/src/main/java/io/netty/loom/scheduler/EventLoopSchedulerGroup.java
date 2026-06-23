@@ -151,20 +151,7 @@ public class EventLoopSchedulerGroup {
 
 	/** Returns an unmodifiable view of the schedulers in the given cluster. */
 	public java.util.List<EventLoopScheduler> cluster(int clusterIndex) {
-		return clusterStates[clusterIndex].membersView();
-	}
-
-	/**
-	 * Returns any idle carrier's ID, or -1 if none are idle.
-	 */
-	public int idleCarrierId() {
-		for (var cs : clusterStates) {
-			int idle = cs.findIdle();
-			if (idle >= 0) {
-				return idle;
-			}
-		}
-		return -1;
+		return clusterStates[clusterIndex].members();
 	}
 
 	EventLoopScheduler selectScheduler() {

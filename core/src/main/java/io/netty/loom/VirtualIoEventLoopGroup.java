@@ -46,14 +46,6 @@ public class VirtualIoEventLoopGroup extends MultiThreadIoEventLoopGroup {
 	private int childIndex;
 
 	/**
-	 * Creates a group with {@code nThreads} event loops on the global scheduler
-	 * carriers.
-	 */
-	public VirtualIoEventLoopGroup(int nThreads, IoHandlerFactory factory) {
-		super(nThreads, (Executor) null, factory);
-	}
-
-	/**
 	 * Creates a group with {@code nThreads} event loops using the given thread
 	 * factory.
 	 */

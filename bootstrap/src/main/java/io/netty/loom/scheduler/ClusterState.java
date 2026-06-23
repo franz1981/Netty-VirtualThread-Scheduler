@@ -33,15 +33,13 @@ final class ClusterState {
 		}
 	}
 
-	private final EventLoopScheduler[] members;
-	private final java.util.List<EventLoopScheduler> membersView;
+	private final java.util.List<EventLoopScheduler> members;
 	private final IdleCarrierTracker idleTracker;
 	@SuppressWarnings("unused")
 	private volatile int nSearching;
 
 	ClusterState(EventLoopScheduler[] members) {
-		this.members = members;
-		this.membersView = java.util.List.of(members);
+		this.members = java.util.List.of(members);
 		this.idleTracker = new IdleCarrierTracker(members);
 	}
 
@@ -73,23 +71,11 @@ final class ClusterState {
 		idleTracker.markActive(carrierId);
 	}
 
-	boolean isIdle(int carrierId) {
-		return idleTracker.isIdle(carrierId);
-	}
-
-	int findIdle() {
-		return idleTracker.findIdle();
-	}
-
 	boolean wakeFirstIdle(EventLoopScheduler victim) {
 		return idleTracker.wakeFirstIdle(victim);
 	}
 
-	EventLoopScheduler[] members() {
+	java.util.List<EventLoopScheduler> members() {
 		return members;
-	}
-
-	java.util.List<EventLoopScheduler> membersView() {
-		return membersView;
 	}
 }
