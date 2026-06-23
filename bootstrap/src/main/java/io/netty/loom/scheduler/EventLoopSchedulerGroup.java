@@ -157,7 +157,7 @@ public class EventLoopSchedulerGroup {
 	EventLoopScheduler selectScheduler() {
 		if (Thread.currentThread().isVirtual()) {
 			var runningOn = EventLoopScheduler.currentThreadSchedulerContext().runningScheduler();
-			if (runningOn != null && !runningOn.hasRunnableContinuations()) {
+			if (runningOn != null) {
 				return runningOn;
 			}
 		}
@@ -173,9 +173,9 @@ public class EventLoopSchedulerGroup {
 
 	/**
 	 * Returns a thread factory that routes new VTs via {@link #selectScheduler()}:
-	 * if the caller is a managed VT on a carrier with an empty queue, the child
-	 * stays local (internal submission); otherwise the caller's thread ID is hashed
-	 * to select a carrier (external submission). Thread-safe: no mutable state.
+	 * if the caller is a managed VT, the child stays on the same carrier
+	 * (locality-first); otherwise the caller's thread ID is hashed to select a
+	 * carrier (external submission). Thread-safe: no mutable state.
 	 */
 	public java.util.concurrent.ThreadFactory virtualThreadFactory() {
 		return runnable -> selectScheduler().virtualThreadFactory().newThread(runnable);
