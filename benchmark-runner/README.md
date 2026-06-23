@@ -63,7 +63,6 @@ Run `./run-benchmark.sh --help` for the full list.
 | `--poller-mode` | `SERVER_POLLER_MODE` | | jdk.pollerMode: 1, 2, or 3 |
 | `--fj-parallelism` | `SERVER_FJ_PARALLELISM` | | ForkJoinPool parallelism |
 | `--server-cpuset` | `SERVER_CPUSET` | 2,3 | CPU pinning |
-| `--idle-spins` | `SERVER_IDLE_SPINS` | | Idle spin iterations before blocking (`io.netty.loom.idleSpins`) |
 | `--vt-mode` | `SERVER_VT_MODE` | longlived | VT mode: `longlived` or `perreq` |
 | `--jvm-args` | `SERVER_JVM_ARGS` | | Additional JVM arguments |
 

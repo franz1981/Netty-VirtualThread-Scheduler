@@ -316,8 +316,8 @@ For a deeper look at the store-barrier-load protocol, JCStress proofs that the g
 
 ## Performance tuning
 
-See [`PERFORMANCE.md`](PERFORMANCE.md) for latency/throughput analysis, idle spin
-trade-offs, work stealing tuning, and FJP comparison with benchmark commands.
+See [`PERFORMANCE.md`](PERFORMANCE.md) for latency/throughput analysis, work
+stealing tuning, and FJP comparison with benchmark commands.
 
 ## Configuration
 
@@ -325,7 +325,6 @@ trade-offs, work stealing tuning, and FJP comparison with benchmark commands.
 |---|---|---|
 | `io.netty.loom.schedulers` | `availableProcessors()` | Number of carrier threads |
 | `io.netty.loom.yield.us` | `50` | Yield duration in microseconds |
-| `io.netty.loom.idleSpins` | `0` | Idle spin iterations before blocking. When >0, the poller spins this many iterations (calling `Thread.onSpinWait()`) before entering the blocking I/O path. Prevents batch formation at the cost of higher CPU usage below saturation. **The effective spin duration depends on the transport:** each iteration includes a non-blocking I/O poll — measured at ~0.42µs for epoll (syscall) and ~0.05µs for io_uring (shared-memory CQ peek) under continuous spinning. So 256 spins ≈ 108µs with epoll but only ~13µs with io_uring. The same spin count is not interchangeable across transports. |
 | `io.netty.loom.resumed.continuations` | `1024` | Initial MPSC queue capacity |
 | `io.netty.loom.workstealing.enabled` | `false` | Enable work stealing (experimental) |
 | `io.netty.loom.replaceBuiltinScheduler` | `false` | Route ALL virtual threads through this scheduler, replacing the built-in FJP entirely (experimental). **Requires work stealing enabled.** |
