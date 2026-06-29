@@ -117,6 +117,7 @@ public class HandoffHttpServer {
 	private final boolean silent;
 	private final boolean mockless;
 	private final Mode mode;
+	private final boolean perReqVt;
 
 	private MultiThreadIoEventLoopGroup workerGroup;
 	private Channel serverChannel;
@@ -131,6 +132,7 @@ public class HandoffHttpServer {
 		this.silent = silent;
 		this.mockless = mockless;
 		this.mode = mode;
+		this.perReqVt = "perreq".equals(System.getProperty("io.netty.loom.benchmark.vtmode"));
 	}
 
 	public void start() throws InterruptedException {
@@ -154,11 +156,13 @@ public class HandoffHttpServer {
 
 		switch (mode) {
 			case VIRTUAL_NETTY -> {
-				var group = new VirtualIoEventLoopGroup(threads, NioIoHandler.newFactory(),
-						Thread.ofVirtual().factory());
+				boolean stickyEventLoops = Boolean
+						.parseBoolean(System.getProperty("io.netty.loom.stickyEventLoops", "false"));
+				var elBuilder = stickyEventLoops ? Thread.ofVirtual().stickyAffinity() : Thread.ofVirtual();
+				var group = new VirtualIoEventLoopGroup(threads, NioIoHandler.newFactory(), elBuilder.factory());
 				workerGroup = group;
-				var defaultFactory = Thread.ofVirtual().factory();
-				threadFactorySupplier = () -> defaultFactory;
+				var handlerFactory = Thread.ofVirtual().factory();
+				threadFactorySupplier = () -> handlerFactory;
 				serverChannelClass = NioServerSocketChannel.class;
 				clientChannelClass = io.netty.channel.socket.nio.NioSocketChannel.class;
 			}
@@ -281,9 +285,15 @@ public class HandoffHttpServer {
 			}
 		}
 
+		private ThreadFactory perReqFactory;
+
 		@Override
 		public void channelActive(ChannelHandlerContext ctx) throws Exception {
-			orderedExecutorService = Executors.newSingleThreadExecutor(threadFactorySupplier.get());
+			if (perReqVt) {
+				perReqFactory = threadFactorySupplier.get();
+			} else {
+				orderedExecutorService = Executors.newSingleThreadExecutor(threadFactorySupplier.get());
+			}
 			super.channelActive(ctx);
 		}
 
@@ -299,15 +309,13 @@ public class HandoffHttpServer {
 			}
 
 			if (uri.equals("/") || uri.startsWith("/fruits")) {
-				// Hand off to virtual thread for processing
-				if (mockless) {
-					orderedExecutorService.execute(() -> {
-						doMocklessProcessing(ctx, eventLoop, keepAlive);
-					});
+				Runnable task = mockless
+						? () -> doMocklessProcessing(ctx, eventLoop, keepAlive)
+						: () -> doBlockingProcessing(ctx, eventLoop, keepAlive);
+				if (perReqVt) {
+					perReqFactory.newThread(task).start();
 				} else {
-					orderedExecutorService.execute(() -> {
-						doBlockingProcessing(ctx, eventLoop, keepAlive);
-					});
+					orderedExecutorService.execute(task);
 				}
 				return;
 			}
@@ -400,16 +408,15 @@ public class HandoffHttpServer {
 		@Override
 		public void channelInactive(ChannelHandlerContext ctx) throws Exception {
 			try {
-				orderedExecutorService.execute(() -> {
+				if (httpClient != null) {
 					try {
-						if (httpClient != null) {
-							httpClient.close();
-						}
-					} catch (IOException e) {
-					} finally {
-						orderedExecutorService.shutdown();
+						httpClient.close();
+					} catch (IOException ignored) {
 					}
-				});
+				}
+				if (orderedExecutorService != null) {
+					orderedExecutorService.shutdown();
+				}
 			} finally {
 				super.channelInactive(ctx);
 			}

@@ -40,6 +40,7 @@ SERVER_MOCKLESS="${SERVER_MOCKLESS:-false}"  # Skip mock server; do Jackson work
 SERVER_VT_MODE="${SERVER_VT_MODE:-}"  # VT mode: longlived (default) or perreq
 SERVER_WS="${SERVER_WS:-false}"  # Enable work stealing
 SERVER_TOPOLOGY="${SERVER_TOPOLOGY:-false}"  # Enable LinuxCarrierTopology (CPU pinning + cluster awareness)
+SERVER_STICKY="${SERVER_STICKY:-false}"  # Enable stickyAffinity for VT event loops (VIRTUAL_NETTY mode)
 
 # Load generator configuration
 LOAD_GEN_CPUSET="${LOAD_GEN_CPUSET:-0,1}"  # CPUs for load generator
@@ -402,6 +403,11 @@ start_handoff_server() {
             if [[ "$SERVER_TOPOLOGY" == "true" ]]; then
                 jvm_args="$jvm_args -Dio.netty.loom.topology=io.netty.loom.topology.LinuxCarrierTopology"
                 jvm_args="$jvm_args --enable-native-access=ALL-UNNAMED"
+            fi
+            ;;
+        VIRTUAL_NETTY)
+            if [[ "$SERVER_STICKY" == "true" ]]; then
+                jvm_args="$jvm_args -Dio.netty.loom.stickyEventLoops=true"
             fi
             ;;
     esac
@@ -928,6 +934,7 @@ print_config() {
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
     log "  CPU Affinity:   ${SERVER_CPUSET:-<none>}"
     log "  VT Mode:        ${SERVER_VT_MODE:-longlived}"
+    log "  Sticky ELs:     $SERVER_STICKY"
     log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
     log ""
     log "Load Generator:"
@@ -1002,6 +1009,7 @@ main() {
             --vt-mode)          SERVER_VT_MODE="$2"; shift 2 ;;
             --ws)               SERVER_WS="true"; shift ;;
             --topology)         SERVER_TOPOLOGY="true"; shift ;;
+            --sticky)           SERVER_STICKY="true"; shift ;;
             # Mock
             --mock-port)        MOCK_PORT="$2"; shift 2 ;;
             --mock-think-time)  MOCK_THINK_TIME_MS="$2"; shift 2 ;;
@@ -1049,6 +1057,7 @@ Server:
   --fj-parallelism <n>      ForkJoinPool parallelism (SERVER_FJ_PARALLELISM)
   --server-cpuset <cpus>    Server CPU pinning, e.g. "2,3" (SERVER_CPUSET, default: 2,3)
   --vt-mode <mode>          VT mode: longlived or perreq (SERVER_VT_MODE, default: longlived)
+  --sticky                  Enable stickyAffinity for VT event loops (SERVER_STICKY, VIRTUAL_NETTY only)
   --jvm-args <args>         Additional JVM arguments (SERVER_JVM_ARGS)
 
 Mock Server:

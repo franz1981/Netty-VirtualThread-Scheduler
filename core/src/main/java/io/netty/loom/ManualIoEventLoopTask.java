@@ -19,22 +19,41 @@ import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ManualIoEventLoopTask extends ManualIoEventLoop implements Runnable {
 
-	private static final long RUNNING_YIELD_US = TimeUnit.MICROSECONDS
-			.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 1));
+	private static final long RUNNING_YIELD_NS = TimeUnit.MICROSECONDS
+			.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 50));
+
+	private final AtomicBoolean pollerRunning;
 
 	public ManualIoEventLoopTask(IoEventLoopGroup parent, Thread owningThread, IoHandlerFactory factory) {
-		super(parent, owningThread, factory);
+		this(parent, owningThread, factory, new AtomicBoolean(false));
+	}
+
+	private ManualIoEventLoopTask(IoEventLoopGroup parent, Thread owningThread, IoHandlerFactory factory,
+			AtomicBoolean pollerRunning) {
+		super(parent, owningThread,
+				ioExecutor -> new AwakeAwareIoHandler(pollerRunning, factory.newHandler(ioExecutor)));
+		this.pollerRunning = pollerRunning;
 	}
 
 	@Override
 	public void run() {
+		pollerRunning.set(true);
+		int events = 0;
 		while (!isShuttingDown()) {
-			run(0, RUNNING_YIELD_US);
-			Thread.yield();
+			if (events == 0) {
+				pollerRunning.set(false);
+				events = run(0, RUNNING_YIELD_NS);
+				pollerRunning.set(true);
+			} else {
+				Thread.yield();
+				events = runNow(RUNNING_YIELD_NS);
+			}
 		}
+		pollerRunning.set(false);
 		while (!isTerminated()) {
 			runNow();
 			Thread.yield();

@@ -43,7 +43,7 @@ import io.netty.util.concurrent.FastThreadLocalThread;
  */
 public class VirtualIoNioPollerEventLoopGroup extends MultiThreadIoEventLoopGroup {
 
-	private static final long MAX_WAIT_TASKS_NS = TimeUnit.HOURS.toNanos(1);
+	private static final long MAX_WAIT_TASKS_NS = 0;
 	private Map<IoEventLoop, EventLoopScheduler> eventSchedulerMappings;
 	private EventLoopScheduler[] assignedById;
 	private EventLoopScheduler[] assignedRoundRobin;
