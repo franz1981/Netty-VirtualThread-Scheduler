@@ -17,14 +17,13 @@ package io.netty.loom;
 import io.netty.channel.IoEventLoopGroup;
 import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.ManualIoEventLoop;
+import io.netty.loom.scheduler.EventLoopScheduler;
 
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ManualIoEventLoopTask extends ManualIoEventLoop implements Runnable {
 
-	private static final long RUNNING_YIELD_NS = TimeUnit.MICROSECONDS
-			.toNanos(Integer.getInteger("io.netty.loom.running.yield.us", 50));
+	private static final long NETTY_ASYNC_TASKS_NS = EventLoopScheduler.YIELD_DURATION_NS;
 
 	private final AtomicBoolean pollerRunning;
 
@@ -46,11 +45,11 @@ public class ManualIoEventLoopTask extends ManualIoEventLoop implements Runnable
 		while (!isShuttingDown()) {
 			if (events == 0) {
 				pollerRunning.set(false);
-				events = run(0, RUNNING_YIELD_NS);
+				events = run(0, NETTY_ASYNC_TASKS_NS);
 				pollerRunning.set(true);
 			} else {
 				Thread.yield();
-				events = runNow(RUNNING_YIELD_NS);
+				events = runNow(NETTY_ASYNC_TASKS_NS);
 			}
 		}
 		pollerRunning.set(false);
