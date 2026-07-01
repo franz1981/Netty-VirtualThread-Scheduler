@@ -41,6 +41,7 @@ SERVER_VT_MODE="${SERVER_VT_MODE:-}"  # VT mode: longlived (default) or perreq
 SERVER_WS="${SERVER_WS:-false}"  # Enable work stealing
 SERVER_TOPOLOGY="${SERVER_TOPOLOGY:-false}"  # Enable LinuxCarrierTopology (CPU pinning + cluster awareness)
 SERVER_STICKY="${SERVER_STICKY:-false}"  # Enable stickyAffinity for VT event loops (VIRTUAL_NETTY mode)
+SERVER_USE_MPSC="${SERVER_USE_MPSC:-false}"  # Use MPSC virtual thread scheduler instead of FJP
 
 # Load generator configuration
 LOAD_GEN_CPUSET="${LOAD_GEN_CPUSET:-0,1}"  # CPUs for load generator
@@ -409,8 +410,13 @@ start_handoff_server() {
             if [[ "$SERVER_STICKY" == "true" ]]; then
                 jvm_args="$jvm_args -Dio.netty.loom.stickyEventLoops=true"
             fi
+            if [[ "$SERVER_USE_MPSC" == "true" ]]; then
+                jvm_args="$jvm_args -Djdk.virtualThreadScheduler.useMpsc=true"
+                poller_mode="${poller_mode:-4}"
+            fi
             ;;
     esac
+
 
     # Apply pollerMode if set (explicitly or via mode default)
     if [[ -n "$poller_mode" ]]; then
@@ -935,6 +941,7 @@ print_config() {
     log "  CPU Affinity:   ${SERVER_CPUSET:-<none>}"
     log "  VT Mode:        ${SERVER_VT_MODE:-longlived}"
     log "  Sticky ELs:     $SERVER_STICKY"
+    log "  MPSC Scheduler: $SERVER_USE_MPSC"
     log "  Extra JVM Args: ${SERVER_JVM_ARGS:-<none>}"
     log ""
     log "Load Generator:"
@@ -1010,6 +1017,7 @@ main() {
             --ws)               SERVER_WS="true"; shift ;;
             --topology)         SERVER_TOPOLOGY="true"; shift ;;
             --sticky)           SERVER_STICKY="true"; shift ;;
+            --mpsc-scheduler)   SERVER_USE_MPSC="true"; shift ;;
             # Mock
             --mock-port)        MOCK_PORT="$2"; shift 2 ;;
             --mock-think-time)  MOCK_THINK_TIME_MS="$2"; shift 2 ;;
@@ -1058,6 +1066,8 @@ Server:
   --server-cpuset <cpus>    Server CPU pinning, e.g. "2,3" (SERVER_CPUSET, default: 2,3)
   --vt-mode <mode>          VT mode: longlived or perreq (SERVER_VT_MODE, default: longlived)
   --sticky                  Enable stickyAffinity for VT event loops (SERVER_STICKY, VIRTUAL_NETTY only)
+  --mpsc-scheduler          Use MPSC scheduler instead of FJP (SERVER_USE_MPSC, VIRTUAL_NETTY only)
+                            Defaults poller mode to 4 (carrier-master-poller)
   --jvm-args <args>         Additional JVM arguments (SERVER_JVM_ARGS)
 
 Mock Server:
