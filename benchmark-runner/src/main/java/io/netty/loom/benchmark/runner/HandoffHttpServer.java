@@ -158,7 +158,9 @@ public class HandoffHttpServer {
 			case VIRTUAL_NETTY -> {
 				boolean stickyEventLoops = Boolean
 						.parseBoolean(System.getProperty("io.netty.loom.stickyEventLoops", "false"));
-				var elBuilder = stickyEventLoops ? Thread.ofVirtual().stickyAffinity() : Thread.ofVirtual();
+				var elBuilder = stickyEventLoops
+						? Thread.ofVirtual().stickyAffinity().roundRobinAffinity()
+						: Thread.ofVirtual().roundRobinAffinity();
 				var group = new VirtualIoEventLoopGroup(threads, NioIoHandler.newFactory(), elBuilder.factory());
 				workerGroup = group;
 				var handlerFactory = Thread.ofVirtual().factory();
