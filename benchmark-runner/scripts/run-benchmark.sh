@@ -412,7 +412,7 @@ start_handoff_server() {
             fi
             if [[ "$SERVER_USE_MPSC" == "true" ]]; then
                 jvm_args="$jvm_args -Djdk.virtualThreadScheduler.useMpsc=true"
-                poller_mode="${poller_mode:-3}"
+                poller_mode="${poller_mode:-4}"
             fi
             ;;
     esac
@@ -936,7 +936,7 @@ print_config() {
     if [[ -z "$effective_poller" && "$SERVER_MODE" == "NETTY_SCHEDULER" ]]; then
         effective_poller="3 (default for NETTY_SCHEDULER)"
     elif [[ -z "$effective_poller" && "$SERVER_USE_MPSC" == "true" ]]; then
-        effective_poller="3 (default for MPSC scheduler)"
+        effective_poller="4 (default for MPSC scheduler)"
     fi
     log "  Poller Mode:    ${effective_poller:-<JVM default>}"
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
