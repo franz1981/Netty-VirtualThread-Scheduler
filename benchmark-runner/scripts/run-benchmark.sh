@@ -412,7 +412,7 @@ start_handoff_server() {
             fi
             if [[ "$SERVER_USE_MPSC" == "true" ]]; then
                 jvm_args="$jvm_args -Djdk.virtualThreadScheduler.useMpsc=true"
-                poller_mode="${poller_mode:-4}"
+                poller_mode="${poller_mode:-3}"
             fi
             ;;
     esac
@@ -935,6 +935,8 @@ print_config() {
     local effective_poller="$SERVER_POLLER_MODE"
     if [[ -z "$effective_poller" && "$SERVER_MODE" == "NETTY_SCHEDULER" ]]; then
         effective_poller="3 (default for NETTY_SCHEDULER)"
+    elif [[ -z "$effective_poller" && "$SERVER_USE_MPSC" == "true" ]]; then
+        effective_poller="3 (default for MPSC scheduler)"
     fi
     log "  Poller Mode:    ${effective_poller:-<JVM default>}"
     log "  FJ Parallelism: ${SERVER_FJ_PARALLELISM:-<default>}"
@@ -1067,7 +1069,7 @@ Server:
   --vt-mode <mode>          VT mode: longlived or perreq (SERVER_VT_MODE, default: longlived)
   --sticky                  Enable stickyAffinity for VT event loops (SERVER_STICKY, VIRTUAL_NETTY only)
   --mpsc-scheduler          Use MPSC scheduler instead of FJP (SERVER_USE_MPSC, VIRTUAL_NETTY only)
-                            Defaults poller mode to 4 (carrier-master-poller)
+                            Defaults poller mode to 3 (per-carrier sub-pollers)
   --jvm-args <args>         Additional JVM arguments (SERVER_JVM_ARGS)
 
 Mock Server:
