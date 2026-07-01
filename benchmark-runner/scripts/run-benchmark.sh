@@ -42,6 +42,7 @@ SERVER_WS="${SERVER_WS:-false}"  # Enable work stealing
 SERVER_TOPOLOGY="${SERVER_TOPOLOGY:-false}"  # Enable LinuxCarrierTopology (CPU pinning + cluster awareness)
 SERVER_STICKY="${SERVER_STICKY:-false}"  # Enable stickyAffinity for VT event loops (VIRTUAL_NETTY mode)
 SERVER_USE_MPSC="${SERVER_USE_MPSC:-false}"  # Use MPSC virtual thread scheduler instead of FJP
+SERVER_DRAIN_BUDGET_US="${SERVER_DRAIN_BUDGET_US:-}"  # MPSC drain budget in microseconds (default: 50)
 
 # Load generator configuration
 LOAD_GEN_CPUSET="${LOAD_GEN_CPUSET:-0,1}"  # CPUs for load generator
@@ -413,6 +414,9 @@ start_handoff_server() {
             if [[ "$SERVER_USE_MPSC" == "true" ]]; then
                 jvm_args="$jvm_args -Djdk.virtualThreadScheduler.useMpsc=true"
                 poller_mode="${poller_mode:-4}"
+                if [[ -n "$SERVER_DRAIN_BUDGET_US" ]]; then
+                    jvm_args="$jvm_args -Djdk.virtualThreadScheduler.drainBudgetUs=$SERVER_DRAIN_BUDGET_US"
+                fi
             fi
             ;;
     esac
@@ -1020,6 +1024,7 @@ main() {
             --topology)         SERVER_TOPOLOGY="true"; shift ;;
             --sticky)           SERVER_STICKY="true"; shift ;;
             --mpsc-scheduler)   SERVER_USE_MPSC="true"; shift ;;
+            --drain-budget-us)  SERVER_DRAIN_BUDGET_US="$2"; shift 2 ;;
             # Mock
             --mock-port)        MOCK_PORT="$2"; shift 2 ;;
             --mock-think-time)  MOCK_THINK_TIME_MS="$2"; shift 2 ;;
