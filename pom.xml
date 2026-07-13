@@ -21,8 +21,8 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <netty.version>4.2.15.Final</netty.version>
-        <junit.version>6.1.1</junit.version>
+        <netty.version>4.2.16.Final</netty.version>
+        <junit.version>6.1.2</junit.version>
         <jmh.version>1.37</jmh.version>
         <jcstress.version>0.16</jcstress.version>
         <java.version>28</java.version>
