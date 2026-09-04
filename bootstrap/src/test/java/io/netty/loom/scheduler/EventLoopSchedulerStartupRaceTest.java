@@ -27,50 +27,46 @@ class EventLoopSchedulerStartupRaceTest {
 
 	@Test
 	@Timeout(10)
-	void parkedCarrierStartedBeforeClusterStateMustBeDiscoverableAfterClusterStateIsConnected() throws Exception {
+	void carrierStartedAfterClusterStateIsConnectedMustBeDiscoverableAsIdle() throws Exception {
+		var supportGroup = new EventLoopSchedulerGroup(null);
 		var carrierAtStartupHook = new CountDownLatch(1);
 		var releaseCarrier = new CountDownLatch(1);
 		var carrierLeftStartupHook = new CountDownLatch(1);
-		var victimAtStartupHook = new CountDownLatch(1);
-		var releaseVictim = new CountDownLatch(1);
 
 		var scheduler = new EventLoopScheduler(0, Thread.ofPlatform().daemon(true).factory(), 16, null, () -> {
 			carrierAtStartupHook.countDown();
 			await(releaseCarrier);
 			carrierLeftStartupHook.countDown();
 		});
-		var victim = new EventLoopScheduler(1, Thread.ofPlatform().daemon(true).factory(), 16, null, () -> {
-			victimAtStartupHook.countDown();
-			await(releaseVictim);
-		});
 
 		ClusterState clusterState = null;
 		boolean searchStarted = false;
+		boolean searchWakeIssued = false;
 		try {
-			assertTrue(carrierAtStartupHook.await(5, TimeUnit.SECONDS), "carrier did not reach startup hook");
-			assertTrue(victimAtStartupHook.await(5, TimeUnit.SECONDS), "victim did not reach startup hook");
-			assertNull(scheduler.clusterState, "test must release the carrier before ClusterState is connected");
+			assertEquals(Thread.State.NEW, scheduler.carrierThread().getState(),
+					"carrier must not start before ClusterState is connected");
 
+			clusterState = new ClusterState(new EventLoopScheduler[]{scheduler});
+			scheduler.group = supportGroup;
+			scheduler.clusterState = clusterState;
+
+			scheduler.startCarrier();
+			assertTrue(carrierAtStartupHook.await(5, TimeUnit.SECONDS), "carrier did not reach startup hook");
 			releaseCarrier.countDown();
 			assertTrue(carrierLeftStartupHook.await(5, TimeUnit.SECONDS), "carrier did not leave startup hook");
 			awaitCarrierWaiting(scheduler);
 
-			clusterState = new ClusterState(new EventLoopScheduler[]{scheduler, victim});
-			scheduler.clusterState = clusterState;
-			victim.clusterState = clusterState;
-
 			searchStarted = clusterState.tryStartSearcher();
 			assertTrue(searchStarted, "test setup should be able to start one searcher");
-			assertTrue(clusterState.wakeFirstIdle(victim),
+			searchWakeIssued = clusterState.wakeFirstIdle(supportGroup.scheduler(0));
+			assertTrue(searchWakeIssued,
 					"carrier is actually PARKED and connected to ClusterState, so it must be discoverable as idle");
 		} finally {
-			if (searchStarted && clusterState != null && clusterState.nSearching() > 0) {
+			if (searchStarted && !searchWakeIssued && clusterState != null && clusterState.nSearching() > 0) {
 				clusterState.stoppedSearching();
 			}
 			releaseCarrier.countDown();
-			releaseVictim.countDown();
 			scheduler.wakeup();
-			victim.wakeup();
 		}
 	}
 

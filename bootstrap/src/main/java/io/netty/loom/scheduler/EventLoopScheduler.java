@@ -233,6 +233,9 @@ public final class EventLoopScheduler {
 		carrierThread = threadFactory.newThread(this::virtualThreadSchedulerLoop);
 		carrierThread.setName("carrier-" + id);
 		carrierThread.setDaemon(true);
+	}
+
+	void startCarrier() {
 		carrierThread.start();
 	}
 
