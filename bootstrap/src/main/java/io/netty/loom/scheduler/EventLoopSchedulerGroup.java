@@ -105,6 +105,9 @@ public class EventLoopSchedulerGroup {
 				}
 			}
 		}
+		for (int i = 0; i < size; i++) {
+			schedulers[i].startCarrier();
+		}
 	}
 
 	private static boolean isAllowedPeer(int self, int other, CarrierTopology.StealScope scope,
