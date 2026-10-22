@@ -50,10 +50,15 @@ jobs:
       run: |
         mvn --version
     
+    # The container runs as root: HOME is /github/home, but Maven (and Spotless'
+    # Eclipse P2 cache under .m2/repository/dev/equo/p2-data) resolve ~ from the
+    # JVM's user.home, which is /root. Caching /github/home/.m2 never saved anything,
+    # so every run re-downloaded everything, including the Eclipse formatter from
+    # download.eclipse.org.
     - name: Cache Maven packages
       uses: actions/cache@v6
       with:
-        path: /github/home/.m2
+        path: /root/.m2/repository
         key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
         restore-keys: ${{ runner.os }}-m2
     
