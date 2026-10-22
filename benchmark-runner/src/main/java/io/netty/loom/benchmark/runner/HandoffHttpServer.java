@@ -14,6 +14,8 @@
  */
 package io.netty.loom.benchmark.runner;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.util.JsonRecyclerPools;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.loom.scheduler.EventLoopSchedulerGroup;
 import io.netty.bootstrap.ServerBootstrap;
@@ -88,7 +90,17 @@ public class HandoffHttpServer {
 		NON_VIRTUAL_NETTY, REACTIVE, VIRTUAL_NETTY, NETTY_SCHEDULER
 	}
 
-	private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+	private static final ObjectMapper OBJECT_MAPPER = newObjectMapper();
+
+	/**
+	 * Jackson's default recycler pool keeps a BufferRecycler in a ThreadLocal: with
+	 * a virtual thread per request every parse starts from an empty recycler. A
+	 * shared concurrent deque pool works the same on platform and virtual threads.
+	 */
+	static ObjectMapper newObjectMapper() {
+		return new ObjectMapper(JsonFactory.builder().recyclerPool(JsonRecyclerPools.newConcurrentDequePool()).build());
+	}
+
 	private static final ByteBuf HEALTH_RESPONSE = Unpooled
 			.unreleasableBuffer(Unpooled.copiedBuffer("OK", CharsetUtil.UTF_8));
 
