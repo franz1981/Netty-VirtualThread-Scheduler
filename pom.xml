@@ -80,7 +80,14 @@
                 <version>3.8.0</version>
                 <configuration>
                     <java>
-                        <eclipse/>
+                        <eclipse>
+                            <p2Mirrors>
+                                <p2Mirror>
+                                    <prefix>https://download.eclipse.org/</prefix>
+                                    <url>https://mirrors.dotsrc.org/eclipse/</url>
+                                </p2Mirror>
+                            </p2Mirrors>
+                        </eclipse>
                         <licenseHeader>
                             <content>/*
  * Copyright $YEAR The Netty VirtualThread Scheduler Project
