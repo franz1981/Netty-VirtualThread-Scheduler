@@ -58,7 +58,7 @@ import java.net.URI;
  */
 public class ReactiveHandoffHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
-	private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+	private static final ObjectMapper OBJECT_MAPPER = HandoffHttpServer.newObjectMapper();
 	private static final ByteBuf HEALTH_RESPONSE = Unpooled
 			.unreleasableBuffer(Unpooled.copiedBuffer("OK", CharsetUtil.UTF_8));
 
