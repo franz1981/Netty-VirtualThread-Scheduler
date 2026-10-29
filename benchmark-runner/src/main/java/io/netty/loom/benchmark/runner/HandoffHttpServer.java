@@ -54,6 +54,7 @@ import org.apache.hc.client5.http.impl.classic.HttpClientBuilder;
 import org.apache.hc.client5.http.impl.io.BasicHttpClientConnectionManager;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.HttpResponse;
+import org.apache.hc.core5.http.io.SocketConfig;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.protocol.HttpContext;
 import org.apache.hc.core5.util.TimeValue;
@@ -275,6 +276,10 @@ public class HandoffHttpServer {
 				ConnectionKeepAliveStrategy keepAliveStrategy = (HttpResponse response,
 						HttpContext context) -> TimeValue.NEG_ONE_MILLISECOND;
 				BasicHttpClientConnectionManager cm = new BasicHttpClientConnectionManager();
+				// HttpClient enables TCP keepalive (5 s idle) by default: on loopback,
+				// connections idle since the same stall probe together, overflow the
+				// per-CPU backlog and get aborted
+				cm.setSocketConfig(SocketConfig.custom().setSoKeepAlive(false).build());
 				httpClient = HttpClientBuilder.create().setConnectionManager(cm)
 						.setDefaultRequestConfig(NO_TIMEOUT_HTTP_REQUEST_CONFIG).setConnectionManagerShared(false)
 						.setKeepAliveStrategy(keepAliveStrategy).build();
