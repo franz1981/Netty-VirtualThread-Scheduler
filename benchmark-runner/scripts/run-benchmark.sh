@@ -20,6 +20,13 @@ set -euo pipefail
 # Java configuration
 JAVA_HOME="${JAVA_HOME:-}"
 JAVA_OPTS="${JAVA_OPTS:--Xms1g -Xmx1g}"
+# Load generator (jbang wrk/wrk2@hyperfoil) JVM: a pinned JDK (jbang --java, resolved or downloaded by jbang)
+# and its JVM options. The default GC/heap keeps the load generator free of GC pauses: with the default G1 its
+# ~1 GB of pre-allocated sessions (10K connections at 50K req/s) gives 60-110 ms young pauses every 8-25 s, and
+# wrk2 charges each pause to the latency of the requests it delayed (coordinated-omission correction), so the
+# measured p99/p99.9 was the load generator's GC, not the server's.
+LOAD_GEN_JAVA="${LOAD_GEN_JAVA:-25}"
+LOAD_GEN_JAVA_OPTS="${LOAD_GEN_JAVA_OPTS:--XX:+UseShenandoahGC -Xms5g -Xmx5g}"
 
 # Mock server configuration
 MOCK_PORT="${MOCK_PORT:-8080}"
@@ -286,6 +293,19 @@ build_taskset_cmd() {
     fi
 }
 
+# jbang arguments that pin the load generator's JDK and pass LOAD_GEN_JAVA_OPTS to its JVM (-R=<opt> each)
+load_gen_jbang_args() {
+    local args=()
+    if [[ -n "$LOAD_GEN_JAVA" ]]; then
+        args+=(--java "$LOAD_GEN_JAVA")
+    fi
+    local opt
+    for opt in $LOAD_GEN_JAVA_OPTS; do
+        args+=("-R=$opt")
+    done
+    echo "${args[@]}"
+}
+
 cleanup() {
     log "Cleaning up..."
 
@@ -474,7 +494,7 @@ run_warmup() {
     local taskset_cmd=$(build_taskset_cmd "$LOAD_GEN_CPUSET")
 
     # Use wrk for warmup (no rate limiting)
-    $taskset_cmd jbang wrk@hyperfoil \
+    $taskset_cmd jbang $(load_gen_jbang_args) wrk@hyperfoil \
         -t "$LOAD_GEN_THREADS" \
         -c "$LOAD_GEN_CONNECTIONS" \
         -d "$WARMUP_DURATION" \
@@ -845,7 +865,7 @@ run_load_test() {
         # Use wrk2 with rate limiting
         log "Using wrk2 with rate: $LOAD_GEN_RATE req/s"
 
-        $taskset_cmd jbang wrk2@hyperfoil \
+        $taskset_cmd jbang $(load_gen_jbang_args) wrk2@hyperfoil \
             -t "$LOAD_GEN_THREADS" \
             -c "$LOAD_GEN_CONNECTIONS" \
             -d "${test_secs}s" \
@@ -856,7 +876,7 @@ run_load_test() {
         # Use wrk for max throughput
         log "Using wrk for max throughput"
 
-        $taskset_cmd jbang wrk@hyperfoil \
+        $taskset_cmd jbang $(load_gen_jbang_args) wrk@hyperfoil \
             -t "$LOAD_GEN_THREADS" \
             -c "$LOAD_GEN_CONNECTIONS" \
             -d "${test_secs}s" \
@@ -1089,6 +1109,8 @@ Output:
 Environment-only settings:
   JAVA_HOME                 Path to Java installation (required)
   JAVA_OPTS                 JVM options (default: -Xms1g -Xmx1g)
+  LOAD_GEN_JAVA             JDK for the jbang load generator, wrk/wrk2@hyperfoil (jbang --java; default: 25)
+  LOAD_GEN_JAVA_OPTS        JVM options of the load generator (default: -XX:+UseShenandoahGC -Xms5g -Xmx5g)
   PROFILING_DELAY_SECONDS   Profiling start delay (default: 10)
   PROFILING_DURATION_SECONDS Profiling duration (default: 10)
 
